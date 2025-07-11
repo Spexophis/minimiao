@@ -88,11 +88,11 @@ def main():
     configs = load_config(selected_file)
     devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
     proc = processor.ProcessorManager(config=configs, logg=error_logger, path=data_folder)
-    mw = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
-    cmd_exc = executor.CommandExecutor(devices, mw, proc, data_folder, error_logger)
-    mw.aboutToClose.connect(devices.close)
+    mwd = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
+    cmd_exc = executor.CommandExecutor(devices, mwd, proc, data_folder, error_logger)
+    mwd.aboutToClose.connect(devices.close)
 
-    mw.show()
+    mwd.show()
     sys.exit(app.exec())
 
 
