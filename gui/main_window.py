@@ -33,8 +33,6 @@ class MainWindow(QMainWindow):
         return cfg
 
     def _setup_ui(self):
-        central = QWidget()
-
         self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
         self.ctrl_dock = cw.DockWidget("Control Panel")
         self.ctrl_dock.setWidget(self.ctrl_panel)
