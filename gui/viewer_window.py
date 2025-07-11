@@ -1,7 +1,7 @@
 import matplotlib
 import numpy as np
-from PyQt6.QtCore import pyqtSlot
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout
+from PyQt6.QtCore import pyqtSlot, Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QSlider, QLabel
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -37,7 +37,7 @@ class LiveViewer(QWidget):
         self.logg = logg
         self._setup_ui()
         self._im = None
-        self.update_image(np.zeros((2048, 2048), dtype=np.uint8))
+        self.update_image(np.random.rand(2048, 2048) * 2048)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -45,6 +45,21 @@ class LiveViewer(QWidget):
         layout.addWidget(self.status_label)
         self.ax, self.canvas = self._create_image_window()
         layout.addWidget(self.canvas)
+
+        self._contrast_layout = QHBoxLayout()
+        self._contrast_label = QLabel("Contrast:")
+        self._slider = QSlider()
+        self._slider.setOrientation(Qt.Orientation.Horizontal)
+        self._slider.setMinimum(10)
+        self._slider.setMaximum(255)
+        self._slider.setValue(255)
+        self._slider.valueChanged.connect(self._on_contrast_changed)
+        self._contrast_value_label = QLabel("255")
+        self._contrast_layout.addWidget(self._contrast_label)
+        self._contrast_layout.addWidget(self._slider)
+        self._contrast_layout.addWidget(self._contrast_value_label)
+        layout.addLayout(self._contrast_layout)
+
         self._plot_layout = self._create_plot_widgets()
         layout.addLayout(self._plot_layout)
         layout.addStretch(1)
@@ -81,6 +96,12 @@ class LiveViewer(QWidget):
         else:
             self._im.set_data(img_disp)
         self.canvas.draw_idle()
+
+    def _on_contrast_changed(self, val):
+        self._contrast_value_label.setText(str(val))
+        if self._im is not None:
+            self._im.set_clim(0, val)
+            self.canvas.draw_idle()
 
     def plot_profile(self, data, x=None, sp=None):
         if x is not None:
