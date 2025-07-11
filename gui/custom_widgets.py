@@ -33,7 +33,8 @@ class DockWidget(QtWidgets.QDockWidget):
                 background-color: #ff5555;
             }
         ''')
-        self.setFeatures(QtWidgets.QDockWidget.DockWidgetFeature.NoDockWidgetFeatures)
+        self.setFeatures(
+            QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetMovable | QtWidgets.QDockWidget.DockWidgetFeature.DockWidgetFloatable)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Preferred)
 
 
@@ -148,7 +149,7 @@ class LCDNumberWidget(QtWidgets.QLCDNumber):
 class SpinBoxWidget(QtWidgets.QSpinBox):
     def __init__(self, range_min, range_max, step, value):
         super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10))
+        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QSpinBox {
                 background-color: #121212;
@@ -489,15 +490,21 @@ def create_dock(name=''):
     return dock, group
 
 
-def create_scroll_area(layout="Form"):
+def create_scroll_area(layout="F"):
     scroll_area = ScrollAreaWidget()
     content_widget = QtWidgets.QWidget(scroll_area)
     content_widget.setStyleSheet("background-color: #232629;")
     scroll_area.setWidget(content_widget)
-    if layout == "Form":
+    if layout == "F":
         layout = QtWidgets.QFormLayout(content_widget)
-    else:
+    elif layout == "G":
         layout = QtWidgets.QGridLayout(content_widget)
+    elif layout == "H":
+        layout = QtWidgets.QHBoxLayout(content_widget)
+    elif layout == "V":
+        layout = QtWidgets.QVBoxLayout(content_widget)
+    else:
+        print("Invalid layout")
     content_widget.setLayout(layout)
     return scroll_area, layout
 

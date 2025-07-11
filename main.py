@@ -8,7 +8,7 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 
 import device
 import executor
-import gui
+from gui import main_window
 
 
 def setup_folder():
@@ -54,11 +54,6 @@ def select_file_from_folder(parent, data_folder):
     return file_path if file_path else None
 
 
-def write_config(dataframe, dfd):
-    with open(dfd, 'w') as f:
-        json.dump(dataframe, f, indent=4)
-
-
 def load_config(dfd):
     with open(dfd, 'r') as f:
         cfg = json.load(f)
@@ -92,16 +87,16 @@ def main():
     configs = load_config(selected_file)
     devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
 
-    main_window = gui.MainWindow()
-    control_panel = main_window.ctrl_panel
-    live_viewer = main_window.viewer
+    mw = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
+    control_panel = mw.ctrl_panel
+    live_viewer = mw.viewer
 
     cmd_exc = executor.CommandExecutor(devices, control_panel, live_viewer, data_folder, error_logger)
     control_panel.startClicked.connect(cmd_exc.start_acquisition)
     control_panel.stopClicked.connect(cmd_exc.stop_acquisition)
-    main_window.aboutToClose.connect(devices.close)
+    mw.aboutToClose.connect(devices.close)
 
-    main_window.show()
+    mw.show()
     sys.exit(app.exec())
 
 
