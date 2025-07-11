@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 from devices import device
 import executor
 from gui import main_window
+from processors import processor
 
 
 def setup_folder():
@@ -86,12 +87,9 @@ def main():
     print(f"Selected file: {selected_file}")
     configs = load_config(selected_file)
     devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
-
+    proc = processor.ProcessorManager(config=configs, logg=error_logger, path=data_folder)
     mw = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
-
-    cmd_exc = executor.CommandExecutor(devices, mw, data_folder, error_logger)
-    mw.ctrl_panel.startClicked.connect(cmd_exc.start_acquisition)
-    mw.ctrl_panel.stopClicked.connect(cmd_exc.stop_acquisition)
+    cmd_exc = executor.CommandExecutor(devices, mw, proc, data_folder, error_logger)
     mw.aboutToClose.connect(devices.close)
 
     mw.show()

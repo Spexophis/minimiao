@@ -2,10 +2,14 @@ import run_threads
 
 
 class CommandExecutor:
-    def __init__(self, dev, cwd, path, logger):
+    def __init__(self, dev, cwd, pr, path, logger):
         self.devs = dev
         self.ctrl_panel = cwd.ctrl_panel
         self.viewer = cwd.viewer
+        self.ao_panel = cwd.ao_panel
+        self.trg = pr.trg
+        self.wfr = pr.wfp
+        self.flk = pr.flp
         self.acq_thread = None
         self.path = path
         self.logger = logger

@@ -272,6 +272,27 @@ class AOPanel(QWidget):
         self.QPushButton_sensorless_metric_acqs.clicked.connect(self.run_sensorless_metric_acquisition)
         self.QPushButton_sensorless_ml_acqs.clicked.connect(self.run_sensorless_ml_acquisition)       
 
+    def display_img_wf_properties(self, properties):
+        self.lcdNumber_wfmin_img.display(properties[0])
+        self.lcdNumber_wfmax_img.display(properties[1])
+        self.lcdNumber_wfrms_img.display(properties[2])
+
+    def get_parameters_foc(self):
+        return (self.QSpinBox_base_xcenter_foc.value(), self.QSpinBox_base_ycenter_foc.value(),
+                self.QSpinBox_offset_xcenter_foc.value(), self.QSpinBox_offset_ycenter_foc.value(),
+                self.QSpinBox_n_lenslets_x_foc.value(), self.QSpinBox_n_lenslets_y_foc.value(),
+                self.QSpinBox_spacing_foc.value(), self.QSpinBox_radius_foc.value(),
+                self.QDoubleSpinBox_foc_background.value())
+
+    def get_gradient_method_img(self):
+        return self.QComboBox_wfrmd_foc.currentText()
+
+    def get_img_wfs_method(self):
+        return self.QComboBox_wfsmd.currentText()
+
+    def get_wfs_camera(self):
+        return self.QComboBox_wfs_camera_selection.currentIndex()
+
     @pyqtSlot()
     def img_wfs_base(self):
         self.Signal_img_shwfs_base.emit()
@@ -338,6 +359,24 @@ class AOPanel(QWidget):
     def save_dm_cmd(self):
         self.Signal_save_dm.emit()
 
+    def get_actuator(self):
+        return self.QSpinBox_actuator.value(), self.QDoubleSpinBox_actuator_push.value()
+
+    def get_zernike_mode(self):
+        return self.QSpinBox_zernike_mode.value(), self.QDoubleSpinBox_zernike_mode_amp.value()
+
+    def get_dm_selection(self):
+        return self.QComboBox_dms.currentText()
+
+    def get_cmd_index(self):
+        return self.QComboBox_cmd.currentText()
+
+    def update_cmd_index(self, wst=True):
+        item = '{}'.format(self.QComboBox_cmd.count())
+        self.QComboBox_cmd.addItem(item)
+        if wst:
+            self.QComboBox_cmd.setCurrentIndex(self.QComboBox_cmd.count() - 1)
+
     @pyqtSlot()
     def run_close_loop_correction(self):
         n = self.QSpinBox_close_loop_number.value()
@@ -358,6 +397,16 @@ class AOPanel(QWidget):
     @pyqtSlot()
     def run_sensorless_ml_acquisition(self):
         self.Signal_sensorlessAO_ml_acquisition.emit()
+
+    def get_sensorless_iteration(self):
+        return (self.QSpinBox_zernike_mode_start.value(), self.QSpinBox_zernike_mode_stop.value(),
+                self.QDoubleSpinBox_zernike_mode_amps_start.value(), self.QDoubleSpinBox_zernike_mode_amps_step.value(),
+                self.QSpinBox_zernike_mode_amps_stepnum.value())
+
+    def get_sensorless_parameters(self):
+        return (self.QDoubleSpinBox_lpf.value(), self.QDoubleSpinBox_hpf.value(),
+                self.QDoubleSpinBox_select_frequency.value(), self.QComboBox_metric.currentText(),
+                self.QRadioButton_sensorless_error.isChecked())
 
     def save_spinbox_values(self):
         values = {}
