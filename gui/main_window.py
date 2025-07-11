@@ -2,7 +2,6 @@ import sys
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QSpinBox, QDoubleSpinBox
-
 import custom_widgets as cw
 from gui import controller_panel, ao_panel, viewer_window
 
@@ -12,7 +11,7 @@ class MainWindow(QMainWindow):
 
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
-        self.config = config or self.load_configs()
+        self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
         self.resize(1000, 800)
@@ -24,13 +23,6 @@ class MainWindow(QMainWindow):
         import logging
         logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
         return logging
-
-    @staticmethod
-    def load_configs():
-        config_file = input("Enter configuration file directory: ")
-        from miao.utilities import configurations
-        cfg = configurations.MicroscopeConfiguration(fd=config_file)
-        return cfg
 
     def _setup_ui(self):
         self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)

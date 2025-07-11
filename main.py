@@ -6,7 +6,7 @@ import sys
 import json
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
-import device
+from devices import device
 import executor
 from gui import main_window
 
@@ -88,12 +88,10 @@ def main():
     devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
 
     mw = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
-    control_panel = mw.ctrl_panel
-    live_viewer = mw.viewer
 
-    cmd_exc = executor.CommandExecutor(devices, control_panel, live_viewer, data_folder, error_logger)
-    control_panel.startClicked.connect(cmd_exc.start_acquisition)
-    control_panel.stopClicked.connect(cmd_exc.stop_acquisition)
+    cmd_exc = executor.CommandExecutor(devices, mw, data_folder, error_logger)
+    mw.ctrl_panel.startClicked.connect(cmd_exc.start_acquisition)
+    mw.ctrl_panel.stopClicked.connect(cmd_exc.stop_acquisition)
     mw.aboutToClose.connect(devices.close)
 
     mw.show()

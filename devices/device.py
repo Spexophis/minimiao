@@ -1,13 +1,13 @@
-# from devices import cam_sim
+# import cam_sim
 
-from devices import andor_ixon
-from devices import cobolt_laser
-from devices import deformable_mirror
-from devices import fdd_slm
-from devices import hamamatsu_orchflash
-from devices import mcl_maddeck
-from devices import mcl_piezo
-from devices import ni_daq
+import andor_ixon
+import cobolt_laser
+import deformable_mirror
+import fdd_slm
+import hamamatsu_orchflash
+import mcl_maddeck
+import mcl_piezo
+import ni_daq
 
 
 class DeviceManager:
