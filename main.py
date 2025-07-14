@@ -5,7 +5,7 @@ import os
 import sys
 import json
 from PyQt6.QtWidgets import QApplication, QFileDialog
-
+import event_bus
 from devices import device
 import executor
 from gui import main_window
@@ -86,10 +86,11 @@ def main():
 
     print(f"Selected file: {selected_file}")
     configs = load_config(selected_file)
-    devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
-    proc = processor.ProcessorManager(config=configs, logg=error_logger, path=data_folder)
-    mwd = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
-    cmd_exc = executor.CommandExecutor(devices, mwd, proc, data_folder, error_logger)
+    evbus = event_bus.EventBus()
+    devices = device.DeviceManager(bus=evbus, config=configs, logg=error_logger, path=data_folder)
+    proc = processor.ProcessorManager(bus=evbus, config=configs, logg=error_logger, path=data_folder)
+    mwd = main_window.MainWindow(bus=evbus, config=configs, logg=error_logger, path=data_folder)
+    cmd_exc = executor.CommandExecutor(devices, mwd, proc, data_folder, error_logger, evbus)
     mwd.aboutToClose.connect(devices.close)
 
     mwd.show()

@@ -10,8 +10,9 @@ from devices import ni_daq
 
 
 class DeviceManager:
-    def __init__(self, config=None, logg=None, path=None):
+    def __init__(self, bus, config=None, logg=None, path=None):
         self.camera = mock_cam.MockCamera()
+        self.bus = bus
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path

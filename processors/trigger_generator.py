@@ -105,7 +105,8 @@ class TriggerSequence:
             self.readout_timing = 0.001  # s
             self.readout_timing_samples = int(np.ceil(self.readout_timing * self.sample_rate))
 
-    def __init__(self, logg=None):
+    def __init__(self, bus, logg=None):
+        self.bus = bus
         self.logg = logg or self.setup_logging()
         self._parameters = self.TriggerParameters()
 
