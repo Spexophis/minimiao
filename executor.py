@@ -1,8 +1,12 @@
+from PyQt6.QtCore import QObject, pyqtSlot
+
 import run_threads
 
 
-class CommandExecutor:
-    def __init__(self, dev, cwd, pr, path, logger):
+class CommandExecutor(QObject):
+
+    def __init__(self, dev, cwd, pr, path, logger=None):
+        super().__init__()
         self.devs = dev
         self.ctrl_panel = cwd.ctrl_panel
         self.viewer = cwd.viewer
@@ -12,22 +16,35 @@ class CommandExecutor:
         self.flk = pr.flp
         self.acq_thread = None
         self.path = path
-        self.logger = logger
+        self.logger = logger or self.setup_logging()
+        self._set_signal_executions()
 
-    def start_acquisition(self):
+    @staticmethod
+    def setup_logging():
+        import logging
+        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
+        return logging
+
+    def _set_signal_executions(self):
+        self.ctrl_panel.Signal_video.connect(self.video)
+
+    @pyqtSlot(bool, str)
+    def video(self, sw: bool, md: str):
+        if sw:
+            self.start_video(md)
+        else:
+            self.stop_video(md)
+
+    def start_video(self, md):
         if self.acq_thread and self.acq_thread.isRunning():
             return
         self.acq_thread = run_threads.LiveViewThread(self.devs.camera, interval_ms=50)
-        self.acq_thread.new_frame.connect(self.viewer.update_image)
+        self.acq_thread.new_frame.connect(self.viewer.update_image_signal)
         self.acq_thread.start()
-        self.ctrl_panel.start_btn.setEnabled(False)
-        self.ctrl_panel.stop_btn.setEnabled(True)
-        self.logger.info(r"Live Acquisition Started")
+        self.logger.info(r"Live Video Started")
 
-    def stop_acquisition(self):
+    def stop_video(self, md):
         if self.acq_thread:
             self.acq_thread.stop()
             self.acq_thread = None
-        self.ctrl_panel.start_btn.setEnabled(True)
-        self.ctrl_panel.stop_btn.setEnabled(False)
-        self.logger.info(r"Live Acquisition Stopped")
+        self.logger.info(r"Live Video Stopped")

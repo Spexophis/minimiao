@@ -380,14 +380,14 @@ class TextEditWidget(QtWidgets.QTextEdit):
 
 
 class SliderWidget(QtWidgets.QSlider):
-    def __init__(self, mi, ma, value, step):
+    def __init__(self, mi, ma, value, tick=False):
         super().__init__(QtCore.Qt.Orientation.Horizontal)
-        self.setMinimum(int(mi / step))
-        self.setMaximum(int(ma / step))
+        self.setMinimum(mi)
+        self.setMaximum(ma)
         self.setSingleStep(1)
-        self.setValue(int(value / step))
-        self.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
-        self.setTickInterval(int(1 / step))
+        self.setValue(value)
+        if tick:
+            self.setTickPosition(QtWidgets.QSlider.TickPosition.TicksBelow)
         self.setStyleSheet("""
             QSlider::groove:horizontal {
                 height: 8px;

@@ -50,7 +50,7 @@ def select_file_from_folder(parent, data_folder):
         parent,
         "Select a File",
         data_folder,
-        "All Files (*)"  # Or specify e.g. "Images (*.png *.jpg);;All Files (*)"
+        "All Files (*)"
     )
     return file_path if file_path else None
 

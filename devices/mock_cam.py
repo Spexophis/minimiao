@@ -3,11 +3,11 @@ import time
 import numpy as np
 
 
-class SimulatedCamera:
+class MockCamera:
     def __init__(self, shape=(2048, 2048)):
         self.shape = shape
 
-    def get_frame(self):
+    def get_last_image(self):
         t = time.time()
         img = np.random.normal(80, 5, self.shape).astype(np.float32)
         x0 = int((np.sin(t) + 1) / 2 * (self.shape[0] - 40) + 20)

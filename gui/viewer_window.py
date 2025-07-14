@@ -1,6 +1,6 @@
 import matplotlib
 import numpy as np
-from PyQt6.QtCore import pyqtSlot, Qt
+from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QSlider, QLabel
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
@@ -31,6 +31,8 @@ class MplCanvas(FigureCanvas):
 
 
 class LiveViewer(QWidget):
+    update_image_signal = pyqtSignal(np.ndarray)
+
     def __init__(self, config, logg, parent=None):
         super().__init__(parent)
         self.config = config
@@ -38,6 +40,7 @@ class LiveViewer(QWidget):
         self._setup_ui()
         self._im = None
         self.update_image(np.random.rand(2048, 2048) * 2048)
+        self.update_image_signal.connect(self.update_image)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -46,22 +49,11 @@ class LiveViewer(QWidget):
         self.ax, self.canvas = self._create_image_window()
         layout.addWidget(self.canvas)
 
-        self._contrast_layout = QHBoxLayout()
-        self._contrast_label = QLabel("Contrast:")
-        self._slider = QSlider()
-        self._slider.setOrientation(Qt.Orientation.Horizontal)
-        self._slider.setMinimum(10)
-        self._slider.setMaximum(255)
-        self._slider.setValue(255)
-        self._slider.valueChanged.connect(self._on_contrast_changed)
-        self._contrast_value_label = QLabel("255")
-        self._contrast_layout.addWidget(self._contrast_label)
-        self._contrast_layout.addWidget(self._slider)
-        self._contrast_layout.addWidget(self._contrast_value_label)
-        layout.addLayout(self._contrast_layout)
+        self.contrast_slide = self._create_slide()
+        layout.addLayout(self.contrast_slide)
 
-        self._plot_layout = self._create_plot_widgets()
-        layout.addLayout(self._plot_layout)
+        self.plot_layout = self._create_plot_widgets()
+        layout.addLayout(self.plot_layout)
         layout.addStretch(1)
         self.setLayout(layout)
 
@@ -72,6 +64,18 @@ class LiveViewer(QWidget):
         ax.axis('off')
         canvas = FigureCanvas(fig)
         return ax, canvas
+
+    def _create_slide(self):
+        contrast_layout = QHBoxLayout()
+        contrast_label = cw.LabelWidget("Contrast:")
+        slider = cw.SliderWidget(mi=0, ma=65535, value=65535)
+        slider.setOrientation(Qt.Orientation.Horizontal)
+        slider.valueChanged.connect(self._on_contrast_changed)
+        self.contrast_value_label = cw.LabelWidget("65536")
+        contrast_layout.addWidget(contrast_label)
+        contrast_layout.addWidget(slider)
+        contrast_layout.addWidget(self.contrast_value_label)
+        return contrast_layout
 
     def _create_plot_widgets(self):
         layout_plot = QGridLayout()
@@ -97,8 +101,9 @@ class LiveViewer(QWidget):
             self._im.set_data(img_disp)
         self.canvas.draw_idle()
 
-    def _on_contrast_changed(self, val):
-        self._contrast_value_label.setText(str(val))
+    @pyqtSlot(int)
+    def _on_contrast_changed(self, val: int):
+        self.contrast_value_label.setText(str(val))
         if self._im is not None:
             self._im.set_clim(0, val)
             self.canvas.draw_idle()

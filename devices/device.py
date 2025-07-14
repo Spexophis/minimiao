@@ -1,18 +1,17 @@
-# import cam_sim
-
-import andor_ixon
-import cobolt_laser
-import deformable_mirror
-import fdd_slm
-import hamamatsu_orchflash
-import mcl_maddeck
-import mcl_piezo
-import ni_daq
+from devices import mock_cam
+from devices import andor_ixon
+from devices import cobolt_laser
+from devices import deformable_mirror
+from devices import fdd_slm
+from devices import hamamatsu_orchflash
+from devices import mcl_maddeck
+from devices import mcl_piezo
+from devices import ni_daq
 
 
 class DeviceManager:
     def __init__(self, config=None, logg=None, path=None):
-        # self.camera = cam_sim.SimulatedCamera()
+        self.camera = mock_cam.MockCamera()
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
