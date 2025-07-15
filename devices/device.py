@@ -16,13 +16,14 @@ class DeviceManager:
         self.logg = logg or self.setup_logging()
         self.data_folder = path
         self.camera = mock_cam.MockCamera(self.bus)
-        self.cam_set = {}
+        self.cameras = {}
+        self.cam_set = {"imaging": 0, "wfs": 1, "focus_lock": 3, "mock": self.camera}
         try:
-            self.cam_set[0] = andor_ixon.EMCCDCamera(logg=self.logg)
+            self.cameras[0] = andor_ixon.EMCCDCamera(self.bus, logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.cam_set[1] = hamamatsu_orchflash.HamamatsuCamera(logg=self.logg)
+            self.cameras[1] = hamamatsu_orchflash.HamamatsuCamera(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
         self.dm = {}
@@ -57,8 +58,8 @@ class DeviceManager:
 
     def close(self):
         try:
-            for key in self.cam_set.keys():
-                self.cam_set[key].close()
+            for key in self.cameras.keys():
+                self.cameras[key].close()
         except Exception as e:
             self.logg.error(f"{e}")
         try:

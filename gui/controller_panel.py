@@ -786,8 +786,7 @@ class ControlPanel(QWidget):
         dot_pos_act = [self.QSpinBox_dot_step_x_act.value(), self.QDoubleSpinBox_dot_step_x_act.value(),
                        self.QDoubleSpinBox_dot_step_y_act.value()]
         offsets_act = [self.QDoubleSpinBox_galvo_offset_x_act.value(), self.QDoubleSpinBox_galvo_offset_y_act.value()]
-        sws = [self.QDoubleSpinBox_emccd_gvs.value(), self.QDoubleSpinBox_scmos_gvs.value(),
-               self.QDoubleSpinBox_thorcam_gvs.value()]
+        sws = [self.QDoubleSpinBox_emccd_gvs.value(), self.QDoubleSpinBox_scmos_gvs.value(), 0.]
         return (galvo_positions, galvo_ranges, dot_pos, offsets,
                 galvo_positions_act, galvo_ranges_act, dot_pos_act, offsets_act, sws)
 
@@ -823,15 +822,24 @@ class ControlPanel(QWidget):
 
     def get_lasers(self):
         lasers = []
+        powers = []
         if self.QRadioButton_laser_405.isChecked():
-            lasers.append(0)
+            power = self.QDoubleSpinBox_laserpower_405.value()
+            lasers.append("405")
+            powers.append(power)
         if self.QRadioButton_laser_488_0.isChecked():
-            lasers.append(1)
+            power = self.QDoubleSpinBox_laserpower_488_0.value()
+            lasers.append("488_0")
+            powers.append(power)
         if self.QRadioButton_laser_488_1.isChecked():
-            lasers.append(2)
+            power = self.QDoubleSpinBox_laserpower_488_1.value()
+            lasers.append("488_1")
+            powers.append(power)
         if self.QRadioButton_laser_488_2.isChecked():
-            lasers.append(3)
-        return lasers
+            power = self.QDoubleSpinBox_laserpower_488_2.value()
+            lasers.append("488_2")
+            powers.append(power)
+        return lasers, powers
 
     def get_cobolt_laser_power(self, laser):
         if laser == "405":
@@ -849,6 +857,23 @@ class ControlPanel(QWidget):
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
         self.Signal_daq_update.emit(sample_rate)
+
+    def get_digital_parameters(self):
+        digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),
+                          self.QDoubleSpinBox_ttl_start_off_488_0.value(),
+                          self.QDoubleSpinBox_ttl_start_off_488_1.value(),
+                          self.QDoubleSpinBox_ttl_start_read_488_2.value(),
+                          self.QDoubleSpinBox_ttl_start_emccd.value(),
+                          self.QDoubleSpinBox_ttl_start_scmos.value(),
+                          self.QDoubleSpinBox_ttl_start_thorcam.value()]
+        digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
+                        self.QDoubleSpinBox_ttl_stop_off_488_0.value(),
+                        self.QDoubleSpinBox_ttl_stop_off_488_1.value(),
+                        self.QDoubleSpinBox_ttl_stop_read_488_2.value(),
+                        self.QDoubleSpinBox_ttl_stop_emccd.value(),
+                        self.QDoubleSpinBox_ttl_stop_scmos.value(),
+                        self.QDoubleSpinBox_ttl_stop_thorcam.value()]
+        return digital_starts, digital_ends
 
     @pyqtSlot()
     def reset_daq(self):

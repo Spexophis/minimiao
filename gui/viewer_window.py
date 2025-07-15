@@ -98,20 +98,21 @@ class LiveViewer(QWidget):
 
     @pyqtSlot(np.ndarray)
     def update_image(self, img: np.ndarray):
-        self._orig_img = img
-        self._orig_img_shape = img.shape
-        factor = max(img.shape[0] // 512, 1)
-        self._downsample_factor = factor
-        img_disp = img[::factor, ::factor] if factor > 1 else img
-        self.status_label.setText(f"Image shape: {img.shape} (displayed {img_disp.shape})")
+        if isinstance(img, np.ndarray):
+            self._orig_img = img
+            self._orig_img_shape = img.shape
+            factor = max(img.shape[0] // 512, 1)
+            self._downsample_factor = factor
+            img_disp = img[::factor, ::factor] if factor > 1 else img
+            self.status_label.setText(f"Image shape: {img.shape} (displayed {img_disp.shape})")
 
-        if self._im is None:
-            self.ax.clear()
-            self.ax.axis('off')
-            self._im = self.ax.imshow(img_disp, cmap='gray', vmin=0, vmax=255, animated=True)
-        else:
-            self._im.set_data(img_disp)
-        self.canvas.draw_idle()
+            if self._im is None:
+                self.ax.clear()
+                self.ax.axis('off')
+                self._im = self.ax.imshow(img_disp, cmap='gray', vmin=0, vmax=255, animated=True)
+            else:
+                self._im.set_data(img_disp)
+            self.canvas.draw_idle()
 
     @pyqtSlot(int)
     def _on_contrast_changed(self, val: int):

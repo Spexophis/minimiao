@@ -1,7 +1,4 @@
 import sys
-import threading
-import time
-from collections import deque
 
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
@@ -39,16 +36,15 @@ class EMCCDCamera:
             self.acq_num = 0
             self.acq_first = 0
             self.acq_last = 0
-            self.valid_index = 0
 
-    def __init__(self, logg=None):
+    def __init__(self, bus, logg=None):
+        self.bus = bus
         self.logg = logg or self.setup_logging()
         self._settings = self.CameraSettings()
         self.sdk = self._initialize_sdk()
         if self.sdk:
             self._configure_camera()
         self.data = None
-        self.acq_thread = None
 
     def __getattr__(self, item):
         if hasattr(self._settings, item):
@@ -321,40 +317,28 @@ class EMCCDCamera:
         self.get_buffer_size()
 
     def start_live(self):
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
         ret = self.sdk.StartAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.acq_thread.start()
             self.logg.info('Start live image')
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_live(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
         ret = self.sdk.AbortAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info('Live image stopped')
-            self.data = None
             self.free_memory()
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def get_images(self):
-        ret, first, last = self.sdk.GetNumberNewImages()
+    def get_last_image(self, publish=True):
+        (ret, data_array) = self.sdk.GetMostRecentImage16(self.img_size)
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            num = last - first + 1
-            (ret, data_array, valid_first, valid_last) = self.sdk.GetImages16(first, last, self.img_size * num)
-            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-                self.valid_index = valid_last
-                data_array = np.split(data_array.reshape(num, self.img_size).astype(np.uint16), num, axis=0)
-                data_array = [subarray.reshape(self.pixels_y, self.pixels_x) for subarray in data_array]
-                self.data.add_element(data_array, valid_first, valid_last)
-
-    def get_last_image(self):
-        if self.data is not None:
-            return self.data.get_last_element()
+            data_array = data_array.reshape(self.pixels_y, self.pixels_x)
+            if publish:
+                self.bus.publish("get_last_image", data_array)
+            else:
+                return data_array
         else:
             return None
 
@@ -369,8 +353,6 @@ class EMCCDCamera:
         self.get_buffer_size()
 
     def start_data_acquisition(self):
-        self.data = DataList(self.acq_num)
-        self.acq_thread = AcquisitionThread(self)
         ret = self.sdk.StartAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.acq_thread.start()
@@ -379,15 +361,26 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_data_acquisition(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
         ret = self.sdk.AbortAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info('Acquisition stopped')
-            self.data = None
             self.free_memory()
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
+
+    def get_images(self):
+        ret, first, last = self.sdk.GetNumberNewImages()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            num = last - first + 1
+            (ret, data_array, valid_first, valid_last) = self.sdk.GetImages16(first, last, self.img_size * num)
+            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+                data_array = np.split(data_array.reshape(num, self.img_size).astype(np.uint16), num, axis=0)
+                data_array = [subarray.reshape(self.pixels_y, self.pixels_x) for subarray in data_array]
+                return data_array
+            else:
+                return None
+        else:
+            return None
 
     def get_data(self):
         if self.data is not None:
@@ -469,50 +462,3 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-
-class AcquisitionThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
-
-    def __init__(self, cam):
-        threading.Thread.__init__(self)
-        self.cam = cam
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.lock:
-                self.cam.get_images()
-
-    def stop(self):
-        self.running = False
-        self.join()
-
-
-class DataList:
-
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
-        self.callback = None
-
-    def add_element(self, elements, start_ind, end_ind):
-        self.data_list.extend(elements)
-        self.ind_list.extend(list(range(start_ind, end_ind + 1)))
-        self.emit_update()
-
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def get_last_element(self):
-        return self.data_list[-1].copy() if self.data_list else None
-
-    def is_empty(self):
-        return len(self.data_list) == 0
-
-    def on_update(self, callback):
-        self.callback = callback
-
-    def emit_update(self):
-        if self.callback is not None:
-            self.callback(self)
