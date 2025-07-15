@@ -5,8 +5,9 @@ import run_threads
 
 class CommandExecutor(QObject):
 
-    def __init__(self, dev, cwd, pr, path, logger=None):
+    def __init__(self, dev, cwd, pr, bus, path, logger=None):
         super().__init__()
+        self.bus = bus
         self.devs = dev
         self.ctrl_panel = cwd.ctrl_panel
         self.viewer = cwd.viewer
@@ -165,8 +166,7 @@ class CommandExecutor(QObject):
     def start_video(self, md):
         if self.acq_thread and self.acq_thread.isRunning():
             return
-        self.acq_thread = run_threads.LiveViewThread(self.devs.camera, interval_ms=50)
-        self.acq_thread.new_frame.connect(self.viewer.update_image_signal)
+        self.acq_thread = run_threads.LiveViewThread(self.devs.camera, self.bus, interval_ms=50)
         self.acq_thread.start()
         self.logg.info(r"Live Video Started")
 

@@ -15,7 +15,6 @@ class MainWindow(QMainWindow):
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
-        self.resize(1000, 800)
         self._set_dark_theme()
         self._setup_ui()
 
@@ -26,15 +25,15 @@ class MainWindow(QMainWindow):
         return logging
 
     def _setup_ui(self):
-        self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg, parent=self)
+        self.ctrl_panel = controller_panel.ControlPanel(self.bus, self.config, self.logg, parent=self)
         self.ctrl_dock = cw.DockWidget("Control Panel")
         self.ctrl_dock.setWidget(self.ctrl_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.ctrl_dock)
 
-        self.viewer = viewer_window.LiveViewer(self.config, self.logg, parent=self)
+        self.viewer = viewer_window.LiveViewer(self.bus, self.config, self.logg, parent=self)
         self.setCentralWidget(self.viewer)
 
-        self.ao_panel = ao_panel.AOPanel(self.config, self.logg, parent=self)
+        self.ao_panel = ao_panel.AOPanel(self.bus, self.config, self.logg, parent=self)
         self.ao_dock = cw.DockWidget("AO Panel")
         self.ao_dock.setWidget(self.ao_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.ao_dock)
@@ -81,6 +80,8 @@ if __name__ == '__main__':
     app = QApplication(sys.argv)
     with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
         cfg = json.load(f)
-    win = MainWindow(config=cfg)
+    import event_bus
+    bus = event_bus.EventBus()
+    win = MainWindow(bus, config=cfg)
     win.show()
     sys.exit(app.exec())

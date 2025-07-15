@@ -1,7 +1,7 @@
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from gui import custom_widgets as cw
 
@@ -28,8 +28,9 @@ class AOPanel(QWidget):
     Signal_sensorlessAO_metric_acquisition = pyqtSignal()
     Signal_sensorlessAO_ml_acquisition = pyqtSignal()
 
-    def __init__(self, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, bus, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
+        self.bus = bus
         self.config = config
         self.logg = logg
         self._setup_ui()
@@ -46,13 +47,15 @@ class AOPanel(QWidget):
         self.dm_panel = self._create_dm_panel()
         self.sensorless_panel = self._create_sensorless_panel()
 
-        main_layout.addWidget(self.image_panel)
-        main_layout.addWidget(self.parameter_panel)
-        main_layout.addWidget(self.shwfs_panel)
-        main_layout.addWidget(self.dwfs_panel)
-        main_layout.addWidget(self.dm_panel)
-        main_layout.addWidget(self.sensorless_panel)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.image_panel)
+        splitter.addWidget(self.parameter_panel)
+        splitter.addWidget(self.shwfs_panel)
+        splitter.addWidget(self.dwfs_panel)
+        splitter.addWidget(self.dm_panel)
+        splitter.addWidget(self.sensorless_panel)
 
+        main_layout.addWidget(splitter)
         main_layout.addStretch(1)
         self.setLayout(main_layout)
 

@@ -90,7 +90,7 @@ def main():
     devices = device.DeviceManager(bus=evbus, config=configs, logg=error_logger, path=data_folder)
     proc = processor.ProcessorManager(bus=evbus, config=configs, logg=error_logger, path=data_folder)
     mwd = main_window.MainWindow(bus=evbus, config=configs, logg=error_logger, path=data_folder)
-    cmd_exc = executor.CommandExecutor(devices, mwd, proc, data_folder, error_logger, evbus)
+    cmd_exc = executor.CommandExecutor(devices, mwd, proc, evbus, data_folder, error_logger)
     mwd.aboutToClose.connect(devices.close)
 
     mwd.show()
