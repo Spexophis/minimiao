@@ -9,9 +9,8 @@ from gui import controller_panel, ao_panel, viewer_window
 class MainWindow(QMainWindow):
     aboutToClose = pyqtSignal()
 
-    def __init__(self, bus, config=None, logg=None, path=None):
+    def __init__(self, config=None, logg=None, path=None):
         super().__init__()
-        self.bus = bus
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
@@ -26,15 +25,15 @@ class MainWindow(QMainWindow):
         return logging
 
     def _setup_ui(self):
-        self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg, parent=self)
+        self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
         self.ctrl_dock = cw.DockWidget("Control Panel")
         self.ctrl_dock.setWidget(self.ctrl_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.ctrl_dock)
 
-        self.viewer = viewer_window.LiveViewer(self.config, self.logg, parent=self)
+        self.viewer = viewer_window.LiveViewer(self.config, self.logg)
         self.setCentralWidget(self.viewer)
 
-        self.ao_panel = ao_panel.AOPanel(self.config, self.logg, parent=self)
+        self.ao_panel = ao_panel.AOPanel(self.config, self.logg)
         self.ao_dock = cw.DockWidget("AO Panel")
         self.ao_dock.setWidget(self.ao_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.ao_dock)

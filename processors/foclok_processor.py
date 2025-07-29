@@ -8,21 +8,13 @@ from sklearn.linear_model import LinearRegression
 
 class FocusLocker:
 
-    def __init__(self, bus, pid_p=(0.5, 0.5, 0.0), logg=None):
-        self.bus = bus
-        self.logg = logg or self.setup_logging()
+    def __init__(self, pid_p=(0.5, 0.5, 0.0)):
         self.threshold = None
         self.cm_ref = None
         self.model = LinearRegression()
         kp, ki, kd = pid_p
         self.pid = PID(P=kp, I=ki, D=kd)
         self.ctd = CtrlData(128)
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def update_pid(self, pid_p=(0.8, 0.6, 0.0)):
         if pid_p is not None:

@@ -24,18 +24,17 @@ matplotlib.rcParams.update({
 
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, dpi=100):
-        super().__init__(parent)
         fig = Figure(dpi=dpi, facecolor="#232629")
         self.axes = fig.add_subplot(111, facecolor="#232629")
         super().__init__(fig)
-        self.setStyleSheet("background-color: #232629;")
+        self.setStyleSheet("background-color: #232629;")  # Panel background
 
 
 class LiveViewer(QWidget):
     update_image_signal = pyqtSignal(np.ndarray)
 
-    def __init__(self, config, logg, parent=None, *args, **kwargs):
-        super().__init__(parent, *args, **kwargs)
+    def __init__(self, config, logg, parent=None):
+        super().__init__(parent)
         self.config = config
         self.logg = logg
         self._setup_ui()
@@ -88,8 +87,8 @@ class LiveViewer(QWidget):
 
     def _create_plot_widgets(self):
         layout_plot = QGridLayout()
-        self.canvas_show = MplCanvas(self, dpi=80)
-        self.canvas_plot = MplCanvas(self, dpi=80)
+        self.canvas_show = MplCanvas(self, dpi=64)
+        self.canvas_plot = MplCanvas(self, dpi=64)
         toolbar = NavigationToolbar(self.canvas_plot, self)
         layout_plot.addWidget(toolbar, 0, 0, 1, 2)
         layout_plot.addWidget(self.canvas_show, 1, 0, 1, 1)
