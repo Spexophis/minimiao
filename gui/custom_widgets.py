@@ -151,8 +151,10 @@ QSpinBox, QDoubleSpinBox {
     background-color: #121212;
     color: white;
     border: 1px solid #333333;
+    padding-right: 28px;
     font-size: 11pt;
-    border-radius: 2px;
+    height: 26px;
+    border-radius: 4px;
 }
 QSpinBox::up-button, QDoubleSpinBox::up-button {
     subcontrol-origin: border;
@@ -161,7 +163,7 @@ QSpinBox::up-button, QDoubleSpinBox::up-button {
     height: 14px;
     background-color: #353535;
     border-left: 1px solid #333333;
-    border-top-right-radius: 2px;
+    border-top-right-radius: 4px;
     margin: 1px 1px 0 0;
 }
 QSpinBox::down-button, QDoubleSpinBox::down-button {
@@ -171,7 +173,7 @@ QSpinBox::down-button, QDoubleSpinBox::down-button {
     height: 14px;
     background-color: #353535;
     border-left: 1px solid #333333;
-    border-bottom-right-radius: 2px;
+    border-bottom-right-radius: 4px;
     margin: 0 1px 1px 0;
 }
 QSpinBox::up-button:hover, QSpinBox::down-button:hover,
@@ -194,9 +196,11 @@ class SpinBoxWidget(QtWidgets.QSpinBox):
         self.setRange(range_min, range_max)
         self.setSingleStep(step)
         self.setValue(value)
-        fixed_height = 30
-        fixed_width = max(self.sizeHint().width(), self.fontMetrics().horizontalAdvance(str(self.maximum())) + 4)
-        self.setFixedSize(fixed_width, fixed_height)
+        self.setMinimumHeight(30)
+        self.setMinimumWidth(self.sizeHint().width())
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
+        self.setMaximumWidth(max_value_width + 16)
 
 
 class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
@@ -208,9 +212,11 @@ class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
         self.setSingleStep(step)
         self.setDecimals(decimals)
         self.setValue(value)
-        fixed_height = 30
-        fixed_width = max(self.sizeHint().width(), self.fontMetrics().horizontalAdvance(str(self.maximum())) + 4)
-        self.setFixedSize(fixed_width, fixed_height)
+        self.setMinimumHeight(30)
+        self.setMinimumWidth(self.sizeHint().width())
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
+        self.setMaximumWidth(max_value_width + 16)
 
 
 class PushButtonWidget(QtWidgets.QPushButton):

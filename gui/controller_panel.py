@@ -1,7 +1,7 @@
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
-from PyQt6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from gui import custom_widgets as cw
 
@@ -35,9 +35,8 @@ class ControlPanel(QWidget):
     Signal_data_acquire = pyqtSignal(str, int)
     Signal_save_file = pyqtSignal(str)
 
-    def __init__(self, bus, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self.bus = bus
         self.config = config
         self.logg = logg
         self._setup_ui()
@@ -56,15 +55,13 @@ class ControlPanel(QWidget):
         self.live_panel = self._create_live_panel()
         self.acq_panel = self._create_acquisition_panel()
 
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(self.camera_panel)
-        splitter.addWidget(self.position_panel)
-        splitter.addWidget(self.laser_panel)
-        splitter.addWidget(self.daq_panel)
-        splitter.addWidget(self.live_panel)
-        splitter.addWidget(self.acq_panel)
+        main_layout.addWidget(self.camera_panel)
+        main_layout.addWidget(self.position_panel)
+        main_layout.addWidget(self.laser_panel)
+        main_layout.addWidget(self.daq_panel)
+        main_layout.addWidget(self.live_panel)
+        main_layout.addWidget(self.acq_panel)
 
-        main_layout.addWidget(splitter)
         main_layout.addStretch(1)
         self.setLayout(main_layout)
 

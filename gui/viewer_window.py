@@ -1,7 +1,7 @@
 import matplotlib
 import numpy as np
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QSplitter
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QSlider, QLabel
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
@@ -24,6 +24,7 @@ matplotlib.rcParams.update({
 
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, dpi=100):
+        super().__init__(parent)
         fig = Figure(dpi=dpi, facecolor="#232629")
         self.axes = fig.add_subplot(111, facecolor="#232629")
         super().__init__(fig)
@@ -31,19 +32,19 @@ class MplCanvas(FigureCanvas):
 
 
 class LiveViewer(QWidget):
+    update_image_signal = pyqtSignal(np.ndarray)
 
-    def __init__(self, bus, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self.bus = bus
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self._setup_eventbus()
         self._im = None
         self._orig_img = np.random.rand(2048, 2048) * 4096
         self._orig_img_shape = (2048, 2048)
         self._downsample_factor = 4
         self.update_image(self._orig_img)
+        self.update_image_signal.connect(self.update_image)
         self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
 
     def _setup_ui(self):
@@ -51,20 +52,19 @@ class LiveViewer(QWidget):
         self.status_label = cw.LabelWidget("No image")
         layout.addWidget(self.status_label)
         self.ax, self.canvas = self._create_image_window()
-        self.pixel_pos_label = cw.LabelWidget("Pixel: - , -")
-        self.contrast_slide = self._create_slide()
-        self.plot_layout = self._create_plot_widgets()
 
         layout.addWidget(self.canvas)
-        layout.addWidget(self.pixel_pos_label)
-        layout.addLayout(self.contrast_slide)
-        layout.addLayout(self.plot_layout)
 
+        self.pixel_pos_label = cw.LabelWidget("Pixel: - , -")
+        layout.addWidget(self.pixel_pos_label)
+
+        self.contrast_slide = self._create_slide()
+        layout.addLayout(self.contrast_slide)
+
+        self.plot_layout = self._create_plot_widgets()
+        layout.addLayout(self.plot_layout)
         layout.addStretch(1)
         self.setLayout(layout)
-
-    def _setup_eventbus(self):
-        self.bus.subscribe("get_last_image", self.update_image)
 
     @staticmethod
     def _create_image_window():
