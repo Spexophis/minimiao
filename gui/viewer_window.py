@@ -1,12 +1,12 @@
 import matplotlib
 import numpy as np
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QHBoxLayout, QSlider, QLabel
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
-from gui import custom_widgets as cw
+from gui import napari_tool
 
 matplotlib.rcParams.update({
     'axes.facecolor': '#232629',
@@ -38,44 +38,51 @@ class LiveViewer(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self._im = None
-        self.update_image(np.random.rand(2048, 2048) * 2048)
+        self._set_napari_layers()
         self.update_image_signal.connect(self.update_image)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
-        self.status_label = cw.LabelWidget("No image")
-        layout.addWidget(self.status_label)
-        self.ax, self.canvas = self._create_image_window()
-        layout.addWidget(self.canvas)
+        splitter = QSplitter(Qt.Orientation.Vertical)
 
-        self.contrast_slide = self._create_slide()
-        layout.addLayout(self.contrast_slide)
+        image_widget = QWidget()
+        image_layout = self._create_image_widgets()
+        image_widget.setLayout(image_layout)
+        splitter.addWidget(image_widget)
 
-        self.plot_layout = self._create_plot_widgets()
-        layout.addLayout(self.plot_layout)
-        layout.addStretch(1)
+        plot_widget = QWidget()
+        plot_layout = self._create_plot_widgets()
+        plot_widget.setLayout(plot_layout)
+        splitter.addWidget(plot_widget)
+
+        layout.addWidget(splitter)
         self.setLayout(layout)
 
-    @staticmethod
-    def _create_image_window():
-        fig = Figure(figsize=(8, 8), facecolor="#232629")
-        ax = fig.add_subplot(111, facecolor="#232629")
-        ax.axis('off')
-        canvas = FigureCanvas(fig)
-        return ax, canvas
+    def _create_image_widgets(self):
+        layout_view = QVBoxLayout()
+        napari_tool.addNapariGrayclipColormap()
+        self.napari_viewer = napari_tool.EmbeddedNapari()
+        layout_view.addWidget(self.napari_viewer.get_widget())
+        return layout_view
 
-    def _create_slide(self):
-        contrast_layout = QHBoxLayout()
-        contrast_label = cw.LabelWidget("Contrast:")
-        slider = cw.SliderWidget(mi=0, ma=65535, value=65535)
-        slider.setOrientation(Qt.Orientation.Horizontal)
-        slider.valueChanged.connect(self._on_contrast_changed)
-        self.contrast_value_label = cw.LabelWidget("65536")
-        contrast_layout.addWidget(contrast_label)
-        contrast_layout.addWidget(slider)
-        contrast_layout.addWidget(self.contrast_value_label)
-        return contrast_layout
+    def _set_napari_layers(self):
+        self.napari_layers = {}
+        self.img_layers = {0: "Kinetix Camera", 1: "Hamamatsu Camera"}
+        for name in reversed(list(self.img_layers.values())):
+            self.napari_layers[name] = self.add_napari_layer(name)
+
+    def add_napari_layer(self, name):
+        return self.napari_viewer.add_image(np.zeros((1024, 1024)), rgb=False, name=name, blending='additive',
+                                           colormap=None, protected=True)
+
+    @pyqtSlot(np.ndarray)
+    def update_image(self, img: np.ndarray):
+        name = "Kinetix Camera"
+        if isinstance(img, np.ndarray):
+            self.napari_layers[name].data = img
+
+    def get_image(self, name):
+        return self.napari_layers[name].data
 
     def _create_plot_widgets(self):
         layout_plot = QGridLayout()
@@ -86,27 +93,6 @@ class LiveViewer(QWidget):
         layout_plot.addWidget(self.canvas_show, 1, 0, 1, 1)
         layout_plot.addWidget(self.canvas_plot, 1, 1, 1, 1)
         return layout_plot
-
-    @pyqtSlot(np.ndarray)
-    def update_image(self, img: np.ndarray):
-        factor = max(img.shape[0] // 512, 1)
-        img_disp = img[::factor, ::factor] if factor > 1 else img
-        self.status_label.setText(f"Image shape: {img.shape} (displayed {img_disp.shape})")
-
-        if self._im is None:
-            self.ax.clear()
-            self.ax.axis('off')
-            self._im = self.ax.imshow(img_disp, cmap='gray', vmin=0, vmax=255, animated=True)
-        else:
-            self._im.set_data(img_disp)
-        self.canvas.draw_idle()
-
-    @pyqtSlot(int)
-    def _on_contrast_changed(self, val: int):
-        self.contrast_value_label.setText(str(val))
-        if self._im is not None:
-            self._im.set_clim(0, val)
-            self.canvas.draw_idle()
 
     def plot_profile(self, data, x=None, sp=None):
         if x is not None:
