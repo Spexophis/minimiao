@@ -36,10 +36,9 @@ class CoboltLaser:
 
     @staticmethod
     def load_configs():
-        import json
         config_file = input("Enter configuration file directory: ")
-        with open(config_file, 'r') as f:
-            cfg = json.load(f)
+        from miao.utilities import configurations
+        cfg = configurations.MicroscopeConfiguration(fd=config_file)
         return cfg
 
     def laser_off(self, laser):

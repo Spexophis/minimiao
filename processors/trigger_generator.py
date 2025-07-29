@@ -7,7 +7,6 @@ class TriggerSequence:
             # daq
             self.sample_rate = sample_rate  # Hz
             # digital triggers
-            self.laser_ports = {"405": 0, "488_0": 1, "488_1": 2, "488_2": 3}
             self.digital_starts = [0.0000, 0.00012, 0.00012, 0.00064, 0.00064, 0.00064, 0.00064]
             self.digital_ends = [0.0001, 0.00062, 0.00062, 0.00074, 0.00074, 0.00074, 0.00074]
             self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
@@ -251,8 +250,7 @@ class TriggerSequence:
         if self.cycle_time is not None:
             self.cycle_time = cycle_time
 
-    def generate_digital_triggers(self, laser_list, camera, slm_seq=None):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_digital_triggers(self, lasers, camera, slm_seq=None):
         cam_ind = camera + 4
         digital_channels = lasers.copy()
         digital_channels.append(cam_ind)
@@ -351,8 +349,7 @@ class TriggerSequence:
             raise ValueError("SLM sequence is wrong.")
         return act_seq, cam_seq, expo_on, samps_on
 
-    def generate_digital_triggers_for_scan(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_digital_triggers_for_scan(self, lasers, camera):
         digital_triggers, switch_trigger, chs = self.generate_digital_triggers(lasers, camera)
         if self.standby_samples > self.return_samples:
             cycle_samples = digital_triggers.shape[1]
@@ -365,8 +362,7 @@ class TriggerSequence:
             switch_trigger = np.concatenate((switch_trigger, compensate_sequence))
         return digital_triggers, switch_trigger, cycle_samples, chs
 
-    def generate_piezo_scan(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_piezo_scan(self, lasers, camera):
         digital_triggers, switch_trigger, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera)
         pos = 1
         pz_chs = []
@@ -387,8 +383,7 @@ class TriggerSequence:
             switch_trigger = np.tile(switch_trigger, self.piezo_scan_pos[pch])
         return digital_triggers, switch_trigger, convert_list(piezo_sequences), dig_chs, pz_chs, pos
 
-    def generate_piezo_line_scan(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_piezo_line_scan(self, lasers, camera):
         digital_triggers, switch_trigger, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera)
         pz_chs = []
         for i in range(3):
@@ -403,8 +398,7 @@ class TriggerSequence:
                                                  num=n, endpoint=True)
         return digital_triggers, switch_trigger, piezo_sequences, dig_chs, pz_chs
 
-    def generate_piezo_point_scan_2d(self, laser_list, camera, span="1 um"):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_piezo_point_scan_2d(self, lasers, camera, span="1 um"):
         ramp_libs = {"1 um": self.generate_piezo_scan_ramp_1um(),
                      "2 um": self.generate_piezo_scan_ramp_2um()}
         fast_x, slow_y, fv, samples_x, line, offset = ramp_libs[span]
@@ -504,8 +498,7 @@ class TriggerSequence:
         slow_y = np.concatenate((np.ones(samples_x + 2000) * starts[1], slow_y))
         return fast_x, slow_y, fv, samples_x, line, offset
 
-    def generate_digital_scanning_triggers(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_digital_scanning_triggers(self, lasers, camera):
         cam_sw = self.galvo_sw_states[camera]
         cam_ind = camera + 4
         lasers = lasers.copy()
@@ -660,8 +653,7 @@ class TriggerSequence:
             galvo_sequences[i] = np.append(gtr, gtr[-1] * np.ones(self.standby_samples))
         return np.asarray(digital_sequences), np.asarray(galvo_sequences), lasers
 
-    def generate_dotscan_resolft_2d(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_dotscan_resolft_2d(self, lasers, camera):
         cam_sw = self.galvo_sw_states[camera]
         cam_ind = camera + 4
         lasers = lasers.copy()
@@ -830,8 +822,7 @@ class TriggerSequence:
         self.trigger_delay_samples = 10 * self.line_interval_samples
         return self.line_exposure_samples / self.sample_rate, self.line_interval_samples / self.sample_rate
 
-    def generate_digital_scanning_triggers_rolling(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_digital_scanning_triggers_rolling(self, lasers, camera):
         cam_ind = camera + 4
         lasers = lasers.copy()
         offset_samples = max(self.trigger_delay_samples + 2, self.galvo_return)
@@ -942,8 +933,7 @@ class TriggerSequence:
         lasers.append(cam_ind)
         return np.asarray(digital_sequences), np.asarray(galvo_sequences), lasers
 
-    def generate_dotscan_resolft_2d_rolling(self, laser_list, camera):
-        lasers = [self.laser_ports[las] for las in laser_list]
+    def generate_dotscan_resolft_2d_rolling(self, lasers, camera):
         cam_ind = camera + 4
         lasers = lasers.copy()
         # read out galvo
