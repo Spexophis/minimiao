@@ -39,23 +39,15 @@ class LiveViewer(QWidget):
         self.logg = logg
         self._setup_ui()
         self._im = None
-        self._orig_img = np.random.rand(2048, 2048) * 4096
-        self._orig_img_shape = (2048, 2048)
-        self._downsample_factor = 4
-        self.update_image(self._orig_img)
+        self.update_image(np.random.rand(2048, 2048) * 2048)
         self.update_image_signal.connect(self.update_image)
-        self.canvas.mpl_connect('motion_notify_event', self._on_mouse_move)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         self.status_label = cw.LabelWidget("No image")
         layout.addWidget(self.status_label)
         self.ax, self.canvas = self._create_image_window()
-
         layout.addWidget(self.canvas)
-
-        self.pixel_pos_label = cw.LabelWidget("Pixel: - , -")
-        layout.addWidget(self.pixel_pos_label)
 
         self.contrast_slide = self._create_slide()
         layout.addLayout(self.contrast_slide)
@@ -97,10 +89,7 @@ class LiveViewer(QWidget):
 
     @pyqtSlot(np.ndarray)
     def update_image(self, img: np.ndarray):
-        self._orig_img = img
-        self._orig_img_shape = img.shape
         factor = max(img.shape[0] // 512, 1)
-        self._downsample_factor = factor
         img_disp = img[::factor, ::factor] if factor > 1 else img
         self.status_label.setText(f"Image shape: {img.shape} (displayed {img_disp.shape})")
 
@@ -118,24 +107,6 @@ class LiveViewer(QWidget):
         if self._im is not None:
             self._im.set_clim(0, val)
             self.canvas.draw_idle()
-
-    def _on_mouse_move(self, event):
-        if event.inaxes == self.ax and self._im is not None:
-            try:
-                x_disp, y_disp = int(event.xdata + 0.5), int(event.ydata + 0.5)
-                factor = getattr(self, "_downsample_factor", 1)
-                orig_x = x_disp * factor
-                orig_y = y_disp * factor
-                orig_shape = getattr(self, "_orig_img_shape", None)
-                if orig_shape and 0 <= orig_x < orig_shape[1] and 0 <= orig_y < orig_shape[0]:
-                    val = self._orig_img[orig_y, orig_x]
-                    self.pixel_pos_label.setText(f"Pixel: {orig_x}, {orig_y}   Value: {val:.1f}")
-                else:
-                    self.pixel_pos_label.setText("Pixel: - , -")
-            except Exception:
-                self.pixel_pos_label.setText("Pixel: - , -")
-        else:
-            self.pixel_pos_label.setText("Pixel: - , -")
 
     def plot_profile(self, data, x=None, sp=None):
         if x is not None:
