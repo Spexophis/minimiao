@@ -1,5 +1,4 @@
-from PyQt6.QtCore import QObject, pyqtSlot
-
+from PyQt6.QtCore import QObject, pyqtSlot, Qt
 import run_threads
 
 
@@ -36,15 +35,10 @@ class CommandExecutor(QObject):
             self.stop_video(md)
 
     def start_video(self, md):
-        if self.acq_thread and self.acq_thread.isRunning():
-            return
-        self.acq_thread = run_threads.LiveViewThread(self.devs.camera, interval_ms=50)
-        self.acq_thread.new_frame.connect(self.viewer.update_image_signal)
-        self.acq_thread.start()
-        self.logger.info(r"Live Video Started")
+        self.devs.camera.start_live()
+        self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
+        self.logger.info("Live Video Started")
 
     def stop_video(self, md):
-        if self.acq_thread:
-            self.acq_thread.stop()
-            self.acq_thread = None
+        self.devs.camera.stop_live()
         self.logger.info(r"Live Video Stopped")

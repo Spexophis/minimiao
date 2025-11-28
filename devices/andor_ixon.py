@@ -1,8 +1,7 @@
 import sys
 import threading
-import time
 from collections import deque
-
+import time
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
 
@@ -343,14 +342,19 @@ class EMCCDCamera:
 
     def get_images(self):
         ret, first, last = self.sdk.GetNumberNewImages()
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            num = last - first + 1
-            (ret, data_array, valid_first, valid_last) = self.sdk.GetImages16(first, last, self.img_size * num)
-            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-                self.valid_index = valid_last
-                data_array = np.split(data_array.reshape(num, self.img_size).astype(np.uint16), num, axis=0)
-                data_array = [subarray.reshape(self.pixels_y, self.pixels_x) for subarray in data_array]
-                self.data.add_element(data_array, valid_first, valid_last)
+        if ret != atmcd_errors.Error_Codes.DRV_SUCCESS:
+            return
+
+        num = last - first + 1
+        if num <= 0:
+            return
+
+        ret, data_array, valid_first, valid_last = self.sdk.GetImages16(first, last, self.img_size * num)
+        if ret != atmcd_errors.Error_Codes.DRV_SUCCESS:
+            return
+
+        frames = np.asarray(data_array, dtype=np.uint16).reshape(num, self.pixels_y, self.pixels_x)
+        self.data.add_element([frames[i] for i in range(num)], valid_first, valid_last)
 
     def get_last_image(self):
         if self.data is not None:
@@ -471,48 +475,41 @@ class EMCCDCamera:
 
 
 class AcquisitionThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
-
     def __init__(self, cam):
-        threading.Thread.__init__(self)
+        super().__init__()
         self.cam = cam
+        self.running = False
+        self.lock = threading.Lock()   # instance lock, not class-level
 
     def run(self):
         self.running = True
         while self.running:
             with self.lock:
                 self.cam.get_images()
-
-    def stop(self):
-        self.running = False
-        self.join()
+            time.sleep(0.001)  # ✅ 1 ms yield (tune)
 
 
 class DataList:
-
     def __init__(self, max_length):
         self.data_list = deque(maxlen=max_length)
         self.ind_list = deque(maxlen=max_length)
         self.callback = None
+        self._lock = threading.Lock()
 
     def add_element(self, elements, start_ind, end_ind):
-        self.data_list.extend(elements)
-        self.ind_list.extend(list(range(start_ind, end_ind + 1)))
-        self.emit_update()
+        with self._lock:
+            self.data_list.extend(elements)
+            self.ind_list.extend(range(start_ind, end_ind + 1))
+            last = self.data_list[-1] if self.data_list else None
+        if self.callback is not None and last is not None:
+            self.callback(last)   # ✅ pass the frame, not self
 
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def get_last_element(self):
-        return self.data_list[-1].copy() if self.data_list else None
-
-    def is_empty(self):
-        return len(self.data_list) == 0
+    def get_last_element(self, copy=False):
+        with self._lock:
+            if not self.data_list:
+                return None
+            arr = self.data_list[-1]
+        return arr.copy() if copy else arr  # ✅ no copy for display
 
     def on_update(self, callback):
         self.callback = callback
-
-    def emit_update(self):
-        if self.callback is not None:
-            self.callback(self)

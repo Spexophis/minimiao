@@ -14,7 +14,6 @@ class MainWindow(QMainWindow):
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
-        self.resize(1000, 800)
         self._set_dark_theme()
         self._setup_ui()
 

@@ -1,12 +1,13 @@
 import matplotlib
 import numpy as np
+from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter, QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
-from gui import napari_tool
+from gui import gl_viewer
 
 matplotlib.rcParams.update({
     'axes.facecolor': '#232629',
@@ -30,16 +31,52 @@ class MplCanvas(FigureCanvas):
         self.setStyleSheet("background-color: #232629;")  # Panel background
 
 
+class FramePool(QObject):
+    def __init__(self, shape=(2048, 2048), dtype=np.uint16, n_buffers=4):
+        super().__init__()
+        self._buffers = [np.empty(shape, dtype=dtype) for _ in range(n_buffers)]
+        self._free = list(range(n_buffers))
+        self._in_use = set()
+        self._m = QMutex()
+
+    def acquire(self):
+        """Reserve a buffer index for writing. Returns idx or None if none free."""
+        with QMutexLocker(self._m):
+            if not self._free:
+                return None
+            idx = self._free.pop()
+            self._in_use.add(idx)
+            return idx
+
+    def buffer(self, idx: int) -> np.ndarray:
+        return self._buffers[idx]
+
+    @pyqtSlot(object)
+    def release(self, token):
+        """Return a buffer to the free list after viewer consumed/discarded it."""
+        idx = int(token)
+        with QMutexLocker(self._m):
+            if idx in self._in_use:
+                self._in_use.remove(idx)
+                self._free.append(idx)
+
+
 class LiveViewer(QWidget):
-    update_image_signal = pyqtSignal(np.ndarray)
+    frame_idx_signal = pyqtSignal(int)
 
     def __init__(self, config, logg, parent=None):
         super().__init__(parent)
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self._set_napari_layers()
-        self.update_image_signal.connect(self.update_image)
+        self.image_viewer.set_frame(np.random.randint(0, 2**14, size=(2048, 2048), dtype=np.uint16))
+
+        self.pool = FramePool(shape=(2048, 2048), dtype=np.uint16, n_buffers=4)
+
+        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+
+        self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -60,29 +97,45 @@ class LiveViewer(QWidget):
 
     def _create_image_widgets(self):
         layout_view = QVBoxLayout()
-        napari_tool.addNapariGrayclipColormap()
-        self.napari_viewer = napari_tool.EmbeddedNapari()
-        layout_view.addWidget(self.napari_viewer.get_widget())
+        layout_view.setContentsMargins(4, 4, 4, 4)
+
+        self.image_viewer = gl_viewer.GLGray16Viewer(use_pbo=True)
+        self.image_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        black = getattr(self.config, "black_u16", 0)
+        white = getattr(self.config, "white_u16", 65535)
+        gamma = getattr(self.config, "gamma", 1.0)
+        self.image_viewer.set_levels(black, white, gamma)
+
+        layout_view.addWidget(self.image_viewer, stretch=1)
         return layout_view
 
-    def _set_napari_layers(self):
-        self.napari_layers = {}
-        self.img_layers = {0: "Kinetix Camera", 1: "Hamamatsu Camera"}
-        for name in reversed(list(self.img_layers.values())):
-            self.napari_layers[name] = self.add_napari_layer(name)
+    def on_camera_update_from_thread(self, frame: np.ndarray):
+        """Runs in camera thread. Do NOT touch Qt widgets here."""
+        if frame is None:
+            return
 
-    def add_napari_layer(self, name):
-        return self.napari_viewer.add_image(np.zeros((1024, 1024)), rgb=False, name=name, blending='additive',
-                                           colormap=None, protected=True)
+        # normalize shape/dtype
+        if frame.ndim == 3 and frame.shape[-1] == 1:
+            frame = frame[..., 0]
+        if frame.dtype != np.uint16:
+            frame = frame.astype(np.uint16, copy=False)
 
-    @pyqtSlot(np.ndarray)
-    def update_image(self, img: np.ndarray):
-        name = "Kinetix Camera"
-        if isinstance(img, np.ndarray):
-            self.napari_layers[name].data = img
+        idx = self.pool.acquire()
+        if idx is None:
+            return  # drop if GUI behind
 
-    def get_image(self, name):
-        return self.napari_layers[name].data
+        dst = self.pool.buffer(idx)
+        np.copyto(dst, frame, casting="no")
+
+        # send only index to GUI thread
+        self.frame_idx_signal.emit(idx)
+
+    @pyqtSlot(int)
+    def on_frame_idx(self, idx: int):
+        # Pass the *pre-allocated* array directly to GL viewer with token=idx
+        frame = self.pool.buffer(idx)
+        self.image_viewer.set_frame(frame, token=idx)
 
     def _create_plot_widgets(self):
         layout_plot = QGridLayout()
