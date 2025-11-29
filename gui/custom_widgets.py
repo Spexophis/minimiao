@@ -196,8 +196,8 @@ class SpinBoxWidget(QtWidgets.QSpinBox):
                 background-color: #4a4a4a;
             }}
             QSpinBox::up-arrow, QSpinBox::down-arrow {{
-                width: 6px;
-                height: 6px;
+                width: 8px;
+                height: 8px;
             }}
         ''')
 
@@ -263,8 +263,8 @@ class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
                 background-color: #4a4a4a;
             }}
             QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{
-                width: 6px;
-                height: 6px;
+                width: 8px;
+                height: 8px;
             }}
         ''')
 
