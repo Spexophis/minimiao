@@ -291,9 +291,10 @@ class PushButtonWidget(QtWidgets.QPushButton):
             QPushButton {
                 background-color: #121212;
                 border-style: outset;
-                border-radius: 4px;
+                border-radius: 2px;
                 color: #FFFFFF;
-                padding: 2px;
+                padding-left: 2px;
+                padding-right: 2px;
             }
             QPushButton:hover {
                 background-color: #4169e1;
@@ -309,8 +310,8 @@ class PushButtonWidget(QtWidgets.QPushButton):
         ''')
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         button_size = self.fontMetrics().boundingRect(self.text()).size()
-        if button_size.width() < 96:
-            button_size.setWidth(96)
+        if button_size.width() < 100:
+            button_size.setWidth(100)
         else:
             button_size.setWidth(button_size.width() + 24)
         if button_size.height() < 24:
@@ -382,6 +383,8 @@ class ComboBoxWidget(QtWidgets.QComboBox):
                 background-color: #121212;
                 color: #FFFFFF;
                 border: 1px solid #555555;
+                border-radius: 2px;
+                padding-left: 4px;
             }
             QComboBox::drop-down {
                 border: none;
@@ -395,8 +398,9 @@ class ComboBoxWidget(QtWidgets.QComboBox):
                 selection-background-color: #4169e1;
             }
         ''')
-        self.setMaximumWidth(100)
-
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(24)
+        self.setMaximumWidth(128)
 
 class LineEditWidget(QtWidgets.QLineEdit):
     def __init__(self):
