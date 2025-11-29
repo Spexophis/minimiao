@@ -486,30 +486,32 @@ class AcquisitionThread(threading.Thread):
         while self.running:
             with self.lock:
                 self.cam.get_images()
-            time.sleep(0.001)  # ✅ 1 ms yield (tune)
+            time.sleep(0.001)  # 1 ms yield (tune)
+
+    def stop(self):
+        self.running = False
+        self.join()
 
 
 class DataList:
     def __init__(self, max_length):
         self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
         self.callback = None
         self._lock = threading.Lock()
 
-    def add_element(self, elements, start_ind, end_ind):
+    def add_element(self, elements):
         with self._lock:
             self.data_list.extend(elements)
-            self.ind_list.extend(range(start_ind, end_ind + 1))
             last = self.data_list[-1] if self.data_list else None
         if self.callback is not None and last is not None:
-            self.callback(last)   # ✅ pass the frame, not self
+            self.callback(last)  # passes ndarray
 
     def get_last_element(self, copy=False):
         with self._lock:
             if not self.data_list:
                 return None
             arr = self.data_list[-1]
-        return arr.copy() if copy else arr  # ✅ no copy for display
+        return arr.copy() if copy else arr  # no copy for display
 
     def on_update(self, callback):
         self.callback = callback
