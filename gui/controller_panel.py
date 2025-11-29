@@ -1,7 +1,7 @@
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from gui import custom_widgets as cw
 
@@ -44,14 +44,12 @@ class ControlPanel(QWidget):
         self.position_panel = self._create_position_panel()
         self.laser_panel = self._create_laser_panel()
         self.daq_panel = self._create_daq_panel()
-        self.live_panel = self._create_live_panel()
         self.acq_panel = self._create_acquisition_panel()
 
         main_layout.addWidget(self.camera_panel)
         main_layout.addWidget(self.position_panel)
         main_layout.addWidget(self.laser_panel)
         main_layout.addWidget(self.daq_panel)
-        main_layout.addWidget(self.live_panel)
         main_layout.addWidget(self.acq_panel)
 
         main_layout.addStretch(1)
@@ -317,9 +315,9 @@ class ControlPanel(QWidget):
         group.setLayout(group_layout)
         return group
 
-    def _create_live_panel(self):
+    def _create_acquisition_panel(self):
         group = cw.GroupWidget()
-        live_scroll_area, live_scroll_layout = cw.create_scroll_area("H")
+        acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS", "CMOS"])
         self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field", "Point Scan", "Focus Lock"])
@@ -329,37 +327,24 @@ class ControlPanel(QWidget):
         self.QPushButton_plot_profile = cw.PushButtonWidget("Live Profile", checkable=True, enable=False)
         self.QPushButton_add_profile = cw.PushButtonWidget("Plot Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-
-        live_scroll_layout.addWidget(self.QComboBox_imaging_camera_selection)
-        live_scroll_layout.addWidget(self.QComboBox_live_modes)
-        live_scroll_layout.addWidget(self.QPushButton_video)
-        live_scroll_layout.addWidget(self.QPushButton_fft)
-        live_scroll_layout.addWidget(self.QComboBox_profile_axis)
-        live_scroll_layout.addWidget(self.QPushButton_plot_profile)
-        live_scroll_layout.addWidget(self.QPushButton_add_profile)
-        live_scroll_layout.addWidget(self.QPushButton_save_live_timing_presets)
-
-        group_layout = QVBoxLayout(group)
-        group_layout.addWidget(live_scroll_area)
-        group.setLayout(group_layout)
-        return group
-
-    def _create_acquisition_panel(self):
-        group = cw.GroupWidget()
-        acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
-
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field 2D", "Wide Field 3D",
                                                                          "Point Scan 2D", "Point Scan 3D"])
-        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 50000, 1, 1)
+        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
 
-        acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Modes')), 0, 0)
-        acq_scroll_layout.addWidget(self.QComboBox_acquisition_modes, 1, 0)
-        acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 1)
-        acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_acquire, 1, 2)
-        acq_scroll_layout.addWidget(self.QPushButton_save_acquisition_timing_presets, 1, 4)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Camera')), 0, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_imaging_camera_selection, 1, 0, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Live Modes')), 0, 1, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_live_modes, 1, 1, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_save_live_timing_presets, 2, 1, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_video, 1, 2, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Modes')), 0, 3, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_acquisition_modes, 1, 3, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_save_acquisition_timing_presets, 2, 3, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(acq_scroll_area)
@@ -572,9 +557,10 @@ class ControlPanel(QWidget):
             return [self.QDoubleSpinBox_laserpower_488_0.value()]
         if laser == "488_1":
             return [self.QDoubleSpinBox_laserpower_488_1.value()]
-        if laser == "all":
+        if "all" == laser:
             return [self.QDoubleSpinBox_laserpower_405.value(), self.QDoubleSpinBox_laserpower_488_0.value(),
                     self.QDoubleSpinBox_laserpower_488_1.value()]
+        return None
 
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
