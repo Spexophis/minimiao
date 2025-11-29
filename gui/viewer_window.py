@@ -1,6 +1,6 @@
 import matplotlib
 import numpy as np
-from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot
+from PyQt6.QtCore import QObject, QMutex, QMutexLocker
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter, QSizePolicy
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
@@ -106,6 +106,8 @@ class LiveViewer(QWidget):
         white = getattr(self.config, "white_u16", 65535)
         gamma = getattr(self.config, "gamma", 1.0)
         self.image_viewer.set_levels(black, white, gamma)
+
+        self.slider_black = cw.QSlider(Qt.Orientation.Horizontal)
 
         layout_view.addWidget(self.image_viewer, stretch=1)
         return layout_view
