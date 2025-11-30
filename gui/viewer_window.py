@@ -1,13 +1,14 @@
 import matplotlib
 import numpy as np
-from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot
+from PyQt6.QtCore import QObject, QMutex, QMutexLocker
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter, QSizePolicy
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QSizePolicy, QSlider
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
 from gui import gl_viewer
+import custom_widgets as cw
 
 matplotlib.rcParams.update({
     'axes.facecolor': '#232629',
@@ -107,6 +108,33 @@ class LiveViewer(QWidget):
         gamma = getattr(self.config, "gamma", 1.0)
         self.image_viewer.set_levels(black, white, gamma)
 
+        self.slider_black = QSlider(Qt.Orientation.Horizontal)
+        self.slider_black.setRange(0, 65535)
+        self.slider_black.setValue(0)
+
+        self.slider_white = QSlider(Qt.Orientation.Horizontal)
+        self.slider_white.setRange(0, 65535)
+        self.slider_white.setValue(65535)
+
+        self.slider_gamma = QSlider(Qt.Orientation.Horizontal)
+        self.slider_gamma.setRange(10, 300)
+        self.slider_gamma.setValue(100)
+        # Reset button
+        btn_reset = cw.PushButtonWidget("Reset")
+
+        controls = cw.GroupWidget()
+        row = QHBoxLayout(controls)
+        row.addWidget(cw.LabelWidget("Min"))
+        row.addWidget(cw.LabelWidget("0"))
+        row.addWidget(self.slider_black, stretch=1)
+        row.addWidget(cw.LabelWidget("Max"))
+        row.addWidget(self.slider_white, stretch=1)
+        row.addWidget(cw.LabelWidget("65535"))
+        row.addWidget(cw.LabelWidget("Gamma"))
+        row.addWidget(self.slider_gamma, stretch=1)
+        row.addWidget(cw.LabelWidget("1.00"))
+        row.addWidget(btn_reset)
+        layout_view.addWidget(controls)
         layout_view.addWidget(self.image_viewer, stretch=1)
         return layout_view
 
