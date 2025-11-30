@@ -175,7 +175,9 @@ class LiveViewer(QWidget):
 
     @pyqtSlot()
     def auto_contrast(self):
-        self.image_viewer.auto_levels()
+        b, w = self.image_viewer.auto_levels()
+        self.QSlider_black.setValue(b)
+        self.QSlider_white.setValue(w)
 
     @pyqtSlot(int)
     def on_frame_idx(self, idx: int):
