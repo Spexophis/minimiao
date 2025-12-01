@@ -147,93 +147,137 @@ class LCDNumberWidget(QtWidgets.QLCDNumber):
 
 
 class SpinBoxWidget(QtWidgets.QSpinBox):
+
     def __init__(self, range_min, range_max, step, value):
         super().__init__()
+
         self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
-        self.setStyleSheet('''
-            QSpinBox {
+        self.setMinimumWidth(self.sizeHint().width())
+        self.setMinimumHeight(self.sizeHint().height())
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
+        self.setMaximumWidth(max_value_width + 32)
+
+        self.setStyleSheet(f'''
+            QSpinBox {{
                 background-color: #121212;
                 color: white;
                 border: 1px solid #333333;
-                padding: 2px;
-            }
-            QSpinBox::up-button {
-                background-color: #353535;
+                border-radius: 2px;
+                padding-left: 2px;
+                padding-right: 2px;
+            }}
+            QSpinBox:hover {{
+                border: 1px solid #444444;
+            }}
+            QSpinBox:focus {{
+                border: 1px solid #4e8cff;
+            }}
+
+            QSpinBox::up-button, QSpinBox::down-button {{
+                subcontrol-origin: border;
+                width: 16px;
+                background-color: #2a2a2a;
                 border-left: 1px solid #333333;
-            }
-            QSpinBox::down-button {
-                background-color: #353535;
-                border-left: 1px solid #333333;
-            }
-            QSpinBox::up-arrow {
-                image: url(up_arrow.png);  /* You can set a custom arrow image */
-            }
-            QSpinBox::down-arrow {
-                image: url(down_arrow.png);  /* You can set a custom arrow image */
-            }
-            QSpinBox::up-arrow:disabled, QSpinBox::up-arrow:off {
-                image: url(up_arrow_disabled.png);  /* Custom arrow image when disabled */
-            }
-            QSpinBox::down-arrow:disabled, QSpinBox::down-arrow:off {
-                image: url(down_arrow_disabled.png);  /* Custom arrow image when disabled */
-            }
+            }}
+            QSpinBox::up-button {{
+                subcontrol-position: top right;
+                border-top-right-radius: 2px;
+            }}
+            QSpinBox::down-button {{
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: 2px;
+            }}
+            QSpinBox::up-button:hover, QSpinBox::down-button:hover {{
+                background-color: #3a3a3a;
+            }}
+            QSpinBox::up-button:pressed, QSpinBox::down-button:pressed {{
+                background-color: #4a4a4a;
+            }}
+            QSpinBox::up-arrow, QSpinBox::down-arrow {{
+                width: 8px;
+                height: 8px;
+            }}
         ''')
+
         self.setRange(range_min, range_max)
         self.setSingleStep(step)
         self.setValue(value)
-        self.setMinimumWidth(self.sizeHint().width())
-        self.setMinimumHeight(self.sizeHint().height())
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
-        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
-        self.setMaximumWidth(max_value_width + 32)
+
+    def setRange(self, a, b):  # type: ignore[override]
+        super().setRange(a, b)
 
 
 class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
+
     def __init__(self, range_min, range_max, step, decimals, value):
         super().__init__()
+
         self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
-        self.setStyleSheet('''
-            QDoubleSpinBox {
+        self.setMinimumWidth(self.sizeHint().width())
+        self.setMinimumHeight(self.sizeHint().height())
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                           QtWidgets.QSizePolicy.Policy.Fixed)
+        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
+        self.setMaximumWidth(max_value_width + 32)
+
+        self.setStyleSheet(f'''
+            QDoubleSpinBox {{
                 background-color: #121212;
                 color: white;
                 border: 1px solid #333333;
-                padding: 2px;
-            }
-            QToolTip {
+                border-radius: 2px;
+                padding-left: 2px;
+                padding-right: 2px;
+            }}
+            QDoubleSpinBox:hover {{ border: 1px solid #444444; }}
+            QDoubleSpinBox:focus {{ border: 1px solid #4e8cff; }}
+
+            QToolTip {{
                 color: white;
                 background-color: #2a2a2a;
-                border: 1px solid white;
-            }
-            QDoubleSpinBox::up-button {
-                background-color: #353535;
+                border: 1px solid #5a5a5a;
+                padding: 4px;
+                border-radius: 4px;
+            }}
+
+            QDoubleSpinBox::up-button, QDoubleSpinBox::down-button {{
+                subcontrol-origin: border;
+                width: 16px;
+                background-color: #2a2a2a;
                 border-left: 1px solid #333333;
-            }
-            QDoubleSpinBox::down-button {
-                background-color: #353535;
-                border-left: 1px solid #333333;
-            }
-            QDoubleSpinBox::up-arrow {
-                image: url(up_arrow.png);  /* You can set a custom arrow image */
-            }
-            QDoubleSpinBox::down-arrow {
-                image: url(down_arrow.png);  /* You can set a custom arrow image */
-            }
-            QDoubleSpinBox::up-arrow:disabled, QDoubleSpinBox::up-arrow:off {
-                image: url(up_arrow_disabled.png);  /* Custom arrow image when disabled */
-            }
-            QDoubleSpinBox::down-arrow:disabled, QDoubleSpinBox::down-arrow:off {
-                image: url(down_arrow_disabled.png);  /* Custom arrow image when disabled */
-            }
+            }}
+            QDoubleSpinBox::up-button {{
+                subcontrol-position: top right;
+                border-top-right-radius: 2px;
+            }}
+            QDoubleSpinBox::down-button {{
+                subcontrol-position: bottom right;
+                border-bottom-right-radius: 2px;
+            }}
+            QDoubleSpinBox::up-button:hover, QDoubleSpinBox::down-button:hover {{
+                background-color: #3a3a3a;
+            }}
+            QDoubleSpinBox::up-button:pressed, QDoubleSpinBox::down-button:pressed {{
+                background-color: #4a4a4a;
+            }}
+            QDoubleSpinBox::up-arrow, QDoubleSpinBox::down-arrow {{
+                width: 8px;
+                height: 8px;
+            }}
         ''')
+
+        self.setDecimals(decimals)
         self.setRange(range_min, range_max)
         self.setSingleStep(step)
-        self.setDecimals(decimals)
         self.setValue(value)
-        self.setMinimumWidth(self.sizeHint().width())
-        self.setMinimumHeight(self.sizeHint().height())
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
-        max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
-        self.setMaximumWidth(max_value_width + 32)
+
+    def setRange(self, a, b):  # type: ignore[override]
+        super().setRange(a, b)
+
+    def setDecimals(self, d):  # type: ignore[override]
+        super().setDecimals(d)
 
 
 class PushButtonWidget(QtWidgets.QPushButton):
@@ -247,9 +291,10 @@ class PushButtonWidget(QtWidgets.QPushButton):
             QPushButton {
                 background-color: #121212;
                 border-style: outset;
-                border-radius: 4px;
+                border-radius: 2px;
                 color: #FFFFFF;
-                padding: 2px;
+                padding-left: 2px;
+                padding-right: 2px;
             }
             QPushButton:hover {
                 background-color: #4169e1;
@@ -265,8 +310,8 @@ class PushButtonWidget(QtWidgets.QPushButton):
         ''')
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         button_size = self.fontMetrics().boundingRect(self.text()).size()
-        if button_size.width() < 96:
-            button_size.setWidth(96)
+        if button_size.width() < 100:
+            button_size.setWidth(100)
         else:
             button_size.setWidth(button_size.width() + 24)
         if button_size.height() < 24:
@@ -338,6 +383,8 @@ class ComboBoxWidget(QtWidgets.QComboBox):
                 background-color: #121212;
                 color: #FFFFFF;
                 border: 1px solid #555555;
+                border-radius: 2px;
+                padding-left: 4px;
             }
             QComboBox::drop-down {
                 border: none;
@@ -351,8 +398,9 @@ class ComboBoxWidget(QtWidgets.QComboBox):
                 selection-background-color: #4169e1;
             }
         ''')
-        self.setMaximumWidth(100)
-
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setMinimumHeight(24)
+        self.setMaximumWidth(128)
 
 class LineEditWidget(QtWidgets.QLineEdit):
     def __init__(self):

@@ -1,5 +1,5 @@
 import warnings
-
+import run_threads
 import nidaqmx
 import numpy as np
 from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, FrequencyUnits, Level, WAIT_INFINITELY
@@ -21,6 +21,8 @@ class NIDAQ:
             self.piezo_channels = ["Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
             self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line2", "Dev1/port0/line3",
                                      "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
+            self.photon_counter_channel = "/Dev1/ctr1"
+            self.photon_input_terminal = "/Dev1/PFI0"
             self.counter_channel = "/Dev1/ctr0"
             self.clock_rate = 2000000
             self.clock = ["/Dev1/PFI12", "/Dev2/PFI0"]
@@ -35,6 +37,9 @@ class NIDAQ:
         self._active = {}
         self._running = {}
         self.tasks, self._active, self._running, = self._configure()
+        self.data = None
+        self.acq_thread = None
+        self.buffer_size = 2 ** 16
 
     def __del__(self):
         pass
@@ -324,6 +329,51 @@ class NIDAQ:
                     e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
+
+    def set_photon_counter(self):
+        try:
+            if self.tasks["clock"] is None:
+                self.write_clock_channel()
+            self.tasks["photon_counter"] = nidaqmx.Task("photon_counter")
+            ci_channel = self.tasks["photon_counter"].ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channel,
+                                                                                          edge=nidaqmx.constants.Edge.RISING)
+            ci_channel.ci_count_edges_term = self.photon_input_terminal
+            self.tasks["photon_counter"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock[0],
+                                                                    active_edge=Edge.RISING, sample_mode=AcquisitionType.CONTINUOUS,
+                                                                    samps_per_chan=self.buffer_size)
+            self.tasks["photon_counter"].in_stream.input_buf_size = self.buffer_size
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def get_photon_count(self):
+        try:
+            counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=2048)
+            self.data.add_element(counts)
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def start_photon_count(self):
+        self.data = run_threads.PhotonCountList(self.buffer_size * 2)
+        self.acq_thread = run_threads.PhotonCountThread(self)
+        self.acq_thread.start()
+        self.logg.info('Acquisition started')
+
+    def stop_photon_count(self):
+        self.acq_thread.stop()
+        self.acq_thread = None
+        self.logg.info('Acquisition stopped')
+
+    def get_data(self):
+        edg_num, count_data = self.data.get_elements()
+        return count_data
 
     def start_triggers(self):
         try:

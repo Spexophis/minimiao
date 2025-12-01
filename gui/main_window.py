@@ -42,14 +42,14 @@ class MainWindow(QMainWindow):
         QWidget {
             background-color: #232629;
             color: #f0f0f0;
-            font-size: 14px;
+            font-size: 13px;
         }
         QPushButton {
             background-color: #444;
             border: 1px solid #555;
             color: #f0f0f0;
-            padding: 6px;
-            border-radius: 4px;
+            padding: 4px;
+            border-radius: 2px;
         }
         QPushButton:hover {
             background-color: #666;

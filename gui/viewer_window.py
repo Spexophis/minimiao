@@ -2,13 +2,13 @@ import matplotlib
 import numpy as np
 from PyQt6.QtCore import QObject, QMutex, QMutexLocker
 from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QGridLayout, QSplitter, QSizePolicy, QSlider
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter, QHBoxLayout
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
 from gui import gl_viewer
-import custom_widgets as cw
+from gui import custom_widgets as cw
 
 matplotlib.rcParams.update({
     'axes.facecolor': '#232629',
@@ -70,14 +70,11 @@ class LiveViewer(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self.image_viewer.set_frame(np.random.randint(0, 2**14, size=(2048, 2048), dtype=np.uint16))
-
-        self.pool = FramePool(shape=(2048, 2048), dtype=np.uint16, n_buffers=4)
-
-        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-
-        self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
+        self.h = 2048
+        self.w = 2048
+        self.image_viewer.set_frame(np.random.randint(0, 65535, size=(self.h, self.w), dtype=np.uint16))
+        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
+        self._setup_signal_connections()
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -96,47 +93,60 @@ class LiveViewer(QWidget):
         layout.addWidget(splitter)
         self.setLayout(layout)
 
+    def _setup_signal_connections(self):
+        self.QSlider_black.valueChanged.connect(self.on_black_change)
+        self.QSlider_white.valueChanged.connect(self.on_white_change)
+        self.QPushButton_contrast_auto.clicked.connect(self.auto_contrast)
+        self.QPushButton_contrast_manual.clicked.connect(self.manual_contrast)
+        self.image_viewer.mousePixelChanged.connect(self.on_mouse)
+        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+        self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
+
     def _create_image_widgets(self):
         layout_view = QVBoxLayout()
         layout_view.setContentsMargins(4, 4, 4, 4)
 
         self.image_viewer = gl_viewer.GLGray16Viewer(use_pbo=True)
-        self.image_viewer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.image_viewer.set_levels(0, 65535, 1.0)
 
-        black = getattr(self.config, "black_u16", 0)
-        white = getattr(self.config, "white_u16", 65535)
-        gamma = getattr(self.config, "gamma", 1.0)
-        self.image_viewer.set_levels(black, white, gamma)
-
-        self.slider_black = QSlider(Qt.Orientation.Horizontal)
-        self.slider_black.setRange(0, 65535)
-        self.slider_black.setValue(0)
-
-        self.slider_white = QSlider(Qt.Orientation.Horizontal)
-        self.slider_white.setRange(0, 65535)
-        self.slider_white.setValue(65535)
-
-        self.slider_gamma = QSlider(Qt.Orientation.Horizontal)
-        self.slider_gamma.setRange(10, 300)
-        self.slider_gamma.setValue(100)
-        # Reset button
-        btn_reset = cw.PushButtonWidget("Reset")
-
-        controls = cw.GroupWidget()
+        controls = QWidget()
         row = QHBoxLayout(controls)
+        self.QSlider_black = cw.SliderWidget(0, 65535, 0)
+        self.QSpinBox_black = cw.SpinBoxWidget(0, 65535, 1, 0)
+        self.QSlider_white = cw.SliderWidget(0, 65535, 65535)
+        self.QSpinBox_white = cw.SpinBoxWidget(0, 65535, 1, 65535)
+        self.QPushButton_contrast_manual = cw.PushButtonWidget("Set")
+        self.QPushButton_contrast_auto = cw.PushButtonWidget("Auto Set")
         row.addWidget(cw.LabelWidget("Min"))
         row.addWidget(cw.LabelWidget("0"))
-        row.addWidget(self.slider_black, stretch=1)
+        row.addWidget(self.QSlider_black)
+        row.addWidget(self.QSpinBox_black)
         row.addWidget(cw.LabelWidget("Max"))
-        row.addWidget(self.slider_white, stretch=1)
+        row.addWidget(self.QSlider_white)
+        row.addWidget(self.QSpinBox_white)
         row.addWidget(cw.LabelWidget("65535"))
-        row.addWidget(cw.LabelWidget("Gamma"))
-        row.addWidget(self.slider_gamma, stretch=1)
-        row.addWidget(cw.LabelWidget("1.00"))
-        row.addWidget(btn_reset)
+        row.addWidget(self.QPushButton_contrast_manual)
+        row.addWidget(self.QPushButton_contrast_auto)
+
+        self.QLabel_cursor = cw.LabelWidget("x:-  y:-  v:-")
+
         layout_view.addWidget(controls)
         layout_view.addWidget(self.image_viewer, stretch=1)
+        layout_view.addWidget(self.QLabel_cursor)
         return layout_view
+
+    def on_mouse(self, ix, iy, val):
+        if ix < 0:
+            self.QLabel_cursor.setText("x:-  y:-  v:-")
+        else:
+            self.QLabel_cursor.setText(f"x:{ix}  y:{iy}  v:{val}")
+
+    def switch_camera(self, h, w):
+        self.h, self.w = h, w
+        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
+        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
 
     def on_camera_update_from_thread(self, frame: np.ndarray):
         """Runs in camera thread. Do NOT touch Qt widgets here."""
@@ -160,10 +170,26 @@ class LiveViewer(QWidget):
         self.frame_idx_signal.emit(idx)
 
     @pyqtSlot(int)
+    def on_black_change(self, value: int):
+        self.QSpinBox_black.setValue(value)
+
+    @pyqtSlot(int)
+    def on_white_change(self, value: int):
+        self.QSpinBox_white.setValue(value)
+
+    @pyqtSlot()
+    def manual_contrast(self):
+        self.image_viewer.set_levels(self.QSpinBox_black.value(), self.QSpinBox_white.value())
+
+    @pyqtSlot()
+    def auto_contrast(self):
+        b, w = self.image_viewer.auto_levels()
+        self.QSlider_black.setValue(b)
+        self.QSlider_white.setValue(w)
+
+    @pyqtSlot(int)
     def on_frame_idx(self, idx: int):
-        # Pass the *pre-allocated* array directly to GL viewer with token=idx
-        frame = self.pool.buffer(idx)
-        self.image_viewer.set_frame(frame, token=idx)
+        self.image_viewer.set_frame(self.pool.buffer(idx), token=idx)
 
     def _create_plot_widgets(self):
         layout_plot = QGridLayout()
