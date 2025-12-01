@@ -23,7 +23,7 @@ class ControlPanel(QWidget):
     Signal_focus_locking = pyqtSignal(bool)
     Signal_video = pyqtSignal(bool, str)
     Signal_fft = pyqtSignal(bool)
-    Signal_plot_profile = pyqtSignal(bool)
+    Signal_plot_profile = pyqtSignal()
     Signal_add_profile = pyqtSignal()
     Signal_data_acquire = pyqtSignal(str, int)
     Signal_save_file = pyqtSignal(str)
@@ -321,7 +321,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[])
+        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=["None"])
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
 
@@ -339,7 +339,7 @@ class ControlPanel(QWidget):
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
-        self.QPushButton_plot_profile = cw.PushButtonWidget("Live Profile", checkable=True, enable=False)
+        self.QPushButton_plot_profile = cw.PushButtonWidget("Live Profile")
         self.QPushButton_add_profile = cw.PushButtonWidget("Plot Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field 2D", "Wide Field 3D",
@@ -419,10 +419,10 @@ class ControlPanel(QWidget):
     def get_emccd_gain(self):
         return self.QSpinBox_emccd_gain.value()
 
-    def display_camera_temperature(self, temperature):
+    def display_emccd_temperature(self, temperature):
         self.QLCDNumber_ccd_tempetature.display(temperature)
 
-    def display_camera_timings(self, clean=None, exposure=None, standby=None):
+    def display_emccd_timings(self, clean=None, exposure=None, standby=None):
         if clean is not None:
             self.QDoubleSpinBox_emccd_t_clean.setValue(clean)
         if exposure is not None:
@@ -445,6 +445,9 @@ class ControlPanel(QWidget):
 
     def get_cmos_gain(self):
         return self.QSpinBox_cmos_gain.value()
+
+    def get_cmos_exposure(self):
+        return self.QDoubleSpinBox_cmos_t_exposure.value()
 
     def get_imaging_camera(self):
         detection_device = self.QComboBox_imaging_camera_selection.currentIndex()
@@ -577,6 +580,9 @@ class ControlPanel(QWidget):
                     self.QDoubleSpinBox_laserpower_488_1.value()]
         return None
 
+    def get_slm_sequence(self):
+        return self.QComboBox_slm_sequence.currentText()
+
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
         self.Signal_daq_update.emit(sample_rate)
@@ -584,6 +590,19 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def reset_daq(self):
         self.Signal_daq_reset.emit()
+
+    def get_digital_parameters(self):
+        digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),
+                          self.QDoubleSpinBox_ttl_start_off_488.value(),
+                          self.QDoubleSpinBox_ttl_start_read_488.value(),
+                          self.QDoubleSpinBox_ttl_start_emccd.value(),
+                          self.QDoubleSpinBox_ttl_start_scmos.value()]
+        digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
+                        self.QDoubleSpinBox_ttl_stop_off_488.value(),
+                        self.QDoubleSpinBox_ttl_stop_read_488.value(),
+                        self.QDoubleSpinBox_ttl_stop_emccd.value(),
+                        self.QDoubleSpinBox_ttl_stop_scmos.value()]
+        return digital_starts, digital_ends
 
     @pyqtSlot()
     def plot_trigger_sequence(self):
@@ -606,17 +625,12 @@ class ControlPanel(QWidget):
         if self.QPushButton_video.isChecked():
             self.Signal_video.emit(True, vm)
             self.QPushButton_fft.setEnabled(True)
-            self.QPushButton_plot_profile.setEnabled(True)
         else:
             self.Signal_video.emit(False, vm)
             if self.QPushButton_fft.isChecked():
                 self.Signal_fft.emit(False)
             self.QPushButton_fft.setEnabled(False)
             self.QPushButton_fft.setChecked(False)
-            if self.QPushButton_plot_profile.isChecked():
-                self.Signal_plot_profile.emit(False)
-            self.QPushButton_plot_profile.setEnabled(False)
-            self.QPushButton_plot_profile.setChecked(False)
 
     @pyqtSlot()
     def run_fft(self):
@@ -625,9 +639,9 @@ class ControlPanel(QWidget):
         else:
             self.Signal_fft.emit(False)
 
-    @pyqtSlot(bool)
-    def run_plot_profile(self, checked: bool):
-        self.Signal_plot_profile.emit(checked)
+    @pyqtSlot()
+    def run_plot_profile(self):
+        self.Signal_plot_profile.emit()
 
     @pyqtSlot()
     def run_add_profile(self):

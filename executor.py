@@ -1,7 +1,7 @@
 import time
 
 from PyQt6.QtCore import QObject, pyqtSlot
-
+from utilities import image_processor as ipr
 
 class CommandExecutor(QObject):
 
@@ -19,6 +19,9 @@ class CommandExecutor(QObject):
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
+        self.lasers = []
+        self.slm_seq = ""
+        self.cameras = {"imaging": 0, "wfs": 1, "focus_lock": 2}
 
     @staticmethod
     def setup_logging():
@@ -41,11 +44,15 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
         # DAQ
         self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
+        self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
 
         self.ctrl_panel.Signal_video.connect(self.video)
+        self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
+        self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
 
     def _initial_setup(self):
         try:
+
             p = self.devs.deck.get_position_steps_taken(3)
             self.ctrl_panel.display_deck_position(p)
 
@@ -211,7 +218,7 @@ class CommandExecutor(QObject):
     def check_emdccd_temperature(self):
         try:
             self.devs.ccdcam.get_ccd_temperature()
-            self.ctrl_panel.display_camera_temperature(self.devs.ccdcam.temperature)
+            self.ctrl_panel.display_emccd_temperature(self.devs.ccdcam.temperature)
         except Exception as e:
             self.logg.error(f"CCD Camera Error: {e}")
 
@@ -234,29 +241,196 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"CCD Camera Error: {e}")
 
-    # @pyqtSlot(int)
-    # def update_daq_sample_rate(self, sr: int):
-    #     self.trg.update_nidaq_parameters(sr * 1000)
-    #     self.devs.daq.sample_rate = sr * 1000
+    def set_camera_roi(self, key="imaging"):
+        try:
+            if self.cameras[key] == 0:
+                x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
+                self.devs.cam_set[0].bin_h, self.devs.cam_set[0].bin_v = bn, bn
+                self.devs.cam_set[0].start_h, self.devs.cam_set[0].end_h = x, x + nx - 1
+                self.devs.cam_set[0].start_v, self.devs.cam_set[0].end_v = y, y + ny - 1
+                self.devs.cam_set[0].gain = self.ctrl_panel.get_emccd_gain()
+            elif self.cameras[key] == 1:
+                x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
+                self.devs.cam_set[1].set_roi(bn, bn, x, nx, y, ny)
+            elif self.cameras[key] == 2:
+                expo = self.ctrl_panel.get_cmos_exposure()
+                self.devs.cam_set[2].set_exposure(expo)
+                x, y, nx, ny, bx, by = self.ctrl_panel.get_cmos_roi()
+                self.devs.cam_set[2].set_roi(x, y, nx, ny)
+            else:
+                self.logg.error(f"Camera Error: Invalid camera")
+        except Exception as e:
+            self.logg.error(f"Camera Error: {e}")
+
+    @pyqtSlot(int)
+    def update_daq_sample_rate(self, sr: int):
+        self.trg.update_nidaq_parameters(sr * 1000)
+        self.devs.daq.sample_rate = sr * 1000
 
     @pyqtSlot()
     def reset_daq_channels(self):
         self.devs.daq.stop_triggers()
 
+    def update_trigger_parameters(self, cam_key):
+        """Ensure that the camera acquisition is fully set up before executing this function."""
+        try:
+            digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
+            self.trg.update_digital_parameters(digital_starts, digital_ends)
+            axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
+            pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
+            positions = [pos_x[1], pos_y[1], pos_z[1]]
+            return_time = self.ctrl_panel.get_piezo_return_time()
+            self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time)
+            self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
+                                              standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
+            self.logg.info(f"Trigger Updated")
+        except Exception as e:
+            self.logg.error(f"Trigger Error: {e}")
+
+    def prepare_video(self, vd_mod):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
+        self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
+        self.update_trigger_parameters("imaging")
+        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
+                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
+        self.slm_seq = self.ctrl_panel.get_slm_sequence()
+        if self.slm_seq != "None":
+            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        if vd_mod == "Wide Field":
+            dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
+            if self.cameras["imaging"] == 0:
+                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                                      exposure=self.trg.exposure_time,
+                                                      standby=self.trg.standby_time)
+            if self.cameras["imaging"] == 1:
+                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
+                                                      exposure=self.trg.exposure_time,
+                                                      standby=self.trg.standby_time)
+        if vd_mod == "SIM":
+            dtr, chs = self.trg.generate_sim_triggers(self.lasers, self.cameras["imaging"], self.slm_seq, 2)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
+            if self.cameras["imaging"] == 0:
+                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                                      exposure=self.trg.exposure_time,
+                                                      standby=self.trg.standby_time)
+            if self.cameras["imaging"] == 1:
+                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
+                                                      exposure=self.trg.exposure_time,
+                                                      standby=self.trg.standby_time)
+        if vd_mod == "Scan Calib":
+            dtr, ptr, dch, pch = self.trg.generate_piezo_line_scan(self.lasers, self.cameras["imaging"])
+            self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
+                                         digital_sequences=dtr, digital_channels=dch, finite=False)
+        if vd_mod == "Focus Lock":
+            self.logg.info(f"Focus Lock live")
+
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
         if sw:
-            self.start_video(md)
+            try:
+                self.prepare_video(md)
+            except Exception as e:
+                self.logg.error(f"Error preparing imaging video: {e}")
+                self.devs.daq.stop_triggers()
+                self.lasers_off()
+                return
+            self.start_video()
         else:
-            self.stop_video(md)
+            self.stop_video()
 
-    def start_video(self, md):
-        self.devs.camera.prepare_live()
-        self.viewer.switch_camera(self.devs.camera.pixels_x, self.devs.camera.pixels_y)
-        self.devs.camera.start_live()
-        self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
-        self.logg.info("Live Video Started")
+    def start_video(self):
+        try:
+            if self.slm_seq != "None":
+                self.devs.slm.activate()
+            self.devs.cam_set[self.cameras["imaging"]].start_live()
+            if self.cameras["imaging"] != self.cameras["focus_lock"]:
+                self.devs.daq.run_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
+            self.logg.info("Live Video Started")
+        except Exception as e:
+            self.logg.error(f"Error starting imaging video: {e}")
+            self.stop_video()
+            return
 
-    def stop_video(self, md):
-        self.devs.camera.stop_live()
-        self.logg.info(r"Live Video Stopped")
+    def stop_video(self):
+        try:
+            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            self.logg.info(r"Live Video Stopped")
+            if self.slm_seq != "None":
+                self.devs.slm.deactivate()
+            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            self.lasers_off()
+        except Exception as e:
+            self.logg.error(f"Error stopping imaging video: {e}")
+            
+    # @pyqtSlot(bool)
+    # def fft(self, sw: bool):
+    #     if sw:
+    #         self.run_fft()
+    #     else:
+    #         self.stop_fft()
+    # 
+    # def run_fft(self):
+    #     try:
+    #         self.setup_fft_thread()
+    #         self.thread_fft.start()
+    #     except Exception as e:
+    #         self.logg.error(f"Error starting fft: {e}")
+    # 
+    # def stop_fft(self):
+    #     try:
+    #         if self.thread_fft.isRunning():
+    #             self.thread_fft.quit()
+    #             self.thread_fft.wait()
+    #     except Exception as e:
+    #         self.logg.error(f"Error stopping fft: {e}")
+    # 
+    # @pyqtSlot()
+    # def imshow_fft(self):
+    #     try:
+    #         self.viewer.plot_fft(
+    #             ipr.fourier_transform(self.viewer.get_image_data(layer=self.cameras["imaging"])))
+    #     except Exception as e:
+    #         self.logg.error(f"Error showing fft: {e}")
+
+    @pyqtSlot()
+    def profile_plot(self):
+        try:
+            ax = self.ctrl_panel.get_profile_axis()
+            self.viewer.plot_update(
+                ipr.get_profile(self.viewer.get_image_data(layer=self.cameras["imaging"]), ax, norm=True))
+        except Exception as e:
+            self.logg.error(f"Error plotting profile: {e}")
+
+    @pyqtSlot()
+    def plot_add(self):
+        try:
+            ax = self.ctrl_panel.get_profile_axis()
+            self.viewer.plot(
+                ipr.get_profile(self.viewer.get_image_data(layer=self.cameras["imaging"]), ax, norm=True))
+        except Exception as e:
+            self.logg.error(f"Error plotting profile: {e}")
+
+    @pyqtSlot()
+    def plot_trigger(self):
+        try:
+            self.slm_seq = self.ctrl_panel.get_slm_sequence()
+            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+            self.update_trigger_parameters("imaging")
+            dtr, dch = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+            self.viewer.plot_update(dtr[0])
+            for i in range(dtr.shape[0] - 1):
+                self.viewer.plot(dtr[i + 1] + i + 1)
+        except Exception as e:
+            self.logg.error(f"Error plotting digital triggers: {e}")
+
+    @pyqtSlot(list, list)
+    def plot_(self, x, d):
+        try:
+            self.viewer.plot_update(data=d, x=x)
+        except Exception as e:
+            self.logg.error(f"Error plotting profile: {e}")
