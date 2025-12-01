@@ -1,6 +1,5 @@
 import os
-import threading
-from collections import deque
+import run_threads
 
 import numpy as np
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
@@ -14,8 +13,6 @@ class ThorCMOS:
             self.t_clean = 0.
             self.t_readout = 0.004
             self.t_exposure = 0
-            self.t_accumulate = 0
-            self.t_kinetic = 0
             self.bin_h = 1
             self.bin_v = 1
             self.start_h = 0
@@ -93,7 +90,6 @@ class ThorCMOS:
 
     def _config_cam(self):
         self.camera.frame_rate_control_value = 50
-        self.t_kinetic = 1 / 50
         self.camera.is_frame_rate_control_enabled = True
         self.camera.frames_per_trigger_zero_for_unlimited = 1
         # self.camera.image_poll_timeout_ms = 0  # 1 second polling timeout
@@ -135,8 +131,8 @@ class ThorCMOS:
         self.camera.issue_software_trigger()
 
     def prepare_live(self):
-        self.data = DataList(8)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(4)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
 
     def start_live(self):
         self.camera.arm(4)
@@ -148,8 +144,8 @@ class ThorCMOS:
         self.acq_thread = None
 
     def prepare_acquisition(self, n):
-        self.data = DataList(n)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(n)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
 
     def start_acquisition(self):
         self.camera.arm(4)
@@ -173,51 +169,3 @@ class ThorCMOS:
             return self.data.get_last_element()
         else:
             return None
-
-
-class AcquisitionThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
-
-    def __init__(self, cam):
-        threading.Thread.__init__(self)
-        self.cam = cam
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.lock:
-                self.cam.get_image()
-
-    def stop(self):
-        self.running = False
-        self.join()
-
-
-class DataList:
-
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
-        self.callback = None
-
-    def add_element(self, elements, ind):
-        self.data_list.extend(elements)
-        self.ind_list.extend(ind)
-        self.emit_update()
-
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def get_last_element(self):
-        return self.data_list[-1].copy() if self.data_list else None
-
-    def is_empty(self):
-        return len(self.data_list) == 0
-
-    def on_update(self, callback):
-        self.callback = callback
-
-    def emit_update(self):
-        if self.callback is not None:
-            self.callback(self)

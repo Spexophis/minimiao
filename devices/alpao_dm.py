@@ -8,9 +8,9 @@ import numpy as np
 import pandas as pd
 import tifffile as tf
 
-from miao.tools import tool_improc as ipr
-from miao.tools import tool_sysctrl as syct
-from miao.tools import tool_zernike as tz
+from utilities import image_processor as ipr
+# from utilities import sys_ctrl as syct
+from utilities import zernike_generator as tz
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
 if (8 * struct.calcsize("P")) == 32:
@@ -50,9 +50,10 @@ class DeformableMirror:
 
     @staticmethod
     def load_configs():
+        import json
         config_file = input("Enter configuration file directory: ")
-        from miao.utilities import configurations
-        cfg = configurations.MicroscopeConfiguration(fd=config_file)
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
         return cfg
 
     def _initialize_dm(self, sn):

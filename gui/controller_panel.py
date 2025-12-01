@@ -1,7 +1,7 @@
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
-from PyQt6.QtWidgets import QWidget, QSplitter, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from gui import custom_widgets as cw
 
@@ -44,12 +44,14 @@ class ControlPanel(QWidget):
         self.position_panel = self._create_position_panel()
         self.laser_panel = self._create_laser_panel()
         self.daq_panel = self._create_daq_panel()
+        self.slm_panel = self._create_slm_panel()
         self.acq_panel = self._create_acquisition_panel()
 
         main_layout.addWidget(self.camera_panel)
         main_layout.addWidget(self.position_panel)
         main_layout.addWidget(self.laser_panel)
         main_layout.addWidget(self.daq_panel)
+        main_layout.addWidget(self.slm_panel)
         main_layout.addWidget(self.acq_panel)
 
         main_layout.addStretch(1)
@@ -312,6 +314,19 @@ class ControlPanel(QWidget):
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(daq_scroll_area)
+        group.setLayout(group_layout)
+        return group
+
+    def _create_slm_panel(self):
+        group = cw.GroupWidget()
+        slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
+
+        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[])
+
+        slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(slm_scroll_area)
         group.setLayout(group_layout)
         return group
 

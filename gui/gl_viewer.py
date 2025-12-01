@@ -239,7 +239,7 @@ class GLGray16Viewer(QOpenGLWidget):
             return
 
         # Keep texUV under cursor fixed
-        # center' = center + (a_uv - 0.5) * (1/old - 1/new)
+        # center = center + (a_uv - 0.5) * (1/old - 1/new)
         self._center_u = float(self._center_u + (u - 0.5) * (1.0 / old - 1.0 / new))
         self._center_v = float(self._center_v + (v - 0.5) * (1.0 / old - 1.0 / new))
         self._zoom = new

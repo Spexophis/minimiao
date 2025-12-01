@@ -1,9 +1,7 @@
 import sys
-import threading
-from collections import deque
-import time
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
+import run_threads
 
 sys.path.append(r'C:\Program Files\Andor SDK')
 
@@ -86,7 +84,6 @@ class EMCCDCamera:
         self.cooler_off()
         # self.get_ccd_temperature()
         # while self.temperature <= 0:
-        #     time.sleep(2)
         #     self.get_ccd_temperature()
         ret = self.sdk.ShutDown()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
@@ -312,16 +309,18 @@ class EMCCDCamera:
     def prepare_live(self, rd=4, aq=5, tr=7):
         self.set_acquisition_mode(aq)
         self.set_readout_mode(rd)
-        self.set_trigger_mode(tr)
+        self.set_trigger_mode(0)
         self.set_roi()
         self.set_gain()
-        self.set_kinetic_cycle_time(0)
+        self.t_exposure = 0.02
+        self.set_exposure_time()
+        # self.set_kinetic_cycle_time(0)
         self.get_acquisition_timings()
         self.get_buffer_size()
 
     def start_live(self):
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
         ret = self.sdk.StartAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.acq_thread.start()
@@ -354,7 +353,7 @@ class EMCCDCamera:
             return
 
         frames = np.asarray(data_array, dtype=np.uint16).reshape(num, self.pixels_y, self.pixels_x)
-        self.data.add_element([frames[i] for i in range(num)], valid_first, valid_last)
+        self.data.add_element([frames[i] for i in range(num)])
 
     def get_last_image(self):
         if self.data is not None:
@@ -373,8 +372,8 @@ class EMCCDCamera:
         self.get_buffer_size()
 
     def start_data_acquisition(self):
-        self.data = DataList(self.acq_num)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(self.acq_num)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
         ret = self.sdk.StartAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.acq_thread.start()
@@ -472,46 +471,3 @@ class EMCCDCamera:
             self.logg.info('Internal Memory Free')
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
-
-
-class AcquisitionThread(threading.Thread):
-    def __init__(self, cam):
-        super().__init__()
-        self.cam = cam
-        self.running = False
-        self.lock = threading.Lock()   # instance lock, not class-level
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.lock:
-                self.cam.get_images()
-            time.sleep(0.001)  # 1 ms yield (tune)
-
-    def stop(self):
-        self.running = False
-        self.join()
-
-
-class DataList:
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.callback = None
-        self._lock = threading.Lock()
-
-    def add_element(self, elements):
-        with self._lock:
-            self.data_list.extend(elements)
-            last = self.data_list[-1] if self.data_list else None
-        if self.callback is not None and last is not None:
-            self.callback(last)  # passes ndarray
-
-    def get_last_element(self, copy=False):
-        with self._lock:
-            if not self.data_list:
-                return None
-            arr = self.data_list[-1]
-        return arr.copy() if copy else arr  # no copy for display
-
-    def on_update(self, callback):
-        self.callback = callback

@@ -70,8 +70,10 @@ class LiveViewer(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self.image_viewer.set_frame(np.random.randint(0, 2**14, size=(2048, 2048), dtype=np.uint16))
-        self.pool = FramePool(shape=(2048, 2048), dtype=np.uint16, n_buffers=4)
+        self.h = 2048
+        self.w = 2048
+        self.image_viewer.set_frame(np.random.randint(0, 65535, size=(self.h, self.w), dtype=np.uint16))
+        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self._setup_signal_connections()
 
     def _setup_ui(self):
@@ -139,6 +141,12 @@ class LiveViewer(QWidget):
             self.QLabel_cursor.setText("x:-  y:-  v:-")
         else:
             self.QLabel_cursor.setText(f"x:{ix}  y:{iy}  v:{val}")
+
+    def switch_camera(self, h, w):
+        self.h, self.w = h, w
+        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
+        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
+        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
 
     def on_camera_update_from_thread(self, frame: np.ndarray):
         """Runs in camera thread. Do NOT touch Qt widgets here."""

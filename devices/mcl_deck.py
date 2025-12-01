@@ -2,7 +2,6 @@ import ctypes as ct
 import os
 import sys
 import threading
-import time
 
 sys.path.append(r'C:\Program Files\Mad City Labs\MicroDrive')
 micro_dll_path = os.path.join('C:', os.sep, 'Program Files', 'Mad City Labs', 'MicroDrive', 'MicroDrive.dll')

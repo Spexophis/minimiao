@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2020 Peter Kner & Ruizhe Lin
+# Licensed under the MIT License.
+
+
 import ctypes as ct
 import subprocess
 
@@ -22,6 +27,12 @@ class QXGA:
         self.get_temperature()
         self.ord_dict = self.get_order_list()
 
+    def __del__(self):
+        try:
+            self.close()
+        except Exception:
+            pass
+
     @staticmethod
     def setup_logging():
         import logging
@@ -30,9 +41,10 @@ class QXGA:
 
     @staticmethod
     def load_configs():
+        import json
         config_file = input("Enter configuration file directory: ")
-        from miao.utilities import configurations
-        cfg = configurations.MicroscopeConfiguration(fd=config_file)
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
         return cfg
 
     def _initiate(self):
@@ -109,7 +121,7 @@ class QXGA:
         odn = self.get_order_num()
         for i in range(odn):
             ord_name = self.get_order_name(i)
-            ord_dict[i] = ord_name.decode('utf-8')
+            ord_dict[ord_name.decode('utf-8')] = i
         return ord_dict
 
     def select_order(self, n):

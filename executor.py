@@ -1,6 +1,7 @@
-from PyQt6.QtCore import QObject, pyqtSlot, Qt
-import run_threads
 import time
+
+from PyQt6.QtCore import QObject, pyqtSlot
+
 
 class CommandExecutor(QObject):
 
@@ -17,6 +18,7 @@ class CommandExecutor(QObject):
         self.path = path
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
+        self._initial_setup()
 
     @staticmethod
     def setup_logging():
@@ -37,17 +39,35 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_deck_move_continuous.connect(self.move_deck_continuous)
         # Cobolt Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
+        # DAQ
+        self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
 
         self.ctrl_panel.Signal_video.connect(self.video)
-        
+
+    def _initial_setup(self):
+        try:
+            p = self.devs.deck.get_position_steps_taken(3)
+            self.ctrl_panel.display_deck_position(p)
+
+            self.reset_piezo_positions()
+
+            self.laser_lists = list(self.devs.laser.lasers.keys())
+
+            for key in self.devs.slm.ord_dict.keys():
+                self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
+
+            self.logg.info("Finish setting up controllers")
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+
     @pyqtSlot()
     def deck_read_position(self):
-        self.ctrl_panel.display_deck_position(self.devs.md.position)
+        self.ctrl_panel.display_deck_position(self.devs.deck.position)
 
     @pyqtSlot()
     def deck_zero_position(self):
-        self.devs.md.position = 0
-        self.ctrl_panel.display_deck_position(self.devs.md.position)
+        self.devs.deck.position = 0
+        self.ctrl_panel.display_deck_position(self.devs.deck.position)
 
     @pyqtSlot(bool)
     def move_deck_single_step(self, direction: bool):
@@ -58,32 +78,32 @@ class CommandExecutor(QObject):
 
     def move_deck_up(self):
         try:
-            _moving = self.devs.md.is_moving()
+            _moving = self.devs.deck.is_moving()
             if _moving:
                 self.logg.info("MadDeck is moving")
             else:
-                self.devs.md.move_relative(3, 0.000762, velocity=0.8)
-                self.ctrl_panel.display_deck_position(self.devs.md.position)
+                self.devs.deck.move_relative(3, 0.000762, velocity=0.8)
+                self.ctrl_panel.display_deck_position(self.devs.deck.position)
         except Exception as e:
             self.logg.error(f"MadDeck Error: {e}")
 
     def move_deck_down(self):
         try:
-            _moving = self.devs.md.is_moving()
+            _moving = self.devs.deck.is_moving()
             if _moving:
                 self.logg.info("MadDeck is moving")
             else:
-                self.devs.md.move_relative(3, -0.000762, velocity=0.8)
-                self.ctrl_panel.display_deck_position(self.devs.md.position)
+                self.devs.deck.move_relative(3, -0.000762, velocity=0.8)
+                self.ctrl_panel.display_deck_position(self.devs.deck.position)
         except Exception as e:
             self.logg.error(f"MadDeck Error: {e}")
 
     @pyqtSlot(bool, int, float)
     def move_deck_continuous(self, moving: bool, direction: int, velocity: float):
         if moving:
-            self.devs.md.move_deck(direction, velocity)
+            self.devs.deck.move_deck(direction, velocity)
         else:
-            self.devs.md.stop_deck()
+            self.devs.deck.stop_deck()
 
     def reset_piezo_positions(self):
         pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
@@ -93,9 +113,9 @@ class CommandExecutor(QObject):
         self.set_piezo_position_x(pos_x[1], port="analog")
         self.set_piezo_position_y(pos_y[1], port="analog")
         self.set_piezo_position_z(pos_z[1], port="analog")
-        self.ctrl_panel.display_piezo_position_x(self.devs.pz.read_position(0))
-        self.ctrl_panel.display_piezo_position_y(self.devs.pz.read_position(1))
-        self.ctrl_panel.display_piezo_position_z(self.devs.pz.read_position(2))
+        self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
+        self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
+        self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
 
     @pyqtSlot(str, float, float, float)
     def set_piezo_positions_usb(self, axis: str, value_x: float, value_y: float, value_z: float):
@@ -118,42 +138,42 @@ class CommandExecutor(QObject):
     def set_piezo_position_x(self, pos_x, port="analog"):
         try:
             if port == "software":
-                self.devs.pz.move_position(0, pos_x)
+                self.devs.piezo.move_position(0, pos_x)
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_x(self.devs.pz.read_position(0))
+                self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
             else:
                 self.devs.daq.set_piezo_position([pos_x / 10.], [0])
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_x(self.devs.pz.read_position(0))
+                self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
 
     def set_piezo_position_y(self, pos_y, port="analog"):
         try:
             if port == "software":
-                self.devs.pz.move_position(1, pos_y)
+                self.devs.piezo.move_position(1, pos_y)
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_y(self.devs.pz.read_position(1))
+                self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
             else:
                 self.devs.daq.set_piezo_position([pos_y / 10.], [1])
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_y(self.devs.pz.read_position(1))
+                self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
 
     def set_piezo_position_z(self, pos_z, port="analog"):
         try:
             if port == "software":
-                self.devs.pz.move_position(2, pos_z)
+                self.devs.piezo.move_position(2, pos_z)
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_z(self.devs.pz.read_position(2))
+                self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
             else:
                 self.devs.daq.set_piezo_position([pos_z / 10.], [2])
                 time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_z(self.devs.pz.read_position(2))
+                self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
-    
+
     @pyqtSlot(list, bool, float)
     def set_laser(self, laser: list, sw: bool, pw: float):
         if sw:
@@ -214,10 +234,10 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"CCD Camera Error: {e}")
 
-    @pyqtSlot(int)
-    def update_daq_sample_rate(self, sr: int):
-        self.trg.update_nidaq_parameters(sr * 1000)
-        self.devs.daq.sample_rate = sr * 1000
+    # @pyqtSlot(int)
+    # def update_daq_sample_rate(self, sr: int):
+    #     self.trg.update_nidaq_parameters(sr * 1000)
+    #     self.devs.daq.sample_rate = sr * 1000
 
     @pyqtSlot()
     def reset_daq_channels(self):
@@ -231,6 +251,8 @@ class CommandExecutor(QObject):
             self.stop_video(md)
 
     def start_video(self, md):
+        self.devs.camera.prepare_live()
+        self.viewer.switch_camera(self.devs.camera.pixels_x, self.devs.camera.pixels_y)
         self.devs.camera.start_live()
         self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
         self.logg.info("Live Video Started")
