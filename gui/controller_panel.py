@@ -23,7 +23,7 @@ class ControlPanel(QWidget):
     Signal_focus_locking = pyqtSignal(bool)
     Signal_video = pyqtSignal(bool, str)
     Signal_fft = pyqtSignal(bool)
-    Signal_plot_profile = pyqtSignal(bool)
+    Signal_plot_profile = pyqtSignal()
     Signal_add_profile = pyqtSignal()
     Signal_data_acquire = pyqtSignal(str, int)
     Signal_save_file = pyqtSignal(str)
@@ -33,7 +33,7 @@ class ControlPanel(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self._load_spinbox_values()
+        self.load_spinbox_values()
         self.digital_timing_presets = self.load_digital_timing_presets()
         self._set_signal_connections()
 
@@ -305,10 +305,10 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#4 - iXon')), 0, 6, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_emccd, 1, 6, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_emccd, 2, 6, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - Kira')), 0, 8, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - Kira')), 0, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_scmos, 1, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_scmos, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#7 - FLIR')), 0, 9, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - FLIR')), 0, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
 
@@ -321,7 +321,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[])
+        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=["None"])
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
 
@@ -339,8 +339,8 @@ class ControlPanel(QWidget):
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
-        self.QPushButton_plot_profile = cw.PushButtonWidget("Live Profile", checkable=True, enable=False)
-        self.QPushButton_add_profile = cw.PushButtonWidget("Plot Profile")
+        self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
+        self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field 2D", "Wide Field 3D",
                                                                          "Point Scan 2D", "Point Scan 3D"])
@@ -360,6 +360,11 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_fft, 3, 2, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Profile Axis')), 3, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_profile_axis, 3, 1, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_plot_profile, 4, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_add_profile, 4, 1, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(acq_scroll_area)
@@ -419,10 +424,10 @@ class ControlPanel(QWidget):
     def get_emccd_gain(self):
         return self.QSpinBox_emccd_gain.value()
 
-    def display_camera_temperature(self, temperature):
+    def display_emccd_temperature(self, temperature):
         self.QLCDNumber_ccd_tempetature.display(temperature)
 
-    def display_camera_timings(self, clean=None, exposure=None, standby=None):
+    def display_emccd_timings(self, clean=None, exposure=None, standby=None):
         if clean is not None:
             self.QDoubleSpinBox_emccd_t_clean.setValue(clean)
         if exposure is not None:
@@ -445,6 +450,9 @@ class ControlPanel(QWidget):
 
     def get_cmos_gain(self):
         return self.QSpinBox_cmos_gain.value()
+
+    def get_cmos_exposure(self):
+        return self.QDoubleSpinBox_cmos_t_exposure.value()
 
     def get_imaging_camera(self):
         detection_device = self.QComboBox_imaging_camera_selection.currentIndex()
@@ -577,6 +585,9 @@ class ControlPanel(QWidget):
                     self.QDoubleSpinBox_laserpower_488_1.value()]
         return None
 
+    def get_slm_sequence(self):
+        return self.QComboBox_slm_sequence.currentText()
+
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
         self.Signal_daq_update.emit(sample_rate)
@@ -584,6 +595,19 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def reset_daq(self):
         self.Signal_daq_reset.emit()
+
+    def get_digital_parameters(self):
+        digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),
+                          self.QDoubleSpinBox_ttl_start_off_488.value(),
+                          self.QDoubleSpinBox_ttl_start_read_488.value(),
+                          self.QDoubleSpinBox_ttl_start_emccd.value(),
+                          self.QDoubleSpinBox_ttl_start_scmos.value()]
+        digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
+                        self.QDoubleSpinBox_ttl_stop_off_488.value(),
+                        self.QDoubleSpinBox_ttl_stop_read_488.value(),
+                        self.QDoubleSpinBox_ttl_stop_emccd.value(),
+                        self.QDoubleSpinBox_ttl_stop_scmos.value()]
+        return digital_starts, digital_ends
 
     @pyqtSlot()
     def plot_trigger_sequence(self):
@@ -606,17 +630,12 @@ class ControlPanel(QWidget):
         if self.QPushButton_video.isChecked():
             self.Signal_video.emit(True, vm)
             self.QPushButton_fft.setEnabled(True)
-            self.QPushButton_plot_profile.setEnabled(True)
         else:
             self.Signal_video.emit(False, vm)
             if self.QPushButton_fft.isChecked():
                 self.Signal_fft.emit(False)
             self.QPushButton_fft.setEnabled(False)
             self.QPushButton_fft.setChecked(False)
-            if self.QPushButton_plot_profile.isChecked():
-                self.Signal_plot_profile.emit(False)
-            self.QPushButton_plot_profile.setEnabled(False)
-            self.QPushButton_plot_profile.setChecked(False)
 
     @pyqtSlot()
     def run_fft(self):
@@ -625,9 +644,12 @@ class ControlPanel(QWidget):
         else:
             self.Signal_fft.emit(False)
 
-    @pyqtSlot(bool)
-    def run_plot_profile(self, checked: bool):
-        self.Signal_plot_profile.emit(checked)
+    def get_profile_axis(self):
+        return self.QComboBox_profile_axis.currentText()
+
+    @pyqtSlot()
+    def run_plot_profile(self):
+        self.Signal_plot_profile.emit()
 
     @pyqtSlot()
     def run_add_profile(self):
@@ -704,7 +726,7 @@ class ControlPanel(QWidget):
         except FileNotFoundError:
             return {}
 
-    def _save_spinbox_values(self):
+    def save_spinbox_values(self):
         values = {}
         for name in dir(self):
             obj = getattr(self, name)
@@ -713,7 +735,7 @@ class ControlPanel(QWidget):
         with open(self.config["ConWidget Path"], 'w') as f:
             json.dump(values, f, indent=4)
 
-    def _load_spinbox_values(self):
+    def load_spinbox_values(self):
         try:
             with open(self.config["ConWidget Path"], 'r') as f:
                 values = json.load(f)

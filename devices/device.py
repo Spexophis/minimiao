@@ -9,13 +9,14 @@ from devices import ni_daq
 
 class DeviceManager:
     def __init__(self, config=None, logg=None, path=None):
-        # self.camera = mock_cam.MockCamera()
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
         self.cam_set = {}
+        # self.camera = mock_cam.MockCamera()
         try:
-            self.camera = andor_emccd.EMCCDCamera(logg=self.logg)
+            self.emccd = andor_emccd.EMCCDCamera(logg=self.logg)
+            self.cam_set[0] = self.emccd
         except Exception as e:
             self.logg.error(f"{e}")
         try:

@@ -6,9 +6,9 @@ class ProcessorManager:
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
-        self.wfp = shwfs_processer.WavefrontSensing(self.logg)
+        self.wfp = shwfs_processer.WavefrontSensing(logg=self.logg)
         self.flp = foclok_processor.FocusLocker()
-        self.trg = trigger_generator.TriggerSequence(self.logg)
+        self.trg = trigger_generator.TriggerSequence(logg=self.logg)
 
     @staticmethod
     def setup_logging():
