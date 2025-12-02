@@ -1,7 +1,7 @@
 import sys
-
+import os
 from PyQt6.QtCore import Qt, pyqtSignal
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QSpinBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from . import custom_widgets as cw
 from . import controller_panel, ao_panel, viewer_window
 
@@ -16,6 +16,7 @@ class MainWindow(QMainWindow):
         self.data_folder = path
         self._set_dark_theme()
         self._setup_ui()
+        self.dialog, self.dialog_text = None, None
 
     @staticmethod
     def setup_logging():
@@ -74,6 +75,27 @@ class MainWindow(QMainWindow):
         }
         """
         self.setStyleSheet(dark_stylesheet)
+
+    def get_file_dialog(self, sw="Save File"):
+        file_dialog = cw.FileDialogWidget(name=sw, file_filter="All Files (*)", default_dir=self.data_folder)
+        if file_dialog.exec() == QFileDialog.DialogCode.Accepted:
+            selected_file = file_dialog.selectedFiles()
+            if selected_file:
+                return os.path.basename(selected_file[0])
+            else:
+                return None
+        return None
+
+    def get_dialog(self, txt, interrupt=False):
+        self.dialog, self.dialog_text = cw.create_dialog(labtex=True, interrupt=interrupt)
+        self.dialog.setModal(True)
+        self.dialog.show()
+        self.dialog_text.setText(f"Task {txt} is running, please wait...")
+        self.refresh_gui()
+
+    @staticmethod
+    def refresh_gui():
+        QApplication.processEvents()
 
 
 if __name__ == '__main__':

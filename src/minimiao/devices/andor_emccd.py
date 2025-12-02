@@ -351,7 +351,7 @@ class EMCCDCamera:
             return
 
         frames = np.asarray(data_array, dtype=np.uint16).reshape(num, self.pixels_y, self.pixels_x)
-        self.data.add_element([frames[i] for i in range(num)])
+        self.data.add_element([frames[i] for i in range(num)], [valid_first, valid_last])
 
     def get_last_image(self):
         if self.data is not None:
@@ -385,7 +385,6 @@ class EMCCDCamera:
         ret = self.sdk.AbortAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info('Acquisition stopped')
-            self.data = None
             self.free_memory()
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
