@@ -6,10 +6,10 @@ import sys
 import json
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
-from devices import device
-import executor
-from gui import main_window
-from processors import processor
+from .devices import device
+from . import executor
+from .gui import main_window
+from .processors import processor
 
 
 def setup_folder():

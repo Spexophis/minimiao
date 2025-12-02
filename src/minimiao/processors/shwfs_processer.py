@@ -6,8 +6,8 @@ import tifffile as tf
 from scipy.signal import fftconvolve as corr
 from skimage.filters import threshold_otsu
 
-from utilities import zernike_generator as tz
-from utilities import image_processor as ipr
+from minimiao.utilities import zernike_generator as tz
+from minimiao.utilities import image_processor as ipr
 
 fft2 = np.fft.fft2
 ifft2 = np.fft.ifft2

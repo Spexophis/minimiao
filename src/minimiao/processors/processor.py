@@ -1,4 +1,4 @@
-from processors import shwfs_processer, foclok_processor, trigger_generator
+from . import shwfs_processer, foclok_processor, trigger_generator
 
 
 class ProcessorManager:

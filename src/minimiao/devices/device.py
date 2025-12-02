@@ -1,10 +1,10 @@
-from devices import mock_cam
-from devices import andor_emccd
-from devices import cobolt_laser
-from devices import fdd_slm
-from devices import mcl_deck
-from devices import mcl_piezo
-from devices import ni_daq
+# from .devices import mock_cam
+from . import andor_emccd
+from . import cobolt_laser
+from . import fdd_slm
+from . import mcl_deck
+from . import mcl_piezo
+from . import ni_daq
 
 
 class DeviceManager:

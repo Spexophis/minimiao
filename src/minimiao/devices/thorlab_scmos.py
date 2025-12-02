@@ -1,5 +1,5 @@
 import os
-import run_threads
+from minimiao import run_threads
 
 import numpy as np
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK

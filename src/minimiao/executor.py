@@ -2,8 +2,8 @@ import time
 
 from PyQt6.QtCore import QObject, pyqtSlot, Qt
 
-from utilities import image_processor as ipr
-import run_threads
+from .utilities import image_processor as ipr
+from . import run_threads
 
 class CommandExecutor(QObject):
 
