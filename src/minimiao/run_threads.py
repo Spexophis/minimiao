@@ -1,9 +1,9 @@
 import threading
 import time
 from collections import deque
-
+import traceback
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QObject, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
@@ -28,15 +28,21 @@ class CameraAcquisitionThread(threading.Thread):
 class CameraDataList:
     def __init__(self, max_length):
         self.data_list = deque(maxlen=max_length)
+        self.ind_list = deque(maxlen=max_length)
         self.callback = None
         self._lock = threading.Lock()
 
-    def add_element(self, elements):
+    def add_element(self, elements, ids=None):
         with self._lock:
             self.data_list.extend(elements)
+            if ids is not None:
+                self.ind_list.extend(list(range(ids[0], ids[1] + 1)))
             last = self.data_list[-1] if self.data_list else None
         if self.callback is not None and last is not None:
             self.callback(last)  # passes ndarray
+
+    def get_elements(self):
+        return np.array(self.data_list) if self.data_list else None
 
     def get_last_element(self, copy=False):
         with self._lock:
@@ -94,7 +100,7 @@ class PhotonCountList:
 
 
 class FFTWorker(QThread):
-    fftReady = pyqtSignal(object)  # emits uint16 2D ndarray
+    fftReady = pyqtSignal(object)
 
     def __init__(self, fps=10, parent=None):
         super().__init__(parent)
@@ -105,7 +111,7 @@ class FFTWorker(QThread):
 
     def stop(self):
         self._running = False
-        self.wait(2000)
+        self.wait(2)
 
     def push_frame(self, frame_u16: np.ndarray):
         if frame_u16 is None or frame_u16.ndim != 2:
@@ -147,3 +153,27 @@ class FFTWorker(QThread):
                 out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
 
             self.fftReady.emit(out)
+
+
+class TaskWorker(QThread):
+    error = pyqtSignal(tuple)
+
+    def __init__(self, task=None, n=1, parent=None):
+        super().__init__(parent)
+        self.task = task if task is not None else self._do_nothing
+        self.n = n
+
+    def run(self):
+        try:
+            for i in range(self.n):
+                self.task()
+        except Exception as e:
+            self.error.emit((e, traceback.format_exc()))
+
+    @pyqtSlot()
+    def _do(self):
+        self.task()
+
+    @staticmethod
+    def _do_nothing():
+        pass
