@@ -5,7 +5,7 @@ from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, FrequencyUnit
 from nidaqmx.error_codes import DAQmxWarnings
 from nidaqmx.system import System
 
-import run_threads
+from minimiao import run_threads
 
 warnings.filterwarnings("error", category=nidaqmx.DaqWarning)
 

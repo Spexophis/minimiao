@@ -3,7 +3,7 @@ import json
 from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
-from gui import custom_widgets as cw
+from . import custom_widgets as cw
 
 
 class AOPanel(QWidget):

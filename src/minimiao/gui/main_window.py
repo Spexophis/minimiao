@@ -2,8 +2,8 @@ import sys
 
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QSpinBox, QDoubleSpinBox
-from gui import custom_widgets as cw
-from gui import controller_panel, ao_panel, viewer_window
+from . import custom_widgets as cw
+from . import controller_panel, ao_panel, viewer_window
 
 
 class MainWindow(QMainWindow):

@@ -1,7 +1,7 @@
 import sys
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
-import run_threads
+from minimiao import run_threads
 
 sys.path.append(r'C:\Program Files\Andor SDK')
 

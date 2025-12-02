@@ -7,9 +7,8 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
 from matplotlib.figure import Figure
 
-import run_threads
-from gui import gl_viewer
-from gui import custom_widgets as cw
+from . import gl_viewer
+from . import custom_widgets as cw
 
 matplotlib.rcParams.update({
     'axes.facecolor': '#232629',
