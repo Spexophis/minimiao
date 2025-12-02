@@ -23,6 +23,12 @@ class MainWindow(QMainWindow):
         logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
         return logging
 
+    def closeEvent(self, event, **kwargs):
+        self.aboutToClose.emit()
+        self.ctrl_panel.save_spinbox_values()
+        self.ao_panel.save_spinbox_values()
+        super().closeEvent(event)
+
     def _setup_ui(self):
         self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
         self.ctrl_dock = cw.DockWidget("Control Panel")
@@ -68,10 +74,6 @@ class MainWindow(QMainWindow):
         }
         """
         self.setStyleSheet(dark_stylesheet)
-
-    def closeEvent(self, event):
-        self.aboutToClose.emit()
-        super().closeEvent(event)
 
 
 if __name__ == '__main__':

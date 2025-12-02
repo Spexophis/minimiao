@@ -1,7 +1,9 @@
 import time
 
-from PyQt6.QtCore import QObject, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtSlot, Qt
+
 from utilities import image_processor as ipr
+import run_threads
 
 class CommandExecutor(QObject):
 
@@ -47,6 +49,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
 
         self.ctrl_panel.Signal_video.connect(self.video)
+        self.ctrl_panel.Signal_fft.connect(self.fft)
         self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
         self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
 
@@ -358,51 +361,34 @@ class CommandExecutor(QObject):
 
     def stop_video(self):
         try:
+            self.devs.daq.stop_triggers()
             self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.logg.info(r"Live Video Stopped")
             if self.slm_seq != "None":
                 self.devs.slm.deactivate()
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.lasers_off()
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
-            
-    # @pyqtSlot(bool)
-    # def fft(self, sw: bool):
-    #     if sw:
-    #         self.run_fft()
-    #     else:
-    #         self.stop_fft()
-    # 
-    # def run_fft(self):
-    #     try:
-    #         self.setup_fft_thread()
-    #         self.thread_fft.start()
-    #     except Exception as e:
-    #         self.logg.error(f"Error starting fft: {e}")
-    # 
-    # def stop_fft(self):
-    #     try:
-    #         if self.thread_fft.isRunning():
-    #             self.thread_fft.quit()
-    #             self.thread_fft.wait()
-    #     except Exception as e:
-    #         self.logg.error(f"Error stopping fft: {e}")
-    # 
-    # @pyqtSlot()
-    # def imshow_fft(self):
-    #     try:
-    #         self.viewer.plot_fft(
-    #             ipr.fourier_transform(self.viewer.get_image_data(layer=self.cameras["imaging"])))
-    #     except Exception as e:
-    #         self.logg.error(f"Error showing fft: {e}")
+
+    @pyqtSlot(bool)
+    def fft(self, on: bool):
+        if on:
+            if getattr(self.viewer, "fft_worker", None) is None:
+                self.viewer.fft_worker = run_threads.FFTWorker(fps=10)
+                self.viewer.fft_worker.fftReady.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
+                self.viewer.fft_worker.start()
+            self.viewer.fft_mode = True
+        else:
+            self.viewer.fft_mode = False
+            if getattr(self.viewer, "fft_worker", None) is not None:
+                self.viewer.fft_worker.stop()
+                self.viewer.fft_worker = None
 
     @pyqtSlot()
     def profile_plot(self):
         try:
             ax = self.ctrl_panel.get_profile_axis()
-            self.viewer.plot_update(
-                ipr.get_profile(self.viewer.get_image_data(layer=self.cameras["imaging"]), ax, norm=True))
+            self.viewer.update_plot(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True))
         except Exception as e:
             self.logg.error(f"Error plotting profile: {e}")
 
@@ -410,8 +396,7 @@ class CommandExecutor(QObject):
     def plot_add(self):
         try:
             ax = self.ctrl_panel.get_profile_axis()
-            self.viewer.plot(
-                ipr.get_profile(self.viewer.get_image_data(layer=self.cameras["imaging"]), ax, norm=True))
+            self.viewer.plot_profile(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True))
         except Exception as e:
             self.logg.error(f"Error plotting profile: {e}")
 
@@ -422,7 +407,7 @@ class CommandExecutor(QObject):
             self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
             self.update_trigger_parameters("imaging")
             dtr, dch = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-            self.viewer.plot_update(dtr[0])
+            self.viewer.update_plot(dtr[0])
             for i in range(dtr.shape[0] - 1):
                 self.viewer.plot(dtr[i + 1] + i + 1)
         except Exception as e:

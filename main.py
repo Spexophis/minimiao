@@ -66,34 +66,48 @@ def change_config(values, dfd):
         json.dump(values, f)
 
 
+class AppWrapper:
+    def __init__(self):
+        self.app = QApplication(sys.argv)  # Create an instance of QApplication
+        self.app.setStyleSheet("""
+        QWidget { background-color: #232629; color: #f0f0f0; font-size: 14px; }
+        QPushButton { background-color: #444; border: 1px solid #555; color: #f0f0f0; }
+        QPushButton:hover { background-color: #666; }
+        QLabel { color: #e0e0e0; }
+        QSpinBox { background-color: #222; color: #f0f0f0; border: 1px solid #333; }
+        """)
+        self.data_folder = setup_folder()
+        self.error_logger = setup_logger(self.data_folder)
+
+        selected_file = select_file_from_folder(None, self.data_folder)
+        if not selected_file:
+            print("No file selected. Exiting.")
+            sys.exit(0)
+
+        print(f"Selected file: {selected_file}")
+        self.configs = load_config(selected_file)
+        self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.proc = processor.ProcessorManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.proc, self.data_folder, self.error_logger)
+        self.mwd.aboutToClose.connect(self.close)
+
+    def run(self):
+        try:
+            self.mwd.show()
+            sys.exit(self.app.exec())
+        except Exception as e:
+            print(f"Fatal error: {e}")
+            sys.exit(1)
+
+    def close(self):
+        self.devices.close()
+        self.app.exit()
+
+
 def main():
-    app = QApplication(sys.argv)
-    app.setStyleSheet("""
-    QWidget { background-color: #232629; color: #f0f0f0; font-size: 14px; }
-    QPushButton { background-color: #444; border: 1px solid #555; color: #f0f0f0; }
-    QPushButton:hover { background-color: #666; }
-    QLabel { color: #e0e0e0; }
-    QSpinBox { background-color: #222; color: #f0f0f0; border: 1px solid #333; }
-    """)
-
-    data_folder = setup_folder()
-    error_logger = setup_logger(data_folder)
-
-    selected_file = select_file_from_folder(None, data_folder)
-    if not selected_file:
-        print("No file selected. Exiting.")
-        sys.exit(0)
-
-    print(f"Selected file: {selected_file}")
-    configs = load_config(selected_file)
-    devices = device.DeviceManager(config=configs, logg=error_logger, path=data_folder)
-    proc = processor.ProcessorManager(config=configs, logg=error_logger, path=data_folder)
-    mwd = main_window.MainWindow(config=configs, logg=error_logger, path=data_folder)
-    cmd_exc = executor.CommandExecutor(devices, mwd, proc, data_folder, error_logger)
-    mwd.aboutToClose.connect(devices.close)
-
-    mwd.show()
-    sys.exit(app.exec())
+    app_wrapper = AppWrapper()
+    app_wrapper.run()
 
 
 if __name__ == '__main__':

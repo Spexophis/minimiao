@@ -33,7 +33,7 @@ class ControlPanel(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self._load_spinbox_values()
+        self.load_spinbox_values()
         self.digital_timing_presets = self.load_digital_timing_presets()
         self._set_signal_connections()
 
@@ -305,10 +305,10 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#4 - iXon')), 0, 6, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_emccd, 1, 6, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_emccd, 2, 6, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - Kira')), 0, 8, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - Kira')), 0, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_scmos, 1, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_scmos, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#7 - FLIR')), 0, 9, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - FLIR')), 0, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
 
@@ -339,8 +339,8 @@ class ControlPanel(QWidget):
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
-        self.QPushButton_plot_profile = cw.PushButtonWidget("Live Profile")
-        self.QPushButton_add_profile = cw.PushButtonWidget("Plot Profile")
+        self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
+        self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field 2D", "Wide Field 3D",
                                                                          "Point Scan 2D", "Point Scan 3D"])
@@ -360,6 +360,11 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_fft, 3, 2, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Profile Axis')), 3, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_profile_axis, 3, 1, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_plot_profile, 4, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_add_profile, 4, 1, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(acq_scroll_area)
@@ -639,6 +644,9 @@ class ControlPanel(QWidget):
         else:
             self.Signal_fft.emit(False)
 
+    def get_profile_axis(self):
+        return self.QComboBox_profile_axis.currentText()
+
     @pyqtSlot()
     def run_plot_profile(self):
         self.Signal_plot_profile.emit()
@@ -718,7 +726,7 @@ class ControlPanel(QWidget):
         except FileNotFoundError:
             return {}
 
-    def _save_spinbox_values(self):
+    def save_spinbox_values(self):
         values = {}
         for name in dir(self):
             obj = getattr(self, name)
@@ -727,7 +735,7 @@ class ControlPanel(QWidget):
         with open(self.config["ConWidget Path"], 'w') as f:
             json.dump(values, f, indent=4)
 
-    def _load_spinbox_values(self):
+    def load_spinbox_values(self):
         try:
             with open(self.config["ConWidget Path"], 'r') as f:
                 values = json.load(f)

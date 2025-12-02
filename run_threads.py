@@ -3,6 +3,7 @@ import time
 from collections import deque
 
 import numpy as np
+from PyQt6.QtCore import QThread, pyqtSignal
 
 
 class CameraAcquisitionThread(threading.Thread):
@@ -90,3 +91,64 @@ class PhotonCountList:
 
     def is_empty(self):
         return len(self.data_list) == 0
+
+
+class FFTWorker(QThread):
+    fftReady = pyqtSignal(object)  # emits uint16 2D ndarray
+
+    def __init__(self, fps=10, parent=None):
+        super().__init__(parent)
+        self.fps = float(fps)
+        self._running = True
+        self._latest = None
+        self._win = None  # cached window for ROI
+
+    def stop(self):
+        self._running = False
+        self.wait(2000)
+
+    def push_frame(self, frame_u16: np.ndarray):
+        """Call from GUI thread. Copies only a small ROI (fast)."""
+        if frame_u16 is None or frame_u16.ndim != 2:
+            return
+
+        f = frame_u16
+
+        self._latest = np.array(f, copy=True)
+
+    def _ensure_window(self, n: int):
+        if self._win is None or self._win.shape[0] != n:
+            w1 = np.hanning(n).astype(np.float32)
+            self._win = np.outer(w1, w1)
+
+    def run(self):
+        period = 1.0 / max(self.fps, 0.1)
+        next_t = time.perf_counter()
+
+        while self._running:
+            now = time.perf_counter()
+            if now < next_t:
+                self.msleep(int((next_t - now) * 1000))
+                continue
+            next_t = now + period
+
+            if self._latest is None:
+                continue
+
+            img = self._latest
+            n = img.shape[0]
+            self._ensure_window(n)
+
+            # FFT magnitude (log), centered
+            ft = np.fft.fftshift(np.fft.fft2(img * self._win))
+            mag = np.log1p(np.abs(ft)).astype(np.float32)
+
+            # normalize to uint16 for display
+            mn = float(mag.min())
+            mx = float(mag.max())
+            if mx <= mn:
+                out = np.zeros_like(mag, dtype=np.uint16)
+            else:
+                out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+
+            self.fftReady.emit(out)

@@ -309,12 +309,10 @@ class EMCCDCamera:
     def prepare_live(self, rd=4, aq=5, tr=7):
         self.set_acquisition_mode(aq)
         self.set_readout_mode(rd)
-        self.set_trigger_mode(0)
+        self.set_trigger_mode(tr)
         self.set_roi()
         self.set_gain()
-        self.t_exposure = 0.02
-        self.set_exposure_time()
-        # self.set_kinetic_cycle_time(0)
+        self.set_kinetic_cycle_time(0)
         self.get_acquisition_timings()
         self.get_buffer_size()
 
