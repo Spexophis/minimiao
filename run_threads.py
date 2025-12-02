@@ -108,12 +108,9 @@ class FFTWorker(QThread):
         self.wait(2000)
 
     def push_frame(self, frame_u16: np.ndarray):
-        """Call from GUI thread. Copies only a small ROI (fast)."""
         if frame_u16 is None or frame_u16.ndim != 2:
             return
-
         f = frame_u16
-
         self._latest = np.array(f, copy=True)
 
     def _ensure_window(self, n: int):
@@ -139,11 +136,9 @@ class FFTWorker(QThread):
             n = img.shape[0]
             self._ensure_window(n)
 
-            # FFT magnitude (log), centered
             ft = np.fft.fftshift(np.fft.fft2(img * self._win))
             mag = np.log1p(np.abs(ft)).astype(np.float32)
 
-            # normalize to uint16 for display
             mn = float(mag.min())
             mx = float(mag.max())
             if mx <= mn:
