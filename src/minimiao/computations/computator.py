@@ -1,13 +1,14 @@
-from . import shwfs_processer, foclok_processor, trigger_generator
+from . import image_reconstructions, shwfs_reconstruction, focus_lock_control, trigger_generator
 
 
-class ProcessorManager:
+class ComputationManager:
     def __init__(self, config=None, logg=None, path=None):
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
-        self.wfp = shwfs_processer.WavefrontSensing(logg=self.logg)
-        self.flp = foclok_processor.FocusLocker()
+        self.rec = image_reconstructions.ImgRecon(logg=self.logg)
+        self.wfp = shwfs_reconstruction.WavefrontSensing(logg=self.logg)
+        self.flp = focus_lock_control.FocusLocker()
         self.trg = trigger_generator.TriggerSequence(logg=self.logg)
 
     @staticmethod

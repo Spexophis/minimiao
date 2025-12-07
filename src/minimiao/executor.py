@@ -13,16 +13,17 @@ from .utilities import image_processor as ipr
 class CommandExecutor(QObject):
     svd = pyqtSignal(str, np.ndarray, list, list)
 
-    def __init__(self, dev, cwd, pr, path, logger=None):
+    def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
         self.devs = dev
         self.vw = cwd
         self.ctrl_panel = self.vw.ctrl_panel
         self.viewer = self.vw.viewer
         self.ao_panel = self.vw.ao_panel
-        self.trg = pr.trg
-        self.wfr = pr.wfp
-        self.flk = pr.flp
+        self.rec = cmp.rec
+        self.trg = cmp.trg
+        self.wfr = cmp.wfp
+        self.flk = cmp.flp
         self.path = path
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
@@ -333,10 +334,6 @@ class CommandExecutor(QObject):
                 self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
                                                       exposure=self.trg.exposure_time,
                                                       standby=self.trg.standby_time)
-        if vd_mod == "Scan Calib":
-            dtr, ptr, dch, pch = self.trg.generate_piezo_line_scan(self.lasers, self.cameras["imaging"])
-            self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                         digital_sequences=dtr, digital_channels=dch, finite=False)
         if vd_mod == "Focus Lock":
             self.logg.info(f"Focus Lock live")
 
@@ -447,9 +444,7 @@ class CommandExecutor(QObject):
     def data_acquisition(self, acq_mod: str, acq_num: int):
         if acq_mod == "Point Scan 2D":
             self.run_point_scan(acq_num)
-        elif acq_mod == "Wide Field 2D":
-            self.run_widefield(acq_num)
-        elif acq_mod == "Wide Field 3D":
+        elif acq_mod == "Wide Field":
             self.run_widefield(acq_num)
         elif acq_mod == "SIM 2D":
             self.run_sim_2d(acq_num)
@@ -758,7 +753,7 @@ class CommandExecutor(QObject):
         self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
         self.update_trigger_parameters("imaging")
-        dtr, sw, ptr, dch, pch, pos = self.trg.generate_piezo_scan(self.lasers, self.cameras["imaging"],
+        dtr, ptr, dch, pch, pos = self.trg.generate_piezo_scan(self.lasers, self.cameras["imaging"],
                                                                    self.slm_seq)
         self.devs.daq.set_piezo_position(pos=list(np.swapaxes(ptr, 0, 1)[0]), indices=pch)
         self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
@@ -835,11 +830,10 @@ class CommandExecutor(QObject):
             time.sleep(0.02)
             self.devs.daq.run_triggers()
             time.sleep(1.)
-            fd = os.path.join(self.data_folder, time.strftime("%Y%m%d%H%M%S") + '_piezo_scanning.tif')
-            tf.imwrite(fd, self.devs.cam_set[self.cameras["imaging"]].get_data(), imagej=True, resolution=(
-                1 / self.pixel_sizes[self.cameras["imaging"]], 1 / self.pixel_sizes[self.cameras["imaging"]]),
-                       metadata={'unit': 'um',
-                                 'indices': list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list)})
+            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_parallel_scanning',
+                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
+                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
+                          self.trg.piezo_scan_positions)
         except Exception as e:
             self.finish_parallel_scan()
             self.logg.error(f"Error running point scanning: {e}")

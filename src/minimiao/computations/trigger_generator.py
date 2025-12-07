@@ -294,21 +294,6 @@ class TriggerSequence:
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
         return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
 
-    def generate_piezo_line_scan(self, lasers, camera, slm_seq):
-        digital_triggers, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera, slm_seq)
-        pz_chs = []
-        for i in range(3):
-            if self.piezo_scan_pos[i] > 0:
-                pz_chs.append(i)
-        piezo_sequences = np.ones((len(pz_chs), cycle_samples))
-        n = cycle_samples - self.return_samples
-        for i, pch in enumerate(pz_chs):
-            piezo_sequences[i] *= self.piezo_starts[pch]
-            piezo_sequences[i, :n] = np.linspace(start=self.piezo_starts[pch],
-                                                 stop=self.piezo_starts[pch] + self.piezo_ranges[pch],
-                                                 num=n, endpoint=True)
-        return digital_triggers, piezo_sequences, dig_chs, pz_chs
-
     def generate_piezo_point_scan_2d(self, lasers, camera, span="1 um"):
         ramp_libs = {"1 um": self.generate_piezo_scan_ramp_1um(),
                      "2 um": self.generate_piezo_scan_ramp_2um()}
@@ -338,7 +323,7 @@ class TriggerSequence:
         digital_sequences = np.tile(digital_sequences, 32)
         offset_samples = np.zeros((len(digital_channels), samples_x + 2000))
         digital_sequences = np.concatenate((offset_samples, digital_sequences), axis=1)
-        return np.vstack((fast_x, slow_y)), digital_sequences, digital_channels, [0, 1], [2], 32 * 32
+        return np.vstack((fast_x, slow_y)), digital_sequences, digital_channels, [0, 1], 32 * 32
 
     def generate_piezo_scan_ramp_1um(self):
         lt = 0.25
