@@ -180,7 +180,8 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_stage_z = cw.DoubleSpinBoxWidget(0, 100, 0.04, 2, 30.00)
         self.QDoubleSpinBox_step_z = cw.DoubleSpinBoxWidget(0, 50, 0.001, 4, 0.160)
         self.QDoubleSpinBox_range_z = cw.DoubleSpinBoxWidget(0, 50, 0.001, 4, 4.80)
-        self.QDoubleSpinBox_piezo_return_time = cw.DoubleSpinBoxWidget(0, 50, 0.01, 2, 0.06)
+        self.QDoubleSpinBox_piezo_return_time = cw.DoubleSpinBoxWidget(0, 50, 0.01, 2, 0.05)
+        self.QDoubleSpinBox_piezo_line_time = cw.DoubleSpinBoxWidget(0, 50, 0.01, 2, 0.25)
         self.QPushButton_focus_finding = cw.PushButtonWidget('Find Focus')
         self.QPushButton_focus_locking = cw.PushButtonWidget('Lock Focus', checkable=True)
         self.QDoubleSpinBox_pid_kp = cw.DoubleSpinBoxWidget(0, 100, 0.01, 2, 0.5)
@@ -221,15 +222,17 @@ class ControlPanel(QWidget):
         mcl_piezo_scroll_layout.addWidget(cw.FrameWidget(), 13, 0, 1, 3)
         mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Piezo Return / s')), 14, 0)
         mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_piezo_return_time, 14, 1)
-        mcl_piezo_scroll_layout.addWidget(cw.FrameWidget(), 15, 0, 1, 3)
-        mcl_piezo_scroll_layout.addWidget(self.QPushButton_focus_finding, 16, 0)
-        mcl_piezo_scroll_layout.addWidget(self.QPushButton_focus_locking, 16, 1)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kP')), 17, 0)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kI')), 17, 1)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kD')), 17, 2)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_kp, 18, 0)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_ki, 18, 1)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_kd, 18, 2)
+        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Line Time / s')), 15, 0)
+        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_piezo_line_time, 15, 1)
+        mcl_piezo_scroll_layout.addWidget(cw.FrameWidget(), 16, 0, 1, 3)
+        mcl_piezo_scroll_layout.addWidget(self.QPushButton_focus_finding, 17, 0)
+        mcl_piezo_scroll_layout.addWidget(self.QPushButton_focus_locking, 17, 1)
+        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kP')), 18, 0)
+        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kI')), 18, 1)
+        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('PID - kD')), 18, 2)
+        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_kp, 19, 0)
+        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_ki, 19, 1)
+        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_kd, 19, 2)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(mad_deck_scroll_area)
@@ -308,7 +311,7 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - Kira')), 0, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_scmos, 1, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_scmos, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - FLIR')), 0, 9, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - MPD')), 0, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
 
@@ -524,8 +527,8 @@ class ControlPanel(QWidget):
                 [self.QDoubleSpinBox_stage_y_usb.value(), self.QDoubleSpinBox_stage_y.value()],
                 [self.QDoubleSpinBox_stage_z_usb.value(), self.QDoubleSpinBox_stage_z.value()]]
 
-    def get_piezo_return_time(self):
-        return self.QDoubleSpinBox_piezo_return_time.value()
+    def get_piezo_scan_time(self):
+        return self.QDoubleSpinBox_piezo_return_time.value(), self.QDoubleSpinBox_piezo_line_time.value()
 
     def get_piezo_scan_parameters(self):
         axis_lengths = [self.QDoubleSpinBox_range_x.value(), self.QDoubleSpinBox_range_y.value(),

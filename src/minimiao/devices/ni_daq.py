@@ -1,8 +1,11 @@
 import warnings
 
 import nidaqmx
+import numpy as np
 from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY
 from nidaqmx.error_codes import DAQmxWarnings
+from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
+from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
 from nidaqmx.system import System
 
 from minimiao import run_threads
@@ -16,15 +19,14 @@ class NIDAQ:
         def __init__(self):
             self.sample_rate = 250000
             self.duty_cycle = 0.5
-            self.piezo_channels = ["Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
+            self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
             self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
                                      "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
             self.photon_counter_channel = "/Dev1/ctr1"
             self.photon_counter_terminal = "/Dev1/PFI0"
-            self.photon_counter_gate = "/Dev1/PFI1"
             self.photon_counter_length = 2 ** 16
             self.clock_counter_channel = "/Dev1/ctr0"
-            self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev2/PFI0"]
+            self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
             self.mode = None
 
     def __init__(self, logg=None):
@@ -106,10 +108,10 @@ class NIDAQ:
     def get_piezo_position(self):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev2/ai0:2", min_val=-10.0, max_val=10.0)
-                task.timing.cfg_samp_clk_timing(rate=200000, sample_mode=AcquisitionType.FINITE, samps_per_chan=10,
-                                                active_edge=Edge.RISING)
-                pos = task.read(number_of_samples_per_channel=10)
+                task.ai_channels.add_ai_voltage_chan("Dev3/ai0:2", min_val=-10.0, max_val=10.0)
+                task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
+                                                samps_per_chan=16, active_edge=Edge.RISING)
+                pos = task.read(number_of_samples_per_channel=16)
             return [sum(p) / len(p) for p in pos]
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
@@ -309,3 +311,39 @@ class NIDAQ:
                 _task.close()
                 _task = None
         self._active = {key: False for key in self._active}
+
+    def measure_ao(self, output_channels, input_channels, data):
+        if data.ndim > 1:
+            _, num_samples = data.shape
+        else:
+            num_samples = data.shape[0]
+        acquired_data = np.zeros(data.shape)
+        with nidaqmx.Task() as clk_task:
+            co_channel = clk_task.co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channel,
+                                                                     freq=self.sample_rate, duty_cycle=self.duty_cycle)
+            co_channel.co_pulse_term = self.clock_counter_terminals[0]
+            clk_task.timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
+            with nidaqmx.Task() as output_task:
+                output_task.ao_channels.add_ao_voltage_chan(output_channels, min_val=-10., max_val=10.)
+                output_task.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[1],
+                                                       active_edge=Edge.RISING, sample_mode=AcquisitionType.FINITE,
+                                                       samps_per_chan=num_samples)
+                with nidaqmx.Task() as input_task:
+                    input_task.ai_channels.add_ai_voltage_chan(input_channels, min_val=-10., max_val=10.)
+                    input_task.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[1],
+                                                          sample_mode=AcquisitionType.FINITE,
+                                                          samps_per_chan=num_samples)
+                    if data.ndim > 1:
+                        writer = AnalogMultiChannelWriter(output_task.out_stream)
+                        reader = AnalogMultiChannelReader(input_task.in_stream)
+                    else:
+                        writer = AnalogSingleChannelWriter(output_task.out_stream)
+                        reader = AnalogSingleChannelReader(input_task.in_stream)
+                    writer.write_many_sample(data)
+                    input_task.start()
+                    output_task.start()
+                    clk_task.start()
+                    output_task.wait_until_done(WAIT_INFINITELY)
+                    input_task.wait_until_done(WAIT_INFINITELY)
+                    reader.read_many_sample(data=acquired_data, number_of_samples_per_channel=num_samples)
+        return acquired_data
