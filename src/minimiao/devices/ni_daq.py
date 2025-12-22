@@ -1,8 +1,11 @@
 import warnings
 
 import nidaqmx
-from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, FrequencyUnits, Level, WAIT_INFINITELY
+import numpy as np
+from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY
 from nidaqmx.error_codes import DAQmxWarnings
+from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
+from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
 from nidaqmx.system import System
 
 from minimiao import run_threads
@@ -16,13 +19,14 @@ class NIDAQ:
         def __init__(self):
             self.sample_rate = 250000
             self.duty_cycle = 0.5
-            self.piezo_channels = ["Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
+            self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
             self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                                     "Dev1/port0/line4", "Dev1/port0/line5"]
+                                     "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
             self.photon_counter_channel = "/Dev1/ctr1"
-            self.photon_input_terminal = "/Dev1/PFI0"
-            self.counter_channel = "/Dev1/ctr0"
-            self.clock = ["/Dev1/PFI12", "/Dev2/PFI0"]
+            self.photon_counter_terminal = "/Dev1/PFI0"
+            self.photon_counter_length = 2 ** 16
+            self.clock_counter_channel = "/Dev1/ctr0"
+            self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
             self.mode = None
 
     def __init__(self, logg=None):
@@ -68,7 +72,7 @@ class NIDAQ:
 
     def _configure(self):
         try:
-            tasks = {"piezo": None, "galvo": None, "switch": None, "digital": None, "clock": None}
+            tasks = {"piezo": None, "digital": None, "photon_counter": None, "clock": None, "gate": None}
             _active = {key: False for key in tasks.keys()}
             _running = {key: False for key in tasks.keys()}
             return tasks, _active, _running
@@ -104,10 +108,10 @@ class NIDAQ:
     def get_piezo_position(self):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev2/ai0:2", min_val=-10.0, max_val=10.0)
-                task.timing.cfg_samp_clk_timing(rate=200000, sample_mode=AcquisitionType.FINITE, samps_per_chan=10,
-                                                active_edge=Edge.RISING)
-                pos = task.read(number_of_samples_per_channel=10)
+                task.ai_channels.add_ai_voltage_chan("Dev3/ai0:2", min_val=-10.0, max_val=10.0)
+                task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
+                                                samps_per_chan=16, active_edge=Edge.RISING)
+                pos = task.read(number_of_samples_per_channel=16)
             return [sum(p) / len(p) for p in pos]
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
@@ -120,11 +124,11 @@ class NIDAQ:
     def write_clock_channel(self):
         try:
             self.tasks["clock"] = nidaqmx.Task("clock")
-            co_channel = self.tasks["clock"].co_channels.add_co_pulse_chan_freq(counter=self.counter_channel,
-                                                                               freq=self.sample_rate,
-                                                                               duty_cycle=self.duty_cycle)
+            co_channel = self.tasks["clock"].co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channel,
+                                                                                freq=self.sample_rate,
+                                                                                duty_cycle=self.duty_cycle)
             co_channel.co_ctr_timebase_src = '20MHzTimebase'
-            co_channel.co_pulse_term = self.clock[0]
+            co_channel.co_pulse_term = self.clock_counter_terminals[0]
             self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
             self._active["clock"] = True
         except nidaqmx.DaqWarning as e:
@@ -153,7 +157,8 @@ class NIDAQ:
             for ind in indices:
                 self.tasks["digital"].do_channels.add_do_chan(self.digital_channels[ind],
                                                               line_grouping=LineGrouping.CHAN_PER_LINE)
-            self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock[0],
+            self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+                                                             source=self.clock_counter_terminals[0],
                                                              active_edge=Edge.RISING, sample_mode=self.mode,
                                                              samps_per_chan=n_samples)
             self.tasks["digital"].write(digital_sequences == 1.0, auto_start=False)
@@ -185,7 +190,8 @@ class NIDAQ:
             self.tasks["piezo"] = nidaqmx.Task("piezo")
             for ind in indices:
                 self.tasks["piezo"].ao_channels.add_ao_voltage_chan(self.piezo_channels[ind], min_val=0., max_val=10.)
-            self.tasks["piezo"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock[1],
+            self.tasks["piezo"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+                                                           source=self.clock_counter_terminals[1],
                                                            active_edge=Edge.RISING, sample_mode=self.mode,
                                                            samps_per_chan=n_samples)
             self.tasks["piezo"].write(piezo_sequences, auto_start=False)
@@ -219,50 +225,42 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def set_photon_counter(self):
-        try:
-            if self.tasks["clock"] is None:
-                self.write_clock_channel()
-            self.tasks["photon_counter"] = nidaqmx.Task("photon_counter")
-            ci_channel = self.tasks["photon_counter"].ci_channels.add_ci_count_edges_chan(
-                counter=self.photon_counter_channel,
-                edge=nidaqmx.constants.Edge.RISING)
-            ci_channel.ci_count_edges_term = self.photon_input_terminal
-            self.tasks["photon_counter"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock[0],
-                                                                    active_edge=Edge.RISING,
-                                                                    sample_mode=AcquisitionType.CONTINUOUS,
-                                                                    samps_per_chan=self.buffer_size)
-            self.tasks["photon_counter"].in_stream.input_buf_size = self.buffer_size
-        except nidaqmx.DaqWarning as e:
-            self.logg.warning("DaqWarning caught as exception: %s", e)
-            try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
-                    e.error_code)
-            except AssertionError as ae:
-                self.logg.error("Assertion Error: %s", ae)
+    def prepare_photon_counter(self):
+        if self.tasks["clock"] is None:
+            self.write_clock_channel()
+
+        t = nidaqmx.Task("photon_counter")
+        ci = t.ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channel, edge=Edge.RISING)
+        ci.ci_count_edges_term = self.photon_counter_terminal
+
+        t.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[0],
+                                     active_edge=Edge.RISING, sample_mode=self.mode,
+                                     samps_per_chan=self.photon_counter_length)
+        t.in_stream.input_buf_size = self.photon_counter_length
+
+        self.tasks["photon_counter"] = t
+        self._active["photon_counter"] = True
+
+    def start_photon_count(self):
+        self.data = run_threads.PhotonCountList(self.photon_counter_length)
+        self.acq_thread = run_threads.PhotonCountThread(self)
+        self.acq_thread.start()
+        self.logg.info("Acquisition started")
+
+    def stop_photon_count(self):
+        if self.acq_thread:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        self.logg.info("Acquisition stopped")
 
     def get_photon_count(self):
         try:
-            counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=2048)
-            self.data.add_element(counts)
+            avail = self.tasks["photon_counter"].in_stream.avail_samp_per_chan
+            if avail > 0:
+                counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=avail, timeout=0.0)
+                self.data.add_element(counts)
         except nidaqmx.DaqWarning as e:
-            self.logg.warning("DaqWarning caught as exception: %s", e)
-            try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
-                    e.error_code)
-            except AssertionError as ae:
-                self.logg.error("Assertion Error: %s", ae)
-
-    def start_photon_count(self):
-        self.data = run_threads.PhotonCountList(self.buffer_size * 2)
-        self.acq_thread = run_threads.PhotonCountThread(self)
-        self.acq_thread.start()
-        self.logg.info('Acquisition started')
-
-    def stop_photon_count(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
-        self.logg.info('Acquisition stopped')
+            self.logg.error("DAQ read error %s: %s", e.error_code, e)
 
     def get_data(self):
         edg_num, count_data = self.data.get_elements()
@@ -313,3 +311,39 @@ class NIDAQ:
                 _task.close()
                 _task = None
         self._active = {key: False for key in self._active}
+
+    def measure_ao(self, output_channels, input_channels, data):
+        if data.ndim > 1:
+            _, num_samples = data.shape
+        else:
+            num_samples = data.shape[0]
+        acquired_data = np.zeros(data.shape)
+        with nidaqmx.Task() as clk_task:
+            co_channel = clk_task.co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channel,
+                                                                     freq=self.sample_rate, duty_cycle=self.duty_cycle)
+            co_channel.co_pulse_term = self.clock_counter_terminals[0]
+            clk_task.timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
+            with nidaqmx.Task() as output_task:
+                output_task.ao_channels.add_ao_voltage_chan(output_channels, min_val=-10., max_val=10.)
+                output_task.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[1],
+                                                       active_edge=Edge.RISING, sample_mode=AcquisitionType.FINITE,
+                                                       samps_per_chan=num_samples)
+                with nidaqmx.Task() as input_task:
+                    input_task.ai_channels.add_ai_voltage_chan(input_channels, min_val=-10., max_val=10.)
+                    input_task.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[1],
+                                                          sample_mode=AcquisitionType.FINITE,
+                                                          samps_per_chan=num_samples)
+                    if data.ndim > 1:
+                        writer = AnalogMultiChannelWriter(output_task.out_stream)
+                        reader = AnalogMultiChannelReader(input_task.in_stream)
+                    else:
+                        writer = AnalogSingleChannelWriter(output_task.out_stream)
+                        reader = AnalogSingleChannelReader(input_task.in_stream)
+                    writer.write_many_sample(data)
+                    input_task.start()
+                    output_task.start()
+                    clk_task.start()
+                    output_task.wait_until_done(WAIT_INFINITELY)
+                    input_task.wait_until_done(WAIT_INFINITELY)
+                    reader.read_many_sample(data=acquired_data, number_of_samples_per_channel=num_samples)
+        return acquired_data

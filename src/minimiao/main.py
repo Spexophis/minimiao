@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import QApplication, QFileDialog
 from .devices import device
 from . import executor
 from .gui import main_window
-from .processors import processor
+from .computations import computator
 
 
 def setup_folder():
@@ -87,9 +87,9 @@ class AppWrapper:
         print(f"Selected file: {selected_file}")
         self.configs = load_config(selected_file)
         self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
-        self.proc = processor.ProcessorManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.cmp = computator.ComputationManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
-        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.proc, self.data_folder, self.error_logger)
+        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
         self.mwd.aboutToClose.connect(self.close)
 
     def run(self):
