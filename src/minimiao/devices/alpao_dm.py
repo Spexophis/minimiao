@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 Ruizhe Lin
+# Licensed under the MIT License.
+
+
 import csv
 import os
 import struct
@@ -8,9 +13,8 @@ import numpy as np
 import pandas as pd
 import tifffile as tf
 
-from utilities import image_processor as ipr
-# from utilities import sys_ctrl as syct
-from utilities import zernike_generator as tz
+from minimiao.computations import image_processor as ipr
+from minimiao.computations import zernike_generator as tz
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
 if (8 * struct.calcsize("P")) == 32:
@@ -30,8 +34,6 @@ class DeformableMirror:
         self.dm, self.n_actuator = self._initialize_dm(self.dm_serial)
         if self.dm is not None:
             self._configure_dm()
-            self.ctrl = syct.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
-                                            calib=self.ctrl_calib)
         else:
             raise RuntimeError(f"Error Initializing DM {self.dm_name}")
         try:

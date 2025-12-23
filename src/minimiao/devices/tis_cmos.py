@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 Ruizhe Lin
+# Licensed under the MIT License.
+
+
 import sys
 
 sys.path.append(r'C:\Program Files\The Imaging Source Europe GmbH\sources')

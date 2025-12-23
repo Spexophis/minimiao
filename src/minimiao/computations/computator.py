@@ -1,3 +1,8 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 Ruizhe Lin
+# Licensed under the MIT License.
+
+
 from . import image_reconstructions, shwfs_reconstruction, focus_lock_control, trigger_generator
 
 
