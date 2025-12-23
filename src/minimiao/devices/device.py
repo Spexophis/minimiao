@@ -1,4 +1,8 @@
-# from .devices import mock_cam
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 Ruizhe Lin
+# Licensed under the MIT License.
+
+
 from . import andor_emccd
 from . import cobolt_laser
 from . import fdd_slm
@@ -13,11 +17,12 @@ class DeviceManager:
         self.logg = logg or self.setup_logging()
         self.data_folder = path
         self.cam_set = {}
-        # self.camera = mock_cam.MockCamera()
         try:
             self.emccd = andor_emccd.EMCCDCamera(logg=self.logg)
             self.cam_set[0] = self.emccd
         except Exception as e:
+            from . import mock_cam
+            self.cam_set[0] = mock_cam.MockCamera()
             self.logg.error(f"{e}")
         try:
             self.slm = fdd_slm.QXGA(logg=self.logg, config=self.config)
