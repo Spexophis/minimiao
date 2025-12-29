@@ -3,38 +3,15 @@
 # Licensed under the MIT License.
 
 
-import matplotlib
+from collections import deque
+
 import numpy as np
-from PyQt6.QtCore import QObject, QMutex, QMutexLocker
-from PyQt6.QtCore import pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QGridLayout, QSplitter, QHBoxLayout, QStackedWidget
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.backends.backend_qtagg import NavigationToolbar2QT as NavigationToolbar
-from matplotlib.figure import Figure
+import pyqtgraph as pg
+from PyQt6.QtCore import QObject, QMutex, QMutexLocker, QTimer, pyqtSlot, pyqtSignal, Qt
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
 
-from . import gl_viewer
 from . import custom_widgets as cw
-
-matplotlib.rcParams.update({
-    'axes.facecolor': '#232629',
-    'figure.facecolor': '#232629',
-    'axes.edgecolor': '#EEEEEE',
-    'axes.labelcolor': '#EEEEEE',
-    'xtick.color': '#EEEEEE',
-    'ytick.color': '#EEEEEE',
-    'text.color': '#EEEEEE',
-    'grid.color': '#555555',
-    'axes.grid': True,
-    'savefig.facecolor': '#232629'
-})
-
-
-class MplCanvas(FigureCanvas):
-    def __init__(self, parent=None, dpi=100):
-        fig = Figure(dpi=dpi, facecolor="#232629")
-        self.axes = fig.add_subplot(111, facecolor="#232629")
-        super().__init__(fig)
-        self.setStyleSheet("background-color: #232629;")  # Panel background
+from . import gl_viewer
 
 
 class FramePool(QObject):
@@ -67,6 +44,51 @@ class FramePool(QObject):
                 self._free.append(idx)
 
 
+class PhotonPool(QObject):
+    new_plots = pyqtSignal(object, object)
+
+    def __init__(self, max_len=2 ** 13, dt_s=4e-6, ui_hz=30, dtype=np.float64, parent=None):
+        super().__init__(parent)
+        self.max_len = int(max_len)
+        self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
+        self.dt_s = dt_s
+        self.xt = np.arange(self.max_len) * float(self.dt_s)
+        self.ui_hz = int(ui_hz)
+        self.dtype = dtype
+
+        self._timer = QTimer(self)
+        self._timer.setInterval(int(1000 / self.ui_hz))
+        self._timer.timeout.connect(self.send_plots)
+
+    def append_counts(self, counts):
+        self.buf.extend(np.asarray(counts, dtype=self.dtype))
+
+    @pyqtSlot()
+    def send_plots(self):
+        y = np.fromiter(self.buf, dtype=np.float64, count=len(self.buf))
+        self.new_plots.emit(self.xt, y)
+
+    def start_plots(self, ui_hz: int | None = None):
+        if ui_hz is not None:
+            self.ui_hz = int(ui_hz)
+            self._timer.setInterval(int(1000 / max(1, self.ui_hz)))
+            self._timer.timeout.connect(self.send_plots)
+        if not self._timer.isActive():
+            self._timer.start()
+
+    def stop_plots(self):
+        if self._timer.isActive():
+            self._timer.stop()
+
+    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None):
+        if max_len is not None:
+            self.max_len = int(max_len)
+        self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
+        if dt_s is not None:
+            self.dt_s = float(dt_s)
+        self.xt = np.arange(self.max_len) * float(self.dt_s)
+
+
 class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
 
@@ -74,10 +96,15 @@ class LiveViewer(QWidget):
         super().__init__(parent)
         self.config = config
         self.logg = logg
+        pg.setConfigOptions(useOpenGL=True, antialias=False)
         self._setup_ui()
+        self._overlay_n = 0
         self.h = 1024
         self.w = 1024
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
+        self.photon_pool = PhotonPool()
+        self.photon_pool.new_plots.connect(self.on_photon_counts_update)
+        self.data_curve = None
         self.fft_mode = False
         self.fft_worker = None
         self.view_stack.setCurrentIndex(0)
@@ -152,6 +179,34 @@ class LiveViewer(QWidget):
         layout_view.addWidget(self.QLabel_cursor)
         return layout_view
 
+    def _create_plot_widgets(self):
+        layout_plot = QHBoxLayout()
+
+        self.graph_plot = pg.PlotWidget()
+        self.graph_plot.setAspectLocked(True)
+        self.graph_plot.getPlotItem().hideAxis("left")
+        self.graph_plot.getPlotItem().hideAxis("bottom")
+
+        self.graph_img_item = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
+        self.graph_plot.addItem(self.graph_img_item)
+        self.graph_plot.invertY(True)
+
+        self.data_plot = pg.PlotWidget()
+        self.data_plot.showGrid(x=True, y=True)
+
+        self.data_curve = self.data_plot.plot()
+
+        self.data_curve.setDownsampling(auto=True, method="peak")
+        self.data_curve.setSkipFiniteCheck(True)
+
+        pi = self.data_plot.getPlotItem()
+        pi.setClipToView(True)
+        pi.enableAutoRange(x=False)
+
+        layout_plot.addWidget(self.graph_plot, stretch=1)
+        layout_plot.addWidget(self.data_plot, stretch=1)
+        return layout_plot
+
     def on_mouse(self, ix, iy, val):
         if ix < 0:
             self.QLabel_cursor.setText("x:-  y:-  v:-")
@@ -216,26 +271,41 @@ class LiveViewer(QWidget):
     def on_fft_frame(self, frame_u16):
         self.fft_viewer.set_frame(frame_u16)
 
-    def _create_plot_widgets(self):
-        layout_plot = QGridLayout()
-        self.canvas_plot = MplCanvas(self, dpi=64)
-        self.canvas_show = MplCanvas(self, dpi=64)
-        toolbar = NavigationToolbar(self.canvas_plot, self)
-        layout_plot.addWidget(toolbar, 0, 0, 1, 2)
-        layout_plot.addWidget(self.canvas_plot, 1, 0, 1, 1)
-        layout_plot.addWidget(self.canvas_show, 1, 1, 1, 1)
-        return layout_plot
+    def set_graph_image(self, img2d: np.ndarray, levels=None):
+        self.graph_img_item.setImage(img2d, autoLevels=(levels is None))
+        if levels is not None:
+            self.graph_img_item.setLevels(levels)
 
-    def plot_profile(self, data, x=None, sp=None):
-        if x is not None:
-            self.canvas_plot.axes.plot(x, data)
-        else:
-            self.canvas_plot.axes.plot(data)
-        if sp is not None:
-            self.canvas_plot.axes.axhline(y=sp, color='r', linestyle='--')
-        self.canvas_plot.axes.grid(True)
-        self.canvas_plot.draw()
+    def plot_trace(self, y, overlay=False):
+        y = np.asarray(y)
+        if y.size == 0:
+            return
+        if not overlay:
+            self.data_plot.clear()
+            self._overlay_n = 0
+        x = np.arange(y.size)
+        self.data_plot.enableAutoRange(x=True)
+        color = pg.intColor(self._overlay_n, hues=12)  # 12 distinct-ish hues, repeats after 12
+        pen = pg.mkPen(color=color, width=1.)
+        self._overlay_n += 1
+        self.data_plot.plot(x, y, pen=pen)
 
-    def update_plot(self, data, x=None, sp=None):
-        self.canvas_plot.axes.cla()
-        self.plot_profile(data, x, sp)
+    def stream_trace(self, x: np.ndarray, y: np.ndarray):
+        """
+        Update the 1D trace plot lively.
+        """
+        if y is None:
+            return
+        self.data_plot.clear()
+        self.data_curve = self.data_plot.plot()
+        self.data_curve.setDownsampling(auto=True, method="peak")
+        self.data_curve.setSkipFiniteCheck(True)
+        self.data_plot.enableAutoRange(x=True)
+        self.data_curve.setData(x, y)
+
+    def on_new_counts(self, counts: np.ndarray):
+        self.photon_pool.append_counts(counts)
+
+    @pyqtSlot(object, object)
+    def on_photon_counts_update(self, xt: np.ndarray, counts: np.ndarray):
+        self.data_curve.setData(xt, counts)

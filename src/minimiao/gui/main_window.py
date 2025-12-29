@@ -54,7 +54,7 @@ class MainWindow(QMainWindow):
         QWidget {
             background-color: #232629;
             color: #f0f0f0;
-            font-size: 13px;
+            font-size: 12px;
         }
         QPushButton {
             background-color: #444;

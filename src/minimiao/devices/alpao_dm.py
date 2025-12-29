@@ -13,8 +13,8 @@ import numpy as np
 import pandas as pd
 import tifffile as tf
 
-from minimiao.computations import image_processor as ipr
-from minimiao.computations import zernike_generator as tz
+from minimiao.utilities import image_processor as ipr
+from minimiao.utilities import zernike_generator as tz
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
 if (8 * struct.calcsize("P")) == 32:

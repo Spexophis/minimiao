@@ -8,7 +8,7 @@ import time
 from collections import deque
 import traceback
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal, QObject, pyqtSlot
+from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
@@ -73,6 +73,7 @@ class PhotonCountThread(threading.Thread):
         while self.running:
             with self.lock:
                 self.daq.get_photon_count()
+            time.sleep(0.001)  # 1 ms yield (tune)
 
     def stop(self):
         self.running = False
@@ -86,12 +87,17 @@ class PhotonCountList:
         self.count_list = deque(maxlen=max_length)
         self.data_list.extend([0])
         self.count_list.extend([0])
+        self.callback = None
+        self._lock = threading.Lock()
 
     def add_element(self, elements):
-        d = np.array(elements, dtype=int)
-        counts = np.diff(np.insert(d, 0, self.data_list[-1]))
-        self.count_list.extend(list(counts))
-        self.data_list.extend(elements)
+        with self._lock:
+            d = np.array(elements, dtype=int)
+            counts = np.diff(np.insert(d, 0, self.data_list[-1]))
+            self.count_list.extend(list(counts))
+            self.data_list.extend(elements)
+        if self.callback is not None:
+            self.callback(counts)
 
     def get_elements(self):
         return np.array(self.data_list) if self.data_list else None, np.array(
@@ -100,8 +106,8 @@ class PhotonCountList:
     def get_last_element(self):
         return self.data_list[-1].copy() if self.data_list else None
 
-    def is_empty(self):
-        return len(self.data_list) == 0
+    def on_update(self, callback):
+        self.callback = callback
 
 
 class FFTWorker(QThread):

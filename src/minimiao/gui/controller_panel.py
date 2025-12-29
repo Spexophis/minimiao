@@ -609,12 +609,14 @@ class ControlPanel(QWidget):
                           self.QDoubleSpinBox_ttl_start_off_488.value(),
                           self.QDoubleSpinBox_ttl_start_read_488.value(),
                           self.QDoubleSpinBox_ttl_start_emccd.value(),
-                          self.QDoubleSpinBox_ttl_start_scmos.value()]
+                          self.QDoubleSpinBox_ttl_start_scmos.value(),
+                          self.QDoubleSpinBox_ttl_start_cmos.value()]
         digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
                         self.QDoubleSpinBox_ttl_stop_off_488.value(),
                         self.QDoubleSpinBox_ttl_stop_read_488.value(),
                         self.QDoubleSpinBox_ttl_stop_emccd.value(),
-                        self.QDoubleSpinBox_ttl_stop_scmos.value()]
+                        self.QDoubleSpinBox_ttl_stop_scmos.value(),
+                        self.QDoubleSpinBox_ttl_stop_cmos.value()]
         return digital_starts, digital_ends
 
     @pyqtSlot()

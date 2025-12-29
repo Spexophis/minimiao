@@ -13,8 +13,8 @@ class TriggerSequence:
         # daq
         self.sample_rate = sample_rate  # Hz
         # digital triggers
-        self.digital_starts = [0.00000, 0.00025, 0.00025, 0.00025, 0.00025, 0.00025]
-        self.digital_ends = [0.00025, 0.002, 0.002, 0.003, 0.003, 0.003]
+        self.digital_starts = [0.00000, 0.00025, 0.00025, 0.00025, 0.00025, 0.00000]
+        self.digital_ends = [0.00025, 0.002, 0.002, 0.003, 0.003, 0.00001]
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
         # piezo scanner
@@ -36,6 +36,9 @@ class TriggerSequence:
         self.piezo_scan_positions = [start + step * np.arange(ns) for start, step, ns in
                                      zip(self.piezo_starts, self.piezo_steps, self.piezo_scan_pos)]
         self.piezo_scan_dlt = 0.25  # s
+        # GUI & Thread
+        self.refresh_time = 0.006  # s
+        self.refresh_time_samples = int(np.ceil(self.refresh_time * self.sample_rate))
         # SLM
         self.slm_delay_time = 0.00001  # s
         self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
@@ -321,6 +324,52 @@ class TriggerSequence:
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
         return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
+
+    def generate_live_point_scan_2d(self, lasers, slm_seq):
+        digital_channels = lasers.copy()
+        digital_channels.append(5)
+        digital_sequences = []
+        if slm_seq == "None":
+            line_samples = self.digital_ends[5] * 2
+            if 0 in lasers:
+                switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
+                switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
+                digital_sequences.append(switch_on_sequence)
+            if 2 in lasers:
+                switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
+                switch_off_sequence[self.digital_starts[2]:self.digital_ends[2]] = 1
+                digital_sequences.append(switch_off_sequence)
+            if 5 in digital_channels:
+                readout_sequence = np.zeros(line_samples, dtype=np.uint8)
+                readout_sequence[self.digital_starts[5]:self.digital_ends[5]] = 1
+                digital_sequences.append(readout_sequence)
+            pixel_dwell_sample = self.digital_ends[5] - self.digital_starts[5]
+        else:
+            if self.slm_start_samples > self.digital_ends[0]:
+                offset_samples =  self.slm_start_samples - self.digital_ends[0]
+                self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
+                self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
+            line_samples = self.digital_ends[0] + int(np.ceil(1.4e-3 * self.sample_rate))
+            if 0 in lasers:
+                switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
+                switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
+                digital_sequences.append(switch_on_sequence)
+            start_ = 0
+            end_ = 0
+            if 2 in lasers:
+                switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
+                start_ += max(self.digital_ends[0] - self.slm_start_samples - self.slm_delay_samples, 0)
+                switch_off_sequence[start_:start_ + self.trigger_pulse_samples] = 1
+                digital_sequences.append(switch_off_sequence)
+            if 5 in digital_channels:
+                readout_sequence = np.zeros(line_samples, dtype=np.uint8)
+                start_ += self.total_switch_on_samples + self.slm_start_samples
+                end_ += start_ + self.readout_samples
+                readout_sequence[start_:end_ + self.slm_delay_samples] = 1
+                digital_sequences.append(readout_sequence)
+            pixel_dwell_sample = self.readout_samples + self.slm_delay_samples
+        
+        return np.asarray(digital_sequences), digital_channels, pixel_dwell_sample
 
     def generate_piezo_point_scan_2d(self, lasers):
         line_samples = int(self.piezo_scan_dlt * self.sample_rate)
