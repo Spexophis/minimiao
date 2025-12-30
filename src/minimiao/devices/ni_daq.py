@@ -37,7 +37,7 @@ class NIDAQ:
                                        "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
         self.photon_counter_channel = "/Dev1/ctr1"
         self.photon_counter_terminal = "/Dev1/PFI0"
-        self.photon_counter_length = int(2 ** 16)
+        self._photon_counter_length = int(2 ** 16)
         self.clock_counter_channel = "/Dev1/ctr0"
         self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
         self.mode = None
@@ -220,6 +220,14 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
+    @property
+    def photon_counter_length(self) -> int:
+        return self._photon_counter_length
+
+    @photon_counter_length.setter
+    def photon_counter_length(self, value: int) -> None:
+        self._photon_counter_length = max(int(value), int(2 ** 16))
+
     def prepare_photon_counter(self):
         if self.tasks["clock"] is None:
             self.write_clock_channel()
@@ -243,6 +251,8 @@ class NIDAQ:
         if self.acq_thread:
             self.acq_thread.stop()
             self.acq_thread = None
+        if self.data is not None:
+            self.data = None
         self.logg.info("Photon counting stopped")
 
     def get_photon_count(self):
@@ -250,7 +260,7 @@ class NIDAQ:
             avail = self.tasks["photon_counter"].in_stream.avail_samp_per_chan
             if avail > 0:
                 counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=avail, timeout=0.0)
-                self.data.add_element(counts)
+                self.data.add_element(counts, avail)
         except nidaqmx.DaqWarning as e:
             self.logg.error("DAQ read error %s: %s", e.error_code, e)
 

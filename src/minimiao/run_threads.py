@@ -5,13 +5,15 @@
 
 import threading
 import time
-from collections import deque
 import traceback
+from collections import deque
+
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
+
     def __init__(self, cam):
         super().__init__()
         self.cam = cam
@@ -31,6 +33,7 @@ class CameraAcquisitionThread(threading.Thread):
 
 
 class CameraDataList:
+
     def __init__(self, max_length):
         self.data_list = deque(maxlen=max_length)
         self.ind_list = deque(maxlen=max_length)
@@ -61,12 +64,12 @@ class CameraDataList:
 
 
 class PhotonCountThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
 
     def __init__(self, daq):
         threading.Thread.__init__(self)
         self.daq = daq
+        self.running = False
+        self.lock = threading.Lock()
 
     def run(self):
         self.running = True
@@ -85,17 +88,28 @@ class PhotonCountList:
     def __init__(self, max_length):
         self.data_list = deque(maxlen=max_length)
         self.count_list = deque(maxlen=max_length)
+        self.ind_list = deque(maxlen=max_length)
+        self.count_len = max_length
+        self.count_starts = 1
+        self.count_ends = 1
         self.data_list.extend([0])
-        self.count_list.extend([0])
         self.callback = None
-        self._lock = threading.Lock()
+        self.request = None
+        self.lock = threading.Lock()
 
-    def add_element(self, elements):
-        with self._lock:
+    def add_element(self, elements, num):
+        with self.lock:
             d = np.array(elements, dtype=int)
+            self.count_starts = self.count_ends % self.count_len
+            self.count_ends = (self.count_ends + num) % self.count_len
             counts = np.diff(np.insert(d, 0, self.data_list[-1]))
             self.count_list.extend(list(counts))
-            self.data_list.extend(elements)
+            self.data_list.extend(list(elements))
+            if self.count_starts <= self.count_ends:
+                self.ind_list.extend(list(np.arange(self.count_starts, self.count_ends)))
+            else:
+                self.ind_list.extend(list(np.arange(self.count_ends, self.count_len)))
+                self.ind_list.extend(list(np.arange(self.count_starts)))
         if self.callback is not None:
             self.callback(counts)
 
@@ -103,15 +117,53 @@ class PhotonCountList:
         return np.array(self.data_list) if self.data_list else None, np.array(
             self.count_list) if self.data_list else None
 
-    def get_last_element(self):
-        return self.data_list[-1].copy() if self.data_list else None
+    def on_psr_request(self):
+        if self.request is not None:
+            self.request(np.array(self.count_list, copy=True), np.array(self.ind_list, copy=True))
+
+    def on_request(self, request):
+        self.request = request
 
     def on_update(self, callback):
         self.callback = callback
 
 
+class PSRThread(QThread):
+    psr_request = pyqtSignal()
+    psr_ready = pyqtSignal(object)
+
+    def __init__(self, recon, fps=10, parent=None):
+        super().__init__(parent)
+        self.recon = recon
+        self.fps = float(fps)
+        self._running = True
+
+    def stop(self):
+        self._running = False
+        self.wait(1)
+
+    def run(self):
+        period = 1.0 / self.fps
+        next_t = time.perf_counter()
+
+        while self._running:
+            now = time.perf_counter()
+            if now < next_t:
+                self.msleep(int((next_t - now) * 1000))
+                continue
+            next_t = now + period
+
+            self.psr_request.emit()
+
+    def push_data(self, dat, ind):
+        if dat.size == ind.size:
+            re = self.recon(dat, ind)
+            if re is not None:
+                self.psr_ready.emit(re)
+
+
 class FFTWorker(QThread):
-    fftReady = pyqtSignal(object)
+    fft_ready = pyqtSignal(object)
 
     def __init__(self, fps=10, parent=None):
         super().__init__(parent)
@@ -163,7 +215,7 @@ class FFTWorker(QThread):
             else:
                 out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
 
-            self.fftReady.emit(out)
+            self.fft_ready.emit(out)
 
 
 class TaskWorker(QThread):

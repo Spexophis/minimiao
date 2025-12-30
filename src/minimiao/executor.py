@@ -353,23 +353,29 @@ class CommandExecutor(QObject):
             if vd_mod == "Wide Field":
                 dtr, dch, dwl = self.trg.generate_live_point_scan_2d(self.lasers, "None")
                 self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=False)
-                self.viewer.plot_trace(dtr[-1])
             elif vd_mod == "Point Scan":
                 ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
-                self.rec.point_scan_n_pixels = self.trg.piezo_scan_pos[0]
-                self.rec.point_scan_n_lines = self.trg.piezo_scan_pos[1]
-                self.viewer.switch_camera(self.rec.point_scan_n_pixels, self.rec.point_scan_n_lines)
                 self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                             digital_sequences=dtr, digital_channels=dch, finite=True)
+                                             digital_sequences=dtr, digital_channels=dch, finite=False)
             else:
                 raise Exception(f"Invalid video mode {vd_mod} for MPD")
             self.rec.point_scan_gate_mask = dtr[-1]
-            self.rec.point_scan_dwell_samples = dwl
-            # self.devs.daq.photon_counter_length = dtr.shape[1]
+            self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
+                                           n_pixels=self.trg.piezo_scan_pos[0],
+                                           dwell_samples=dwl)
+            self.rec.prepare_point_scan_live_recon()
+            self.devs.daq.photon_counter_length = dtr.shape[1]
             self.devs.daq.prepare_photon_counter()
-            self.devs.daq.data.on_update(self.viewer.on_new_counts)
             self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
                                                  dt_s=1/self.devs.daq.sample_rate)
+            if getattr(self.viewer, "psr_worker", None) is None:
+                self.viewer.psr_worker = run_threads.PSRThread(recon=self.rec.point_scan_live_recon, fps=0.5)
+                self.viewer.psr_worker.psr_request.connect(self.devs.daq.data.on_psr_request)
+                self.viewer.psr_worker.psr_ready.connect(self.viewer.on_psr_frame)
+                self.devs.daq.data.on_request(self.viewer.psr_worker.push_data)
+                self.viewer.psr_worker.start()
+            self.devs.daq.data.on_update(self.viewer.on_new_counts)
+            self.viewer.psr_mode = True
         else:
             raise Exception(f"Invalid camera selection")
 
@@ -393,16 +399,14 @@ class CommandExecutor(QObject):
                 self.devs.slm.activate()
             if self.cameras["imaging"] <= 2:
                 self.devs.cam_set[self.cameras["imaging"]].start_live()
+                self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
+                self.devs.daq.run_triggers()
             else:
                 self.devs.daq.start_triggers()
                 self.devs.daq.start_photon_count()
+                self.devs.daq.run_triggers()
                 self.viewer.stream_trace(self.viewer.photon_pool.xt, np.zeros(self.viewer.photon_pool.max_len))
-                time.sleep(1)
-            self.devs.daq.run_triggers()
-            if self.cameras["imaging"] == 3:
                 self.viewer.photon_pool.start_plots(20)
-            else:
-                self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -411,12 +415,17 @@ class CommandExecutor(QObject):
 
     def stop_video(self):
         try:
-            if self.cameras["imaging"] == 3:
+            if self.cameras["imaging"] <= 2:
+                self.devs.cam_set[self.cameras["imaging"]].stop_live()
+                self.devs.daq.stop_triggers()
+            else:
                 self.devs.daq.stop_photon_count()
                 self.viewer.photon_pool.stop_plots()
-            else:
-                self.devs.cam_set[self.cameras["imaging"]].stop_live()
-            self.devs.daq.stop_triggers()
+                self.devs.daq.stop_triggers()
+                self.viewer.psr_mode = False
+                if getattr(self.viewer, "psr_worker", None) is not None:
+                    self.viewer.psr_worker.stop()
+                    self.viewer.psr_worker = None
             self.logg.info(r"Live Video Stopped")
             if self.slm_seq != "None":
                 self.devs.slm.deactivate()
@@ -430,7 +439,7 @@ class CommandExecutor(QObject):
         if on:
             if getattr(self.viewer, "fft_worker", None) is None:
                 self.viewer.fft_worker = run_threads.FFTWorker(fps=10)
-                self.viewer.fft_worker.fftReady.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
+                self.viewer.fft_worker.fft_ready.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
                 self.viewer.fft_worker.start()
             self.viewer.fft_mode = True
         else:
@@ -699,9 +708,9 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters("imaging")
         ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
         self.rec.point_scan_gate_mask = dtr[-1]
-        self.rec.point_scan_n_pixels = self.trg.piezo_scan_pos[0]
-        self.rec.point_scan_n_lines = self.trg.piezo_scan_pos[1]
-        self.rec.point_scan_dwell_samples = dwl
+        self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
+                                       n_pixels=self.trg.piezo_scan_pos[0],
+                                       dwell_samples=dwl)
         self.devs.daq.photon_counter_length = dtr.shape[1]
         self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)

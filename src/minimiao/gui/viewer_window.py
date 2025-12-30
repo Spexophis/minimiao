@@ -47,7 +47,7 @@ class FramePool(QObject):
 class PhotonPool(QObject):
     new_plots = pyqtSignal(object, object)
 
-    def __init__(self, max_len=2 ** 13, dt_s=4e-6, ui_hz=30, dtype=np.float64, parent=None):
+    def __init__(self, max_len=2 ** 16, dt_s=4e-6, ui_hz=30, dtype=np.float64, parent=None):
         super().__init__(parent)
         self.max_len = int(max_len)
         self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
@@ -82,7 +82,7 @@ class PhotonPool(QObject):
 
     def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None):
         if max_len is not None:
-            self.max_len = int(max_len)
+            self.max_len = min(int(max_len), int(2 ** 16))
         self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
         if dt_s is not None:
             self.dt_s = float(dt_s)
@@ -105,6 +105,8 @@ class LiveViewer(QWidget):
         self.photon_pool = PhotonPool()
         self.photon_pool.new_plots.connect(self.on_photon_counts_update)
         self.data_curve = None
+        self.psr_mode = False
+        self.psr_worker = None
         self.fft_mode = False
         self.fft_worker = None
         self.view_stack.setCurrentIndex(0)
@@ -271,11 +273,6 @@ class LiveViewer(QWidget):
     def on_fft_frame(self, frame_u16):
         self.fft_viewer.set_frame(frame_u16)
 
-    def set_graph_image(self, img2d: np.ndarray, levels=None):
-        self.graph_img_item.setImage(img2d, autoLevels=(levels is None))
-        if levels is not None:
-            self.graph_img_item.setLevels(levels)
-
     def plot_trace(self, y, overlay=False):
         y = np.asarray(y)
         if y.size == 0:
@@ -309,3 +306,11 @@ class LiveViewer(QWidget):
     @pyqtSlot(object, object)
     def on_photon_counts_update(self, xt: np.ndarray, counts: np.ndarray):
         self.data_curve.setData(xt, counts)
+
+    def set_graph_image(self, img2d: np.ndarray, levels=None):
+        self.graph_img_item.setImage(img2d, autoLevels=(levels is None))
+        if levels is not None:
+            self.graph_img_item.setLevels(levels)
+
+    def on_psr_frame(self, frame):
+        self.graph_img_item.setImage(frame, autoLevels=True)
