@@ -421,11 +421,11 @@ class CommandExecutor(QObject):
                 self.devs.cam_set[self.cameras["imaging"]].stop_live()
                 self.devs.daq.stop_triggers()
             else:
-                self.devs.daq.stop_photon_count()
-                self.devs.daq.stop_triggers()
                 if getattr(self.viewer, "psr_worker", None) is not None:
                     self.viewer.psr_worker.stop()
                     self.viewer.psr_worker = None
+                self.devs.daq.stop_photon_count()
+                self.devs.daq.stop_triggers()
             self.logg.info(r"Live Video Stopped")
             if self.slm_seq != "None":
                 self.devs.slm.deactivate()
