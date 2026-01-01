@@ -20,7 +20,7 @@ class DockWidget(QtWidgets.QDockWidget):
             QDockWidget {
                 background-color: #121212;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 10px;
                 color: #CCCCCC;
             }
             QDockWidget::title {
@@ -148,7 +148,8 @@ class LCDNumberWidget(QtWidgets.QLCDNumber):
             self.setDigitCount(n)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         self.setMinimumWidth(self.sizeHint().width())
-        self.setMaximumWidth(64)
+        self.setMaximumWidth(80)
+        self.setMaximumHeight(32)
 
 
 class SpinBoxWidget(QtWidgets.QSpinBox):

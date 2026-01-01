@@ -19,41 +19,31 @@ warnings.filterwarnings("error", category=nidaqmx.DaqWarning)
 
 
 class NIDAQ:
-    class NIDAQSettings:
-
-        def __init__(self):
-            self.sample_rate = 250000
-            self.duty_cycle = 0.5
-            self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
-            self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                                     "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
-            self.photon_counter_channel = "/Dev1/ctr1"
-            self.photon_counter_terminal = "/Dev1/PFI0"
-            self.photon_counter_length = 2 ** 16
-            self.clock_counter_channel = "/Dev1/ctr0"
-            self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
-            self.mode = None
 
     def __init__(self, logg=None):
         self.logg = logg or self.setup_logging()
         self.setup_logging()
         self.devices = self._initialize()
-        self._settings = self.NIDAQSettings()
         self.tasks = {}
         self._active = {}
         self._running = {}
         self.tasks, self._active, self._running, = self._configure()
         self.data = None
         self.acq_thread = None
-        self.buffer_size = 2 ** 16
+        self.sample_rate = int(250000)
+        self.duty_cycle = float(0.5)
+        self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
+        self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
+                                       "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
+        self.photon_counter_channel = "/Dev1/ctr1"
+        self.photon_counter_terminal = "/Dev1/PFI0"
+        self._photon_counter_length = int(2 ** 16)
+        self.clock_counter_channel = "/Dev1/ctr0"
+        self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
+        self.mode = None
 
     def __del__(self):
         pass
-
-    def __getattr__(self, item):
-        if hasattr(self._settings, item):
-            return getattr(self._settings, item)
-        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
 
     def close(self):
         for device in self.devices:
@@ -230,40 +220,47 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
+    @property
+    def photon_counter_length(self) -> int:
+        return self._photon_counter_length
+
+    @photon_counter_length.setter
+    def photon_counter_length(self, value: int) -> None:
+        self._photon_counter_length = max(int(value), int(2 ** 16))
+
     def prepare_photon_counter(self):
         if self.tasks["clock"] is None:
             self.write_clock_channel()
 
-        t = nidaqmx.Task("photon_counter")
-        ci = t.ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channel, edge=Edge.RISING)
+        self.tasks["photon_counter"] = nidaqmx.Task("photon_counter")
+        ci = self.tasks["photon_counter"].ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channel, edge=Edge.RISING)
         ci.ci_count_edges_term = self.photon_counter_terminal
-
-        t.timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[0],
+        self.tasks["photon_counter"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[0],
                                      active_edge=Edge.RISING, sample_mode=self.mode,
                                      samps_per_chan=self.photon_counter_length)
-        t.in_stream.input_buf_size = self.photon_counter_length
-
-        self.tasks["photon_counter"] = t
+        self.tasks["photon_counter"].in_stream.input_buf_size = self.photon_counter_length
+        self.data = run_threads.PhotonCountList(self.photon_counter_length)
+        self.acq_thread = run_threads.PhotonCountThread(self)
         self._active["photon_counter"] = True
 
     def start_photon_count(self):
-        self.data = run_threads.PhotonCountList(self.photon_counter_length)
-        self.acq_thread = run_threads.PhotonCountThread(self)
         self.acq_thread.start()
-        self.logg.info("Acquisition started")
+        self.logg.info("Photon counting started")
 
     def stop_photon_count(self):
         if self.acq_thread:
             self.acq_thread.stop()
             self.acq_thread = None
-        self.logg.info("Acquisition stopped")
+        if self.data is not None:
+            self.data = None
+        self.logg.info("Photon counting stopped")
 
     def get_photon_count(self):
         try:
             avail = self.tasks["photon_counter"].in_stream.avail_samp_per_chan
             if avail > 0:
                 counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=avail, timeout=0.0)
-                self.data.add_element(counts)
+                self.data.add_element(counts, avail)
         except nidaqmx.DaqWarning as e:
             self.logg.error("DAQ read error %s: %s", e.error_code, e)
 
@@ -293,6 +290,7 @@ class NIDAQ:
                         if self._active.get(key, False):
                             if self._running.get(key, False):
                                 _task.wait_until_done(WAIT_INFINITELY)
+            self.logg.info("Trigger is running")
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:

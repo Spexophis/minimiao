@@ -4,15 +4,19 @@
 
 
 import os
-import time
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 from dpp_ctrl import api_dpp
 
-zms = [(-1, 1), (1, 1), (0, 2), (-2, 2), (2, 2), (-1, 3), (1, 3), (-3, 3), (3, 3), (0, 4), (-2, 4), (2, 4), (-4, 4),
-       (4, 4)]
+zms = [(-1, 1), (1, 1),
+       (0, 2), (-2, 2), (2, 2),
+       (-1, 3), (1, 3), (-3, 3), (3, 3),
+       (0, 4), (-2, 4), (2, 4), (-4, 4), (4, 4),
+       (-1, 5), (1, 5), (-3, 5), (3, 5), (-5, 5), (5, 5),
+       (0, 6), (-2, 6), (2, 6), (-4, 6), (4, 6), (-4, 6), (4, 6),
+       (-1, 7), (1, 7), (-3, 7), (3, 7), (-5, 7), (5, 7), (-7, 7), (7, 7)]
 nz = len(zms)
 
 
@@ -78,7 +82,7 @@ class DPP:
     def write_cmd(self, path, t, flatfile=False):
         if flatfile:
             filename = t + f"{self.dpp_model}_flat_file.xlsx"
-            df = pd.DataFrame(self.dpp_cmd[-1], index=np.arange(nz), columns=['Amp'])
+            df = pd.DataFrame(self.dpp_cmd[self.current_cmd], index=np.arange(nz), columns=['Amp'])
             fd = os.path.join(path, filename)
             df.to_excel(str(fd), index_label='Mod')
         else:

@@ -301,8 +301,9 @@ class CommandExecutor(QObject):
             positions = [pos_x[1], pos_y[1], pos_z[1]]
             return_time, line_time = self.ctrl_panel.get_piezo_scan_time()
             self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
-            self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
-                                              standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
+            if self.cameras[cam_key] <= 2:
+                self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
+                                                  standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
@@ -311,38 +312,72 @@ class CommandExecutor(QObject):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.update_trigger_parameters("imaging")
-        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
-                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq != "None":
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        if vd_mod == "Wide Field":
-            dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
-            if self.cameras["imaging"] == 0:
-                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-            if self.cameras["imaging"] == 1:
-                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-        if vd_mod == "SIM":
-            dtr, chs = self.trg.generate_sim_triggers(self.lasers, self.cameras["imaging"], self.slm_seq, 2)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
-            if self.cameras["imaging"] == 0:
-                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-            if self.cameras["imaging"] == 1:
-                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-        if vd_mod == "Focus Lock":
-            self.logg.info(f"Focus Lock live")
+        if self.cameras["imaging"] <= 2:
+            self.set_camera_roi("imaging")
+            self.devs.cam_set[self.cameras["imaging"]].prepare_live()
+            self.update_trigger_parameters("imaging")
+            self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
+                                      self.devs.cam_set[self.cameras["imaging"]].pixels_y)
+            self.slm_seq = self.ctrl_panel.get_slm_sequence()
+            if self.slm_seq != "None":
+                self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+            if vd_mod == "Wide Field":
+                dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+                self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
+                if self.cameras["imaging"] == 0:
+                    self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                                          exposure=self.trg.exposure_time,
+                                                          standby=self.trg.standby_time)
+                if self.cameras["imaging"] == 1:
+                    self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
+                                                          exposure=self.trg.exposure_time,
+                                                          standby=self.trg.standby_time)
+            if vd_mod == "SIM":
+                dtr, chs = self.trg.generate_sim_triggers(self.lasers, self.cameras["imaging"], self.slm_seq, 2)
+                self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
+                if self.cameras["imaging"] == 0:
+                    self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                                          exposure=self.trg.exposure_time,
+                                                          standby=self.trg.standby_time)
+                if self.cameras["imaging"] == 1:
+                    self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
+                                                          exposure=self.trg.exposure_time,
+                                                          standby=self.trg.standby_time)
+            if vd_mod == "Focus Lock":
+                self.logg.info(f"Focus Lock live")
+        elif self.cameras["imaging"] == 3:
+            self.slm_seq = self.ctrl_panel.get_slm_sequence()
+            if self.slm_seq != "None":
+                self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+            self.update_trigger_parameters("imaging")
+            if vd_mod == "Wide Field":
+                dtr, dch, dwl = self.trg.generate_live_point_scan_2d(self.lasers, "None")
+                self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=False)
+            elif vd_mod == "Point Scan":
+                ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
+                self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
+                                             digital_sequences=dtr, digital_channels=dch, finite=False)
+            else:
+                raise Exception(f"Invalid video mode {vd_mod} for MPD")
+            self.rec.point_scan_gate_mask = dtr[-1]
+            self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
+                                           n_pixels=self.trg.piezo_scan_pos[0],
+                                           dwell_samples=dwl)
+            self.rec.prepare_point_scan_live_recon()
+            self.devs.daq.photon_counter_length = dtr.shape[1]
+            self.devs.daq.prepare_photon_counter()
+            self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
+                                                 dt_s=1/self.devs.daq.sample_rate)
+            if getattr(self.viewer, "psr_worker", None) is None:
+                self.viewer.psr_worker = run_threads.PSRThread(recon=self.rec.point_scan_live_recon, fps=0.5)
+                self.viewer.psr_worker.psr_request.connect(self.devs.daq.data.on_psr_request)
+                self.viewer.psr_worker.psr_ready.connect(self.viewer.on_psr_frame, Qt.ConnectionType.QueuedConnection)
+                self.devs.daq.data.on_request(self.viewer.psr_worker.push_data)
+                self.viewer.psr_worker.start()
+            self.devs.daq.data.on_update(self.viewer.on_new_counts)
+            self.viewer.psr_mode = True
+        else:
+            raise Exception(f"Invalid camera selection")
 
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
@@ -362,10 +397,16 @@ class CommandExecutor(QObject):
         try:
             if self.slm_seq != "None":
                 self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_live()
-            if self.cameras["imaging"] != self.cameras["focus_lock"]:
+            if self.cameras["imaging"] <= 2:
+                self.devs.cam_set[self.cameras["imaging"]].start_live()
+                self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
                 self.devs.daq.run_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
+            else:
+                self.devs.daq.start_triggers()
+                self.devs.daq.start_photon_count()
+                self.devs.daq.run_triggers()
+                self.viewer.stream_trace(self.viewer.photon_pool.xt, np.zeros(self.viewer.photon_pool.max_len))
+                self.viewer.photon_pool.start_plots(20)
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -374,12 +415,22 @@ class CommandExecutor(QObject):
 
     def stop_video(self):
         try:
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            if self.cameras["imaging"] <= 2:
+                self.devs.cam_set[self.cameras["imaging"]].stop_live()
+                self.devs.daq.stop_triggers()
+            else:
+                self.devs.daq.stop_photon_count()
+                self.viewer.photon_pool.stop_plots()
+                self.devs.daq.stop_triggers()
+                self.viewer.psr_mode = False
+                if getattr(self.viewer, "psr_worker", None) is not None:
+                    self.viewer.psr_worker.stop()
+                    self.viewer.psr_worker = None
             self.logg.info(r"Live Video Stopped")
             if self.slm_seq != "None":
                 self.devs.slm.deactivate()
             self.lasers_off()
+            self.reset_piezo_positions()
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
 
@@ -388,7 +439,7 @@ class CommandExecutor(QObject):
         if on:
             if getattr(self.viewer, "fft_worker", None) is None:
                 self.viewer.fft_worker = run_threads.FFTWorker(fps=10)
-                self.viewer.fft_worker.fftReady.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
+                self.viewer.fft_worker.fft_ready.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
                 self.viewer.fft_worker.start()
             self.viewer.fft_mode = True
         else:
@@ -401,7 +452,7 @@ class CommandExecutor(QObject):
     def profile_plot(self):
         try:
             ax = self.ctrl_panel.get_profile_axis()
-            self.viewer.update_plot(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True))
+            self.viewer.plot_trace(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True))
         except Exception as e:
             self.logg.error(f"Error plotting profile: {e}")
 
@@ -409,7 +460,7 @@ class CommandExecutor(QObject):
     def plot_add(self):
         try:
             ax = self.ctrl_panel.get_profile_axis()
-            self.viewer.plot_profile(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True))
+            self.viewer.plot_trace(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True), overlay=True)
         except Exception as e:
             self.logg.error(f"Error plotting profile: {e}")
 
@@ -420,7 +471,7 @@ class CommandExecutor(QObject):
             self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
             self.update_trigger_parameters("imaging")
             dtr, dch = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-            self.viewer.update_plot(dtr[0])
+            self.viewer.plot_trace(dtr[0])
             for i in range(dtr.shape[0] - 1):
                 self.viewer.plot(dtr[i + 1] + i + 1)
         except Exception as e:
@@ -657,9 +708,9 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters("imaging")
         ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
         self.rec.point_scan_gate_mask = dtr[-1]
-        self.rec.point_scan_n_pixels = self.trg.piezo_scan_pos[0]
-        self.rec.point_scan_n_lines = self.trg.piezo_scan_pos[1]
-        self.rec.point_scan_dwell_samples = dwl
+        self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
+                                       n_pixels=self.trg.piezo_scan_pos[0],
+                                       dwell_samples=dwl)
         self.devs.daq.photon_counter_length = dtr.shape[1]
         self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
