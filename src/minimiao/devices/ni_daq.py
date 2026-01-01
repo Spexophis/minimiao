@@ -38,6 +38,8 @@ class NIDAQ:
         self.photon_counter_channel = "/Dev1/ctr1"
         self.photon_counter_terminal = "/Dev1/PFI0"
         self._photon_counter_length = int(2 ** 16)
+        self.photon_counter_mode = 0
+        self.psr = None
         self.clock_counter_channel = "/Dev1/ctr0"
         self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
         self.mode = None
@@ -241,6 +243,8 @@ class NIDAQ:
         self.tasks["photon_counter"].in_stream.input_buf_size = self.photon_counter_length
         self.data = run_threads.PhotonCountList(self.photon_counter_length)
         self.acq_thread = run_threads.PhotonCountThread(self)
+        if self.photon_counter_mode:
+            self.data.on_update(self.psr.point_scan_live_recon)
         self._active["photon_counter"] = True
 
     def start_photon_count(self):

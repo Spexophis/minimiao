@@ -353,10 +353,15 @@ class CommandExecutor(QObject):
             if vd_mod == "Wide Field":
                 dtr, dch, dwl = self.trg.generate_live_point_scan_2d(self.lasers, "None")
                 self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=False)
+                self.devs.daq.photon_counter_mode = 0
+                self.viewer.psr_mode = False
             elif vd_mod == "Point Scan":
                 ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
                 self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                              digital_sequences=dtr, digital_channels=dch, finite=False)
+                self.devs.daq.photon_counter_mode = 1
+                self.devs.daq.psr = self.rec
+                self.viewer.psr_mode = True
             else:
                 raise Exception(f"Invalid video mode {vd_mod} for MPD")
             self.rec.point_scan_gate_mask = dtr[-1]
@@ -367,15 +372,13 @@ class CommandExecutor(QObject):
             self.devs.daq.photon_counter_length = dtr.shape[1]
             self.devs.daq.prepare_photon_counter()
             self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
-                                                 dt_s=1/self.devs.daq.sample_rate)
+                                                 dt_s=1/self.devs.daq.sample_rate,
+                                                 px=(self.trg.piezo_scan_pos[1], self.trg.piezo_scan_pos[0]))
             if getattr(self.viewer, "psr_worker", None) is None:
-                self.viewer.psr_worker = run_threads.PSRThread(recon=self.rec.point_scan_live_recon, fps=0.5)
-                self.viewer.psr_worker.psr_request.connect(self.devs.daq.data.on_psr_request)
-                self.viewer.psr_worker.psr_ready.connect(self.viewer.on_psr_frame, Qt.ConnectionType.QueuedConnection)
-                self.devs.daq.data.on_request(self.viewer.psr_worker.push_data)
+                self.viewer.psr_worker = run_threads.PSLiveWorker(self.devs.daq.data, self.rec, fps=10)
+                self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
+                self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
                 self.viewer.psr_worker.start()
-            self.devs.daq.data.on_update(self.viewer.on_new_counts)
-            self.viewer.psr_mode = True
         else:
             raise Exception(f"Invalid camera selection")
 
@@ -405,8 +408,7 @@ class CommandExecutor(QObject):
                 self.devs.daq.start_triggers()
                 self.devs.daq.start_photon_count()
                 self.devs.daq.run_triggers()
-                self.viewer.stream_trace(self.viewer.photon_pool.xt, np.zeros(self.viewer.photon_pool.max_len))
-                self.viewer.photon_pool.start_plots(20)
+                self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf)
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -420,9 +422,7 @@ class CommandExecutor(QObject):
                 self.devs.daq.stop_triggers()
             else:
                 self.devs.daq.stop_photon_count()
-                self.viewer.photon_pool.stop_plots()
                 self.devs.daq.stop_triggers()
-                self.viewer.psr_mode = False
                 if getattr(self.viewer, "psr_worker", None) is not None:
                     self.viewer.psr_worker.stop()
                     self.viewer.psr_worker = None

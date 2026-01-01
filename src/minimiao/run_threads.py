@@ -7,7 +7,7 @@ import threading
 import time
 import traceback
 from collections import deque
-
+from itertools import chain
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
@@ -76,7 +76,7 @@ class PhotonCountThread(threading.Thread):
         while self.running:
             with self.lock:
                 self.daq.get_photon_count()
-            time.sleep(0.001)  # 1 ms yield (tune)
+            time.sleep(0.004)  # 1 ms yield (tune)
 
     def stop(self):
         self.running = False
@@ -97,69 +97,50 @@ class PhotonCountList:
         self.request = None
         self.lock = threading.Lock()
 
-    def add_element(self, elements, num):
+    def add_element(self, elements: list, num: int):
         with self.lock:
-            d = np.array(elements, dtype=int)
+            d = np.asarray(elements, dtype=np.int64)
             self.count_starts = self.count_ends % self.count_len
             self.count_ends = (self.count_ends + num) % self.count_len
             counts = np.diff(np.insert(d, 0, self.data_list[-1]))
-            self.count_list.extend(list(counts))
-            self.data_list.extend(list(elements))
+            self.count_list.extend(counts.tolist())
+            self.data_list.extend(elements)
             if self.count_starts <= self.count_ends:
-                self.ind_list.extend(list(np.arange(self.count_starts, self.count_ends)))
+                indices = np.arange(self.count_starts, self.count_ends)
             else:
-                self.ind_list.extend(list(np.arange(self.count_ends, self.count_len)))
-                self.ind_list.extend(list(np.arange(self.count_starts)))
-        if self.callback is not None:
-            self.callback(counts)
+                indices = np.concatenate((np.arange(self.count_starts, self.count_len), np.arange(self.count_ends)))
+            self.ind_list.extend(indices.tolist())
+            if self.callback is not None:
+                self.callback(list(counts), list(indices))
 
     def get_elements(self):
         return np.array(self.data_list) if self.data_list else None, np.array(
             self.count_list) if self.data_list else None
 
-    def on_psr_request(self):
-        if self.request is not None:
-            self.request(np.array(self.count_list, copy=True), np.array(self.ind_list, copy=True))
-
-    def on_request(self, request):
-        self.request = request
-
     def on_update(self, callback):
         self.callback = callback
 
 
-class PSRThread(QThread):
-    psr_request = pyqtSignal()
-    psr_ready = pyqtSignal(object)
+class PSLiveWorker(QThread):
+    psr_ready = pyqtSignal(object, object)
+    psr_new = pyqtSignal()
 
-    def __init__(self, recon, fps=10, parent=None):
+    def __init__(self, dat, reco, fps=10, parent=None):
         super().__init__(parent)
-        self.recon = recon
-        self.fps = float(fps)
+        self.dat = dat
+        self.reco = reco
+        self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
 
     def stop(self):
         self._running = False
-        self.wait(1)
+        self.wait()
 
     def run(self):
-        period = 1.0 / self.fps
-        next_t = time.perf_counter()
-
         while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
-
-            self.psr_request.emit()
-
-    def push_data(self, dat, ind):
-        if dat.size == ind.size:
-            re = self.recon(dat, ind)
-            if re is not None:
-                self.psr_ready.emit(re)
+            self.msleep(self.period_ms)
+            self.psr_ready.emit(list(self.dat.count_list).copy(), self.reco.live_rec.copy())
+            self.psr_new.emit()
 
 
 class FFTWorker(QThread):
