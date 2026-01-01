@@ -103,7 +103,7 @@ class LiveViewer(QWidget):
         self.w = 1024
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.photon_pool = PhotonPool()
-        self.photon_pool.new_plots.connect(self.on_photon_counts_update)
+        self.photon_pool.new_plots.connect(self.on_photon_counts_update, Qt.ConnectionType.QueuedConnection)
         self.data_curve = None
         self.psr_mode = False
         self.psr_worker = None

@@ -371,7 +371,7 @@ class CommandExecutor(QObject):
             if getattr(self.viewer, "psr_worker", None) is None:
                 self.viewer.psr_worker = run_threads.PSRThread(recon=self.rec.point_scan_live_recon, fps=0.5)
                 self.viewer.psr_worker.psr_request.connect(self.devs.daq.data.on_psr_request)
-                self.viewer.psr_worker.psr_ready.connect(self.viewer.on_psr_frame)
+                self.viewer.psr_worker.psr_ready.connect(self.viewer.on_psr_frame, Qt.ConnectionType.QueuedConnection)
                 self.devs.daq.data.on_request(self.viewer.psr_worker.push_data)
                 self.viewer.psr_worker.start()
             self.devs.daq.data.on_update(self.viewer.on_new_counts)
