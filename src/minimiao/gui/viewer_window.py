@@ -70,7 +70,7 @@ class PhotonPool(QObject):
 
 class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
-    psr_view_signal = pyqtSignal(int)
+    psr_view_signal = pyqtSignal()
 
     def __init__(self, config, logg, parent=None):
         super().__init__(parent)
