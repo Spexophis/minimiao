@@ -18,7 +18,7 @@ class ImgRecon:
         self._expected = 0
 
         self.live_counts = None
-        self.live_psr = None
+        self.live_rec = None
 
     @staticmethod
     def setup_logging():
@@ -87,24 +87,27 @@ class ImgRecon:
 
     def prepare_point_scan_live_recon(self):
         self.live_counts = np.zeros(self._gate_len, dtype=np.uint16)
+        self.live_rec = np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint16)
 
     def point_scan_live_recon(self, photon_counts, ind, bi_direction: bool = False):
-        self.live_counts[ind] = photon_counts
+        if len(photon_counts) == len(ind):
+            photon_counts = np.array(photon_counts)
+            self.live_counts[ind] = photon_counts
+            gate = self._point_scan_gate_mask
+            per_on = self.live_counts[gate]
 
-        gate = self._point_scan_gate_mask
-        per_on = self.live_counts[gate]
+            if per_on.size != self._expected:
+                self.logg.error(f"Gate-on samples = {per_on.size}, expected {self._expected}. ")
+            else:
+                img = per_on.reshape(
+                    self.point_scan_n_lines,
+                    self.point_scan_n_pixels,
+                    self.point_scan_dwell_samples,
+                ).sum(axis=2)
 
-        if per_on.size != self._expected:
-            self.logg.error(f"Gate-on samples = {per_on.size}, expected {self._expected}. ")
-            return None
+                if bi_direction:
+                    img[1::2] = img[1::2, ::-1]
+
+                self.live_rec = img
         else:
-            img = per_on.reshape(
-                self.point_scan_n_lines,
-                self.point_scan_n_pixels,
-                self.point_scan_dwell_samples,
-            ).sum(axis=2)
-
-            if bi_direction:
-                img[1::2] = img[1::2, ::-1]
-
-            return img
+            self.logg.error(f"photon counts = {len(photon_counts)}, indices {len(ind)}. ")

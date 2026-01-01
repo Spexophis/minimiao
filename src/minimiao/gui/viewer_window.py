@@ -7,7 +7,7 @@ from collections import deque
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QObject, QMutex, QMutexLocker, QTimer, pyqtSlot, pyqtSignal, Qt
+from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
 
 from . import custom_widgets as cw
@@ -45,52 +45,32 @@ class FramePool(QObject):
 
 
 class PhotonPool(QObject):
-    new_plots = pyqtSignal(object, object)
-
-    def __init__(self, max_len=2 ** 16, dt_s=4e-6, ui_hz=30, dtype=np.float64, parent=None):
+    def __init__(self, max_len=2 ** 16, dt_s=4e-6, px=(64, 64), parent=None):
         super().__init__(parent)
         self.max_len = int(max_len)
-        self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
+        self.buf = deque([0] * self.max_len, maxlen=self.max_len)
         self.dt_s = dt_s
         self.xt = np.arange(self.max_len) * float(self.dt_s)
-        self.ui_hz = int(ui_hz)
-        self.dtype = dtype
+        self.img = np.zeros(px, dtype=np.float64)
 
-        self._timer = QTimer(self)
-        self._timer.setInterval(int(1000 / self.ui_hz))
-        self._timer.timeout.connect(self.send_plots)
+    def new_acquire(self, counts, recon_img):
+        self.buf.extend(counts)
+        self.img = recon_img
 
-    def append_counts(self, counts):
-        self.buf.extend(np.asarray(counts, dtype=self.dtype))
-
-    @pyqtSlot()
-    def send_plots(self):
-        y = np.fromiter(self.buf, dtype=np.float64, count=len(self.buf))
-        self.new_plots.emit(self.xt, y)
-
-    def start_plots(self, ui_hz: int | None = None):
-        if ui_hz is not None:
-            self.ui_hz = int(ui_hz)
-            self._timer.setInterval(int(1000 / max(1, self.ui_hz)))
-            self._timer.timeout.connect(self.send_plots)
-        if not self._timer.isActive():
-            self._timer.start()
-
-    def stop_plots(self):
-        if self._timer.isActive():
-            self._timer.stop()
-
-    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None):
+    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None, px:tuple | None = None):
         if max_len is not None:
             self.max_len = min(int(max_len), int(2 ** 16))
-        self.buf = deque(np.zeros(self.max_len, dtype=np.float64), maxlen=self.max_len)
+        self.buf = deque(np.zeros(self.max_len, dtype=np.int64), maxlen=self.max_len)
         if dt_s is not None:
             self.dt_s = float(dt_s)
         self.xt = np.arange(self.max_len) * float(self.dt_s)
+        if px is not None:
+            self.img = np.zeros(px, dtype=np.float64)
 
 
 class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
+    psr_view_signal = pyqtSignal()
 
     def __init__(self, config, logg, parent=None):
         super().__init__(parent)
@@ -103,10 +83,9 @@ class LiveViewer(QWidget):
         self.w = 1024
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.photon_pool = PhotonPool()
-        self.photon_pool.new_plots.connect(self.on_photon_counts_update, Qt.ConnectionType.QueuedConnection)
+        self.cxt = None
         self.data_curve = None
         self.psr_mode = False
-        self.psr_worker = None
         self.fft_mode = False
         self.fft_worker = None
         self.view_stack.setCurrentIndex(0)
@@ -138,6 +117,7 @@ class LiveViewer(QWidget):
         self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
+        self.psr_view_signal.connect(self.on_psr_frame, Qt.ConnectionType.QueuedConnection)
         self.QComboBox_viewer_selection.currentIndexChanged.connect(self.switch_viewer)
 
     def _create_image_widgets(self):
@@ -300,11 +280,7 @@ class LiveViewer(QWidget):
         self.data_plot.enableAutoRange(x=True)
         self.data_curve.setData(x, y)
 
-    def on_new_counts(self, counts: np.ndarray):
-        self.photon_pool.append_counts(counts)
-
-    @pyqtSlot(object, object)
-    def on_photon_counts_update(self, xt: np.ndarray, counts: np.ndarray):
+    def stream_trace_update(self, xt: np.ndarray, counts: np.ndarray):
         self.data_curve.setData(xt, counts)
 
     def set_graph_image(self, img2d: np.ndarray, levels=None):
@@ -312,5 +288,7 @@ class LiveViewer(QWidget):
         if levels is not None:
             self.graph_img_item.setLevels(levels)
 
-    def on_psr_frame(self, frame):
-        self.graph_img_item.setImage(frame, autoLevels=True)
+    def on_psr_frame(self):
+        self.stream_trace_update(self.photon_pool.xt, np.array(self.photon_pool.buf))
+        if self.psr_mode:
+            self.set_graph_image(self.photon_pool.img)
