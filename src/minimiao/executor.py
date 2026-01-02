@@ -201,6 +201,13 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
 
+    def update_piezo_scanning(self):
+        axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
+        pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
+        positions = [pos_x[1], pos_y[1], pos_z[1]]
+        return_time, line_time = self.ctrl_panel.get_piezo_scan_time()
+        self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
+
     @pyqtSlot(list, bool, float)
     def set_laser(self, laser: list, sw: bool, pw: float):
         if sw:
@@ -291,16 +298,15 @@ class CommandExecutor(QObject):
     def reset_daq_channels(self):
         self.devs.daq.stop_triggers()
 
+    def update_digital_triggers(self):
+        digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
+        self.trg.update_digital_parameters(digital_starts, digital_ends)
+
     def update_trigger_parameters(self, cam_key):
         """Ensure that the camera acquisition is fully set up before executing this function."""
         try:
-            digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
-            self.trg.update_digital_parameters(digital_starts, digital_ends)
-            axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
-            pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
-            positions = [pos_x[1], pos_y[1], pos_z[1]]
-            return_time, line_time = self.ctrl_panel.get_piezo_scan_time()
-            self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
+            self.update_digital_triggers()
+            self.update_piezo_scanning()
             if self.cameras[cam_key] <= 2:
                 self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
                                                   standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
@@ -704,16 +710,18 @@ class CommandExecutor(QObject):
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
         self.set_camera_roi("imaging")
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        if self.slm_seq != "None":
+            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.update_trigger_parameters("imaging")
         ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
+        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
+                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+        self.devs.daq.photon_counter_mode = 0
         self.rec.point_scan_gate_mask = dtr[-1]
         self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
                                        n_pixels=self.trg.piezo_scan_pos[0],
                                        dwell_samples=dwl)
         self.devs.daq.photon_counter_length = dtr.shape[1]
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                     digital_sequences=dtr, digital_channels=dch, finite=True)
         self.devs.daq.prepare_photon_counter()
 
     def point_scan(self):
@@ -729,7 +737,7 @@ class CommandExecutor(QObject):
             self.devs.daq.run_triggers()
             time.sleep(1.)
             edg_num, count_data = self.devs.daq.data.get_elements()
-            img = self.rec.point_scan_img_recon(photon_counts=count_data, bi_direction=False)
+            img = self.rec.point_scan_img_recon(photon_counts=count_data)
             arr = np.vstack((count_data, self.rec.point_scan_gate_mask))
             self.psv.emit(time.strftime("%Y%m%d%H%M%S") + '_point_scanning', img, arr, self.trg.piezo_scan_positions)
         except Exception as e:
