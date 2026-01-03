@@ -2508,7 +2508,6 @@ class HamamatsuCamera:
         re = self.dcam.cap_stop()
         if re:
             self.logg.info('Live image stopped')
-            self.data = None
             re = self.dcam.buf_release()
             if re is False:
                 self.logg.error('Error: Failed to buf_release with error {}'.format(self.dcam.lasterr().name))
