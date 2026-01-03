@@ -16,7 +16,7 @@ from .utilities import image_processor as ipr
 
 
 class CommandExecutor(QObject):
-    svd = pyqtSignal(str, np.ndarray, list, list)
+    svd = pyqtSignal(str)
     psv = pyqtSignal(str)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
