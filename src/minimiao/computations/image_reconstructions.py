@@ -51,25 +51,12 @@ class ImgRecon:
             self.point_scan_dwell_samples)
 
     def point_scan_img_recon(self, photon_counts, bi_direction: bool = False):
-        photon_counts = np.asarray(photon_counts)
-        if photon_counts.ndim != 1:
-            photon_counts = photon_counts.ravel()
-
         if self._expected <= 0:
             raise ValueError("Scan params not set. Call set_point_scan_params(n_lines, n_pixels, dwell_samples).")
 
-        n = int(photon_counts.shape[0])
-        idx = self._gate_idx
-
-        if n >= self._gate_len:
-            per_on = photon_counts[:self._gate_len][idx]
-        else:
-            per_on = np.empty(self._gate_n_on, dtype=photon_counts.dtype)
-            valid = idx < n
-            if valid.any():
-                per_on[valid] = photon_counts[idx[valid]]
-            if (~valid).any():
-                per_on[~valid] = 0
+        photon_counts = np.array(photon_counts)
+        gate = self._point_scan_gate_mask
+        per_on = photon_counts[gate]
 
         if per_on.size != self._expected:
             raise ValueError(f"Gate-on samples = {per_on.size}, expected {self._expected}. ")

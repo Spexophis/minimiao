@@ -13,8 +13,8 @@ class TriggerSequence:
         # daq
         self.sample_rate = sample_rate  # Hz
         # digital triggers
-        self.digital_starts = [0.00000, 0.00025, 0.00025, 0.00025, 0.00025, 0.00000]
-        self.digital_ends = [0.00025, 0.002, 0.002, 0.003, 0.003, 0.00001]
+        self.digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
+        self.digital_ends = [0.00025, 0.0008, 0.0008, 0.003, 0.003, 0.001]
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
         # piezo scanner
@@ -205,7 +205,7 @@ class TriggerSequence:
             digital_trigger[0][interval_samples:interval_samples + act_seq.shape[0]] = act_seq
             digital_trigger[1][interval_samples:interval_samples + cam_seq.shape[0]] = cam_seq
         elif len(digital_channels) == 3:
-            expo_samples = self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]]
+            expo_samples = int(self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]])
             interp_samples = max(interval_samples, expo_samples)
             cycle_samples = interp_samples + act_seq.shape[0] + offset_samples
             digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
@@ -251,7 +251,7 @@ class TriggerSequence:
                 digital_trigger[0][interval_samples:interval_samples + act_seq.shape[0]] = act_seq
                 digital_trigger[1][interval_samples:interval_samples + cam_seq.shape[0]] = cam_seq
             elif len(digital_channels) == 3:
-                expo_samples = self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]]
+                expo_samples = int(self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]])
                 interp_samples = max(interval_samples, expo_samples)
                 cycle_samples = interp_samples + act_seq.shape[0] + offset_samples
                 digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
@@ -330,18 +330,22 @@ class TriggerSequence:
         digital_channels.append(5)
         digital_sequences = []
         if slm_seq == "None":
-            line_samples = self.digital_ends[5] * 2
+            line_samples = int(self.digital_ends[5] + self.sample_rate * 5e-5)
+            n = 1 + int(self.refresh_time_samples / line_samples)
             if 0 in lasers:
                 switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
                 switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
+                switch_on_sequence = np.tile(switch_on_sequence, n)
                 digital_sequences.append(switch_on_sequence)
             if 2 in lasers:
                 switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
                 switch_off_sequence[self.digital_starts[2]:self.digital_ends[2]] = 1
+                switch_off_sequence = np.tile(switch_off_sequence, n)
                 digital_sequences.append(switch_off_sequence)
             if 5 in digital_channels:
                 readout_sequence = np.zeros(line_samples, dtype=np.uint8)
                 readout_sequence[self.digital_starts[5]:self.digital_ends[5]] = 1
+                readout_sequence = np.tile(readout_sequence, n)
                 digital_sequences.append(readout_sequence)
             pixel_dwell_sample = self.digital_ends[5] - self.digital_starts[5]
         else:
@@ -349,7 +353,7 @@ class TriggerSequence:
                 offset_samples =  self.slm_start_samples - self.digital_ends[0]
                 self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
                 self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
-            line_samples = self.digital_ends[0] + int(np.ceil(1.4e-3 * self.sample_rate))
+            line_samples = int(self.digital_ends[0] + int(np.ceil(1.4e-3 * self.sample_rate)))
             if 0 in lasers:
                 switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
                 switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
@@ -368,7 +372,6 @@ class TriggerSequence:
                 readout_sequence[start_:end_ + self.slm_delay_samples] = 1
                 digital_sequences.append(readout_sequence)
             pixel_dwell_sample = self.readout_samples + self.slm_delay_samples
-        
         return np.asarray(digital_sequences), digital_channels, pixel_dwell_sample
 
     def generate_piezo_point_scan_2d(self, lasers):
