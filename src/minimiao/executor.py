@@ -17,7 +17,7 @@ from .utilities import image_processor as ipr
 
 class CommandExecutor(QObject):
     svd = pyqtSignal(str, np.ndarray, list, list)
-    psv = pyqtSignal(str, np.ndarray, np.ndarray, list)
+    psv = pyqtSignal(str)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
@@ -534,20 +534,29 @@ class CommandExecutor(QObject):
                     df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
 
-    @pyqtSlot(str, np.ndarray, np.ndarray, list)
-    def save_scan(self, tm: str, d: np.ndarray, c: np.ndarray, pos: list):
+    @pyqtSlot(str)
+    def save_scan(self, tm: str):
         fn = self.vw.get_file_dialog()
         if fn is not None:
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r".tif"), data=d)
-        tf.imwrite(str(fd + r"_counts.tif"), data=c)
-        with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            if pos is not None:
-                for i, arr in enumerate(pos):
+        tf.imwrite(str(fd + r"_recon_image.tif"), self.rec.live_rec.astype(np.float16))
+        try:
+            res = np.zeros((3, self.rec.gate_len))
+            res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
+            res[1] = self.rec.point_scan_gate_mask * 1
+            res[2] = np.array(self.devs.daq.data.count_list)
+            np.save(str(fd + r"_photon_counts.npy"), res)
+        except Exception as e:
+            self.logg.error(f"Error writing photon counting data: {e}")
+        try:
+            with pd.ExcelWriter(str(fd + r"_scan_positions.xlsx"), engine="openpyxl") as writer:
+                for i, arr in enumerate(self.trg.piezo_scan_positions):
                     df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+        except Exception as e:
+            self.logg.error(f"Error writing piezo scanning data: {e}")
 
     def prepare_focus_finding(self):
         self.lasers = self.ctrl_panel.get_lasers()
@@ -704,11 +713,9 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="Widefield Acquisition")
         self.run_task(task=self.widefield, iteration=n)
 
-    def prepare_point_scan(self):
+    def prepare_point_scan(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         if self.slm_seq != "None":
             self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
@@ -716,17 +723,22 @@ class CommandExecutor(QObject):
         ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
         self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
-        self.devs.daq.photon_counter_mode = 0
+        self.devs.daq.photon_counter_mode = 1
+        self.devs.daq.psr = self.rec
         self.rec.point_scan_gate_mask = dtr[-1]
         self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
                                        n_pixels=self.trg.piezo_scan_pos[0],
                                        dwell_samples=dwl)
-        self.devs.daq.photon_counter_length = dtr.shape[1]
+        self.rec.prepare_point_scan_live_recon()
+        self.devs.daq.photon_counter_length = self.rec.gate_len
         self.devs.daq.prepare_photon_counter()
+        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
+        np.save(str(fd), np.vstack((ptr, dtr)))
 
     def point_scan(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
         try:
-            self.prepare_point_scan()
+            self.prepare_point_scan(tim)
         except Exception as e:
             self.logg.error(f"Error preparing point scanning: {e}")
             return
@@ -735,11 +747,8 @@ class CommandExecutor(QObject):
             self.devs.daq.start_triggers()
             self.devs.daq.start_photon_count()
             self.devs.daq.run_triggers()
-            time.sleep(1.)
-            edg_num, count_data = self.devs.daq.data.get_elements()
-            img = self.rec.point_scan_img_recon(photon_counts=count_data)
-            arr = np.vstack((count_data, self.rec.point_scan_gate_mask))
-            self.psv.emit(time.strftime("%Y%m%d%H%M%S") + '_point_scanning', img, arr, self.trg.piezo_scan_positions)
+            time.sleep(0.2)
+            self.psv.emit(tim + r"_point_scanning")
         except Exception as e:
             self.finish_point_scan()
             self.logg.error(f"Error running point scanning: {e}")
@@ -758,7 +767,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stopping point scanning: {e}")
 
     def run_point_scan(self, n: int):
-        self.vw.get_dialog(txt="Widefield Acquisition")
+        self.vw.get_dialog(txt="Point scanning Acquisition")
         self.run_task(task=self.point_scan, iteration=n)
 
     def prepare_sim_2d(self):
