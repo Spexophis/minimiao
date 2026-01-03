@@ -255,8 +255,6 @@ class NIDAQ:
         if self.acq_thread:
             self.acq_thread.stop()
             self.acq_thread = None
-        if self.data is not None:
-            self.data = None
         self.logg.info("Photon counting stopped")
 
     def get_photon_count(self):

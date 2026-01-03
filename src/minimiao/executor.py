@@ -16,8 +16,8 @@ from .utilities import image_processor as ipr
 
 
 class CommandExecutor(QObject):
-    svd = pyqtSignal(str, np.ndarray, list, list)
-    psv = pyqtSignal(str, np.ndarray, np.ndarray, list)
+    svd = pyqtSignal(str)
+    psv = pyqtSignal(str)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
@@ -517,37 +517,47 @@ class CommandExecutor(QObject):
         else:
             self.logg.error(f"Invalid video mode")
 
-    @pyqtSlot(str, np.ndarray, list, list)
-    def save_data(self, tm: str, d: np.ndarray, idx: list, pos: list):
+    @pyqtSlot(str)
+    def save_data(self, tm: str):
         fn = self.vw.get_file_dialog()
         if fn is not None:
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r".tif"), data=d)
+        tf.imwrite(str(fd + r".tif"), data=self.devs.cam_set[self.cameras["imaging"]].get_data())
         with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            if idx is not None:
-                df_idx = pd.DataFrame(idx, columns=["acquisition_sequence"])
-                df_idx.to_excel(writer, sheet_name="acquisition_sequence", index=False)
-            if pos is not None:
-                for i, arr in enumerate(pos):
-                    df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
-                    df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+            df_idx = pd.DataFrame(list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
+                                  columns=["acquisition_sequence"])
+            df_idx.to_excel(writer, sheet_name="acquisition_sequence", index=False)
+            for i, arr in enumerate(self.trg.piezo_scan_positions):
+                df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
+                df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+        self.devs.cam_set[self.cameras["imaging"]].data = None
 
-    @pyqtSlot(str, np.ndarray, np.ndarray, list)
-    def save_scan(self, tm: str, d: np.ndarray, c: np.ndarray, pos: list):
+    @pyqtSlot(str)
+    def save_scan(self, tm: str):
         fn = self.vw.get_file_dialog()
         if fn is not None:
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r".tif"), data=d)
-        tf.imwrite(str(fd + r"_counts.tif"), data=c)
-        with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            if pos is not None:
-                for i, arr in enumerate(pos):
+        tf.imwrite(str(fd + r"_recon_image.tif"), self.rec.live_rec.astype(np.float16))
+        try:
+            res = np.zeros((3, self.rec.gate_len))
+            res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
+            res[1] = self.rec.point_scan_gate_mask * 1
+            res[2] = np.array(self.devs.daq.data.count_list)
+            np.save(str(fd + r"_photon_counts.npy"), res)
+        except Exception as e:
+            self.logg.error(f"Error writing photon counting data: {e}")
+        try:
+            with pd.ExcelWriter(str(fd + r"_scan_positions.xlsx"), engine="openpyxl") as writer:
+                for i, arr in enumerate(self.trg.piezo_scan_positions):
                     df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+        except Exception as e:
+            self.logg.error(f"Error writing piezo scanning data: {e}")
+        self.devs.daq.data = None
 
     def prepare_focus_finding(self):
         self.lasers = self.ctrl_panel.get_lasers()
@@ -603,7 +613,7 @@ class CommandExecutor(QObject):
                 data.append(temp)
                 # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
                 pzs.append(ipr.calculate_focus_measure_with_sobel(temp - temp.min()))
-            fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_zstack.tif')
+            fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
             tf.imwrite(fd, np.asarray(data))
             self.viewer.update_plot(pzs, x=zps)
             fp = ipr.peak_find(zps, pzs)
@@ -642,7 +652,7 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="Focus Finding")
         self.run_task(task=self.focus_finding)
 
-    def prepare_widefield(self):
+    def prepare_widefield(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
@@ -661,12 +671,15 @@ class CommandExecutor(QObject):
         self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
                                               exposure=self.trg.exposure_time,
                                               standby=self.trg.standby_time)
+        fd = os.path.join(self.path, tim + r"_widefield_triggers.npy")
+        np.save(str(fd), np.vstack((ptr, dtr)))
 
     def widefield(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
         try:
-            self.prepare_widefield()
+            self.prepare_widefield(tim)
         except Exception as e:
-            self.logg.error(f"Error preparing widefield zstack: {e}")
+            self.logg.error(f"Error preparing widefield: {e}")
             self.devs.daq.stop_triggers()
             self.lasers_off()
             return
@@ -677,14 +690,10 @@ class CommandExecutor(QObject):
             self.devs.daq.run_triggers()
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
             time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield',
-                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
-                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
-                          self.trg.piezo_scan_positions)
-            self.devs.cam_set[self.cameras["imaging"]].data = None
+            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield')
         except Exception as e:
             self.finish_widefield()
-            self.logg.error(f"Error running widefield zstack: {e}")
+            self.logg.error(f"Error running widefield: {e}")
             return
         self.finish_widefield()
 
@@ -698,17 +707,15 @@ class CommandExecutor(QObject):
             self.reset_piezo_positions()
             self.logg.info("Widefield image stack acquired")
         except Exception as e:
-            self.logg.error(f"Error stopping widefield zstack: {e}")
+            self.logg.error(f"Error stopping widefield: {e}")
 
     def run_widefield(self, n: int):
         self.vw.get_dialog(txt="Widefield Acquisition")
         self.run_task(task=self.widefield, iteration=n)
 
-    def prepare_point_scan(self):
+    def prepare_point_scan(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         if self.slm_seq != "None":
             self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
@@ -716,17 +723,22 @@ class CommandExecutor(QObject):
         ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
         self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
-        self.devs.daq.photon_counter_mode = 0
+        self.devs.daq.photon_counter_mode = 1
+        self.devs.daq.psr = self.rec
         self.rec.point_scan_gate_mask = dtr[-1]
         self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
                                        n_pixels=self.trg.piezo_scan_pos[0],
                                        dwell_samples=dwl)
-        self.devs.daq.photon_counter_length = dtr.shape[1]
+        self.rec.prepare_point_scan_live_recon()
+        self.devs.daq.photon_counter_length = self.rec.gate_len
         self.devs.daq.prepare_photon_counter()
+        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
+        np.save(str(fd), np.vstack((ptr, dtr)))
 
     def point_scan(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
         try:
-            self.prepare_point_scan()
+            self.prepare_point_scan(tim)
         except Exception as e:
             self.logg.error(f"Error preparing point scanning: {e}")
             return
@@ -735,11 +747,8 @@ class CommandExecutor(QObject):
             self.devs.daq.start_triggers()
             self.devs.daq.start_photon_count()
             self.devs.daq.run_triggers()
-            time.sleep(1.)
-            edg_num, count_data = self.devs.daq.data.get_elements()
-            img = self.rec.point_scan_img_recon(photon_counts=count_data)
-            arr = np.vstack((count_data, self.rec.point_scan_gate_mask))
-            self.psv.emit(time.strftime("%Y%m%d%H%M%S") + '_point_scanning', img, arr, self.trg.piezo_scan_positions)
+            time.sleep(0.2)
+            self.psv.emit(tim + r"_point_scanning")
         except Exception as e:
             self.finish_point_scan()
             self.logg.error(f"Error running point scanning: {e}")
@@ -758,7 +767,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stopping point scanning: {e}")
 
     def run_point_scan(self, n: int):
-        self.vw.get_dialog(txt="Widefield Acquisition")
+        self.vw.get_dialog(txt="Point scanning Acquisition")
         self.run_task(task=self.point_scan, iteration=n)
 
     def prepare_sim_2d(self):
@@ -784,7 +793,7 @@ class CommandExecutor(QObject):
         try:
             self.prepare_sim_2d()
         except Exception as e:
-            self.logg.error(f"Error preparing widefield zstack: {e}")
+            self.logg.error(f"Error preparing 2D SIM stack: {e}")
             self.devs.daq.stop_triggers()
             self.lasers_off()
             return
@@ -794,13 +803,10 @@ class CommandExecutor(QObject):
             time.sleep(0.2)
             self.devs.daq.run_triggers()
             time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_sim_2d',
-                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
-                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list), None)
-            self.devs.cam_set[self.cameras["imaging"]].data = None
+            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_sim_2d')
         except Exception as e:
             self.finish_sim_2d()
-            self.logg.error(f"Error running widefield zstack: {e}")
+            self.logg.error(f"Error running 2D SIM stack: {e}")
             return
         self.finish_sim_2d()
 
@@ -810,12 +816,12 @@ class CommandExecutor(QObject):
             self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
             self.lasers_off()
             self.devs.slm.deactivate()
-            self.logg.info("Widefield image stack acquired")
+            self.logg.info("2D SIM image stack acquired")
         except Exception as e:
-            self.logg.error(f"Error stopping widefield zstack: {e}")
+            self.logg.error(f"Error stopping 2D SIM stack: {e}")
 
     def run_sim_2d(self, n: int):
-        self.vw.get_dialog(txt="Widefield Acquisition")
+        self.vw.get_dialog(txt="2D SIM Acquisition")
         self.run_task(task=self.sim_2d, iteration=n)
 
     def prepare_sim_3d(self):
@@ -844,7 +850,7 @@ class CommandExecutor(QObject):
         try:
             self.prepare_sim_3d()
         except Exception as e:
-            self.logg.error(f"Error preparing widefield zstack: {e}")
+            self.logg.error(f"Error preparing 3D SIM stack: {e}")
             self.devs.daq.stop_triggers()
             self.lasers_off()
             return
@@ -854,13 +860,10 @@ class CommandExecutor(QObject):
             self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
             self.devs.daq.run_triggers()
             time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield',
-                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
-                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list), None)
-            self.devs.cam_set[self.cameras["imaging"]].data = None
+            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_sim_3d')
         except Exception as e:
             self.finish_sim_3d()
-            self.logg.error(f"Error running widefield zstack: {e}")
+            self.logg.error(f"Error running 3D SIM stack: {e}")
             return
         self.finish_sim_3d()
 
@@ -872,12 +875,12 @@ class CommandExecutor(QObject):
             if self.slm_seq != "None":
                 self.devs.slm.deactivate()
             self.reset_piezo_positions()
-            self.logg.info("Widefield image stack acquired")
+            self.logg.info("3D SIM image stack acquired")
         except Exception as e:
-            self.logg.error(f"Error stopping widefield zstack: {e}")
+            self.logg.error(f"Error stopping 3D SIM stack: {e}")
 
     def run_sim_3d(self, n: int):
-        self.vw.get_dialog(txt="Widefield Acquisition")
+        self.vw.get_dialog(txt="3D SIM Acquisition")
         self.run_task(task=self.sim_3d, iteration=n)
 
     def prepare_parallel_scan_2d(self):

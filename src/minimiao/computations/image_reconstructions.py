@@ -30,10 +30,14 @@ class ImgRecon:
     def point_scan_gate_mask(self) -> np.ndarray:
         return self._point_scan_gate_mask
 
+    @property
+    def gate_len(self) -> int:
+        return self._gate_len
+
     @point_scan_gate_mask.setter
     def point_scan_gate_mask(self, gate_mask) -> None:
         gate_mask = np.asarray(gate_mask, dtype=bool)
-        self._point_scan_gate_mask = gate_mask
+        self._point_scan_gate_mask = np.roll(gate_mask, 1)
         self._rebuild_gate_cache()
 
     def set_point_scan_params(self, n_lines: int, n_pixels: int, dwell_samples: int) -> None:
