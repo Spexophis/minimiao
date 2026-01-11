@@ -34,7 +34,7 @@ class NIDAQ:
         self.duty_cycle = float(0.5)
         self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
         self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                                       "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
+                                 "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
         self.photon_counter_channel = "/Dev1/ctr1"
         self.photon_counter_terminal = "/Dev1/PFI0"
         self._photon_counter_length = int(2 ** 16)

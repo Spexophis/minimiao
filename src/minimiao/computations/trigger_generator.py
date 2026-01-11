@@ -14,7 +14,7 @@ class TriggerSequence:
         self.sample_rate = sample_rate  # Hz
         # digital triggers
         self.digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
-        self.digital_ends = [0.00025, 0.0008, 0.0008, 0.003, 0.003, 0.001]
+        self.digital_ends = [0.00020, 0.0008, 0.0008, 0.003, 0.003, 0.001]
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
         # piezo scanner
@@ -40,6 +40,8 @@ class TriggerSequence:
         self.refresh_time = 0.006  # s
         self.refresh_time_samples = int(np.ceil(self.refresh_time * self.sample_rate))
         # SLM
+        self.trigger_pulse_width = 8.0e-5  # s
+        self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
         self.slm_delay_time = 0.00001  # s
         self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
         self.slm_start_time = 270.187e-6  # s
@@ -59,8 +61,6 @@ class TriggerSequence:
         self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
         self.exposure_time = 0.005  # s
         self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
-        self.trigger_pulse_width = 1e-4  # s
-        self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
 
     @staticmethod
     def setup_logging():
@@ -120,72 +120,96 @@ class TriggerSequence:
             self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
 
     def generate_slm_triggers(self, slm_seq="5ms_dark_pair"):
-        if "200us" in slm_seq:
+        if "200us" and "lit_balanced" in slm_seq:
             # "200us_lit_balanced"
             samps_total = round(576.533e-6 * self.sample_rate)
             expo_on = 199.893e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
             samps_end = round(520.853e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[samps_start:samps_end + self.slm_delay_samples] = 1
-        if "400us" in slm_seq:
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        if "400us" and "lit_balanced" in slm_seq:
             # "400us_lit_balanced"
             samps_total = round(776.64e-6 * self.sample_rate)
             expo_on = 400e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
             samps_end = round(720.96e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[samps_start:samps_end + self.slm_delay_samples] = 1
-        elif "600us" in slm_seq:
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        elif "600us" and "lit_balanced" in slm_seq:
             # "600us_lit_balanced"
             samps_total = round(976.747e-6 * self.sample_rate)
             expo_on = 600.107e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
             samps_end = round(921.067e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[samps_start:samps_end + self.slm_delay_samples] = 1
-        elif "5ms" in slm_seq:
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        elif "500us" and "lit_pair" in slm_seq:
+            # "500us_lit_pair"
+            samps_total = round(810.667e-6 * self.sample_rate)
+            expo_on = 499.947e-6
+            samps_on = round(expo_on * self.sample_rate)
+            samps_end = round(770.133e-6 * self.sample_rate)
+            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq[:self.trigger_pulse_samples] = 1
+            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        elif "10ms" and "lit_pair" in slm_seq:
+            # "10ms_lit_pair"
+            samps_total = round(10310.72e-6 * self.sample_rate)
+            expo_on = 10000.0e-6
+            samps_on = round(expo_on * self.sample_rate)
+            samps_end = round(10270.187e-6 * self.sample_rate)
+            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq[:self.trigger_pulse_samples] = 1
+            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+        elif "20ms" and "lit_pair" in slm_seq:
+            # "20ms_lit_pair"
+            samps_total = round(20310.72e-6 * self.sample_rate)
+            expo_on = 20000.0e-6
+            samps_on = round(expo_on * self.sample_rate)
+            samps_end = round(20270.187e-6 * self.sample_rate)
+            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq[:self.trigger_pulse_samples] = 1
+            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+        elif "5ms" and "dark_pair" in slm_seq:
             # "5ms_dark_pair"
-            samps_total = round(5.31072e-3 * self.sample_rate)
-            expo_on = 5.0e-3
+            samps_total = round(5310.72e-6 * self.sample_rate)
+            expo_on = 5000.0e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
-            samps_end = round(5.270187e-3 * self.sample_rate)
+            samps_end = round(5270.187e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[samps_start:samps_end] = 1
-        elif "10ms" in slm_seq:
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        elif "10ms" and "dark_pair" in slm_seq:
             # "10ms_dark_pair"
-            samps_total = round(10.31072e-3 * self.sample_rate)
-            expo_on = 10.0e-3
+            samps_total = round(10310.72e-6 * self.sample_rate)
+            expo_on = 10000.0e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
-            samps_end = round(10.270187e-3 * self.sample_rate)
+            samps_end = round(10270.187e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[samps_start:samps_end] = 1
-        elif "20ms" in slm_seq:
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+        elif "20ms" and "dark_pair" in slm_seq:
             # "20ms_dark_pair"
-            samps_total = round(20.31072e-3 * self.sample_rate)
-            expo_on = 20.0e-3
+            samps_total = round(20310.72e-6 * self.sample_rate)
+            expo_on = 20000.0e-6
             samps_on = round(expo_on * self.sample_rate)
-            samps_start = int(270.187e-6 * self.sample_rate)
-            samps_end = round(20.270187e-3 * self.sample_rate)
+            samps_end = round(20270.187e-6 * self.sample_rate)
             act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[samps_start:samps_end] = 1
+            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
         else:
             self.logg.error("SLM sequence error.")
             raise ValueError("SLM sequence is wrong.")

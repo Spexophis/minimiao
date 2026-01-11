@@ -46,6 +46,9 @@ class CommandExecutor(QObject):
         return logging
 
     def _set_signal_executions(self):
+        # EMCCD
+        self.ctrl_panel.Signal_check_emccd_temperature.connect(self.check_emdccd_temperature)
+        self.ctrl_panel.Signal_switch_emccd_cooler.connect(self.switch_emdccd_cooler)
         # MCL Piezo
         self.ctrl_panel.Signal_piezo_move_usb.connect(self.set_piezo_positions_usb)
         self.ctrl_panel.Signal_piezo_move.connect(self.set_piezo_positions)
@@ -61,7 +64,7 @@ class CommandExecutor(QObject):
         # DAQ
         self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
         self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
-
+        # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_fft.connect(self.fft)
         self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
@@ -86,6 +89,33 @@ class CommandExecutor(QObject):
             self.logg.info("Finish setting up controllers")
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
+
+    @pyqtSlot()
+    def check_emdccd_temperature(self):
+        try:
+            self.devs.emccd.get_temperature()
+            self.ctrl_panel.display_emccd_temperature(self.devs.emccd.temperature)
+        except Exception as e:
+            self.logg.error(f"CCD Camera Error: {e}")
+
+    @pyqtSlot(bool)
+    def switch_emdccd_cooler(self, sw: bool):
+        if sw:
+            self.switch_emdccd_cooler_on()
+        else:
+            self.switch_emdccd_cooler_off()
+
+    def switch_emdccd_cooler_on(self):
+        try:
+            self.devs.emccd.cooler_on()
+        except Exception as e:
+            self.logg.error(f"CCD Camera Error: {e}")
+
+    def switch_emdccd_cooler_off(self):
+        try:
+            self.devs.emccd.cooler_off()
+        except Exception as e:
+            self.logg.error(f"CCD Camera Error: {e}")
 
     @pyqtSlot()
     def deck_read_position(self):
@@ -240,33 +270,6 @@ class CommandExecutor(QObject):
             self.devs.laser.laser_off("all")
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
-
-    @pyqtSlot()
-    def check_emdccd_temperature(self):
-        try:
-            self.devs.ccdcam.get_ccd_temperature()
-            self.ctrl_panel.display_emccd_temperature(self.devs.ccdcam.temperature)
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
-
-    @pyqtSlot(bool)
-    def switch_emdccd_cooler(self, sw: bool):
-        if sw:
-            self.switch_emdccd_cooler_on()
-        else:
-            self.switch_emdccd_cooler_off()
-
-    def switch_emdccd_cooler_on(self):
-        try:
-            self.devs.ccdcam.cooler_on()
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
-
-    def switch_emdccd_cooler_off(self):
-        try:
-            self.devs.ccdcam.cooler_off()
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
 
     def set_camera_roi(self, key="imaging"):
         try:
@@ -615,7 +618,7 @@ class CommandExecutor(QObject):
                 pzs.append(ipr.calculate_focus_measure_with_sobel(temp - temp.min()))
             fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
             tf.imwrite(fd, np.asarray(data))
-            self.viewer.update_plot(pzs, x=zps)
+            self.viewer.plot_trace(y=pzs, x=zps)
             fp = ipr.peak_find(zps, pzs)
             if isinstance(fp, str):
                 self.logg.error(fp)

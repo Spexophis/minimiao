@@ -14,6 +14,9 @@ class MockCamera:
         self.data = None
         self.acq_thread = None
 
+    def close(self):
+        pass
+
     def prepare_live(self):
         self.data = run_threads.CameraDataList(self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
