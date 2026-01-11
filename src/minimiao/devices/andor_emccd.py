@@ -81,7 +81,7 @@ class EMCCDCamera:
             self.get_sn()
             self.cooler_on()
             self.set_frame_transfer(0)
-            self.set_readout_rate(0, 0, 0)
+            self.set_readout_rate(0, 0, 3)
         except Exception as e:
             self.logg.error(f"Error configuring camera: {e}")
 
