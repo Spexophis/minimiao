@@ -253,14 +253,15 @@ class LiveViewer(QWidget):
     def on_fft_frame(self, frame_u16):
         self.fft_viewer.set_frame(frame_u16)
 
-    def plot_trace(self, y, overlay=False):
+    def plot_trace(self, y, x=None, overlay=False):
         y = np.asarray(y)
         if y.size == 0:
             return
         if not overlay:
             self.data_plot.clear()
             self._overlay_n = 0
-        x = np.arange(y.size)
+        if x is None:
+            x = np.arange(y.size)
         self.data_plot.enableAutoRange(x=True)
         color = pg.intColor(self._overlay_n, hues=12)  # 12 distinct-ish hues, repeats after 12
         pen = pg.mkPen(color=color, width=1.)
