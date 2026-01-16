@@ -74,7 +74,7 @@ class AppWrapper:
     def __init__(self):
         self.app = QApplication(sys.argv)  # Create an instance of QApplication
         self.app.setStyleSheet("""
-        QWidget { background-color: #232629; color: #f0f0f0; font-size: 14px; }
+        QWidget { background-color: #232629; color: #f0f0f0; font-size: 14pt; }
         QPushButton { background-color: #444; border: 1px solid #555; color: #f0f0f0; }
         QPushButton:hover { background-color: #666; }
         QLabel { color: #e0e0e0; }

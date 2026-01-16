@@ -20,7 +20,7 @@ class DockWidget(QtWidgets.QDockWidget):
             QDockWidget {
                 background-color: #121212;
                 font-weight: bold;
-                font-size: 10px;
+                font-size: 10pt;
                 color: #CCCCCC;
             }
             QDockWidget::title {
@@ -54,7 +54,7 @@ class GroupWidget(QtWidgets.QGroupBox):
                 border-bottom-right-radius: 4px;
                 margin-top: 0ex;
                 font-weight: bold;
-                font-size: 12px;
+                font-size: 12pt;
                 color: #CCCCCC;
             }
             QGroupBox::title {
