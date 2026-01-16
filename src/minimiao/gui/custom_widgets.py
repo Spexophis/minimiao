@@ -54,7 +54,7 @@ class GroupWidget(QtWidgets.QGroupBox):
                 border-bottom-right-radius: 4px;
                 margin-top: 0ex;
                 font-weight: bold;
-                font-size: 12pt;
+                font-size: 10pt;
                 color: #CCCCCC;
             }
             QGroupBox::title {

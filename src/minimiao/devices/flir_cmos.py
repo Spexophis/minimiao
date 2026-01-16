@@ -43,19 +43,15 @@ class FLIRCamera:
         self.logg = logg or self.setup_logging()
         self._settings = self.CameraSettings()
         self.syst, self.cam_list = self._initialize_sdk()
-        self.cam = self.cam_list[0]
-        if self.syst:
+        if self.syst and self.cam_list:
+            self.cam = self.cam_list[0]
             self.node_map, self.node_map_stream = self._configure_camera()
             self._init_camera()
         else:
-            self.close()
             raise RuntimeError("Failed to initiate FLIR camera.")
 
     def __del__(self):
-        try:
-            self.close()
-        except Exception:
-            pass
+        pass
 
     def __getattr__(self, item):
         if hasattr(self._settings, item):

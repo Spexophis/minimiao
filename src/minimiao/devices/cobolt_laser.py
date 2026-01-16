@@ -21,6 +21,7 @@ class CoboltLaser:
         for laser, ids in laser_dict.items():
             try:
                 lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=ids)
+                lasers[laser].send_cmd('@cobas 0')
                 self.logg.info("{} Laser Connected".format(laser))
             except Exception as e:
                 self.logg.error(f"Laser Error: {e}")
@@ -51,20 +52,20 @@ class CoboltLaser:
     def laser_off(self, laser):
         if laser == "all":
             for key, _l in self.lasers.items():
-                _l.turn_off()
+                _l.send_cmd('l0')
         else:
             for ind, ln in enumerate(laser):
                 if self._h.get(ln, False):
-                    self.lasers[ln].turn_off()
+                    self.lasers[ln].send_cmd('l0')
 
     def laser_on(self, laser):
         if laser == "all":
             for key, _l in self.lasers.items():
-                _l.turn_on()
+                _l.send_cmd('l1')
         else:
             for ind, ln in enumerate(laser):
                 if self._h.get(ln, False):
-                    self.lasers[ln].turn_on()
+                    self.lasers[ln].send_cmd('l1')
 
     def set_constant_power(self, laser, power):
         for ind, ln in enumerate(laser):
