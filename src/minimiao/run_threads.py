@@ -86,36 +86,39 @@ class PhotonCountThread(threading.Thread):
 class PhotonCountList:
 
     def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.count_list = deque(maxlen=max_length)
+        self.data_list_0 = deque(maxlen=max_length)
+        self.data_list_0.extend([0])
+        self.count_list_0 = deque(maxlen=max_length)
+        self.data_list_1 = deque(maxlen=max_length)
+        self.data_list_1.extend([0])
+        self.count_list_1 = deque(maxlen=max_length)
         self.ind_list = deque(maxlen=max_length)
         self.count_len = max_length
         self.count_starts = 1
         self.count_ends = 1
-        self.data_list.extend([0])
         self.callback = None
         self.request = None
         self.lock = threading.Lock()
 
-    def add_element(self, elements: list, num: int):
+    def add_element(self, elements, num):
         with self.lock:
-            d = np.asarray(elements, dtype=np.int64)
             self.count_starts = self.count_ends % self.count_len
             self.count_ends = (self.count_ends + num) % self.count_len
-            counts = np.diff(np.insert(d, 0, self.data_list[-1]))
-            self.count_list.extend(counts.tolist())
-            self.data_list.extend(elements)
+            counts = np.diff(np.insert(elements, 0, [self.data_list_0[-1], self.data_list_1[-1]], axis=1), axis=1)
+            self.count_list_0.extend(counts[0].tolist())
+            self.count_list_1.extend(counts[1].tolist())
+            self.data_list_0.extend(elements[0].tolist())
+            self.data_list_1.extend(elements[1].tolist())
             if self.count_starts <= self.count_ends:
                 indices = np.arange(self.count_starts, self.count_ends)
             else:
                 indices = np.concatenate((np.arange(self.count_starts, self.count_len), np.arange(self.count_ends)))
             self.ind_list.extend(indices.tolist())
             if self.callback is not None:
-                self.callback(list(counts), list(indices))
+                self.callback(counts, list(indices))
 
     def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None, np.array(
-            self.count_list) if self.data_list else None
+        return np.array(self.data_list_0) if self.data_list_0 else None, np.array(self.count_list_0) if self.count_list_0 else None
 
     def on_update(self, callback):
         self.callback = callback
@@ -139,7 +142,8 @@ class PSLiveWorker(QThread):
     def run(self):
         while self._running:
             self.msleep(self.period_ms)
-            self.psr_ready.emit(list(self.dat.count_list).copy(), self.reco.live_rec.copy())
+            self.psr_ready.emit(list(self.dat.count_list_0).copy(), self.reco.live_rec_0.copy(),
+                                list(self.dat.count_list_1).copy(), self.reco.live_rec_1.copy())
             self.psr_new.emit()
 
 

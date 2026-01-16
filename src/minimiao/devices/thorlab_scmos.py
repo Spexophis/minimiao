@@ -147,7 +147,6 @@ class ThorCMOS:
         self.camera.disarm()
         self.acq_thread.stop()
         self.acq_thread = None
-        self.data = None
 
     def prepare_acquisition(self, n):
         self.data = run_threads.CameraDataList(n)

@@ -3,11 +3,8 @@
 # Licensed under the MIT License.
 
 
-from . import andor_emccd
 from . import cobolt_laser
-from . import fdd_slm
-from . import mcl_deck
-from . import mcl_piezo
+from . import flir_cmos
 from . import ni_daq
 
 
@@ -18,15 +15,11 @@ class DeviceManager:
         self.data_folder = path
         self.cam_set = {}
         try:
-            self.emccd = andor_emccd.EMCCDCamera(logg=self.logg)
-            self.cam_set[0] = self.emccd
+            self.camera = flir_cmos.FLIRCamera(logg=self.logg)
+            self.cam_set[0] = self.camera
         except Exception as e:
             from . import mock_cam
             self.cam_set[0] = mock_cam.MockCamera()
-            self.logg.error(f"{e}")
-        try:
-            self.slm = fdd_slm.QXGA(logg=self.logg, config=self.config)
-        except Exception as e:
             self.logg.error(f"{e}")
         try:
             self.laser = cobolt_laser.CoboltLaser(logg=self.logg, config=self.config)
@@ -34,14 +27,6 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.daq = ni_daq.NIDAQ(logg=self.logg)
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.deck = mcl_deck.MCLMicroDrive(logg=self.logg)
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.piezo = mcl_piezo.MCLNanoDrive(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
@@ -58,19 +43,7 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.slm.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
             self.daq.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.deck.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.piezo.close()
         except Exception as e:
             self.logg.error(f"{e}")
 

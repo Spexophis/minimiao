@@ -18,10 +18,9 @@ from .computations import computator
 
 
 def setup_folder():
-    documents_dir = os.path.join(os.path.expanduser('~'), 'Documents', 'data')
+    documents_dir = r'C:\\Users\\Public\\Data'
     today_str = datetime.datetime.now().strftime("%Y%m%d")
-    username = getpass.getuser()
-    folder_name = f"{today_str}_{username}"
+    folder_name = f"{today_str}"
     full_path = os.path.join(documents_dir, folder_name)
     if not os.path.exists(full_path):
         os.makedirs(full_path)
