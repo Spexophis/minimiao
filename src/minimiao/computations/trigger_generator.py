@@ -160,10 +160,11 @@ class TriggerSequence:
         digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
         for ln, ch in enumerate(digital_channels):
             digital_trigger[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
-        return digital_trigger, digital_channels
+        pixel_dwell_samples = self.digital_ends[3] - self.digital_starts[3]
+        return digital_trigger, digital_channels, pixel_dwell_samples
 
     def generate_digital_triggers_for_galvo_scan(self, lasers, detectors):
-        digital_triggers, chs = self.generate_digital_triggers(lasers, detectors)
+        digital_triggers, chs, dws = self.generate_digital_triggers(lasers, detectors)
         if 2 in detectors:
             compensate_samples = max(self.galvo_step_response_samples, self.standby_samples)
             cycle_samples = digital_triggers.shape[1] + compensate_samples
@@ -173,23 +174,10 @@ class TriggerSequence:
             cycle_samples = digital_triggers.shape[1] + self.galvo_step_response_samples
             compensate_sequence = np.zeros((digital_triggers.shape[0], self.galvo_step_response_samples))
             digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
-        return digital_triggers, chs, cycle_samples
-
-    def generate_digital_triggers_for_piezo_scan(self, lasers, detectors):
-        digital_triggers, chs = self.generate_digital_triggers(lasers, detectors)
-        if 2 in detectors:
-            compensate_samples = max(self.piezo_return_samples, self.standby_samples)
-            cycle_samples = digital_triggers.shape[1] + compensate_samples
-            compensate_sequence = np.zeros((digital_triggers.shape[0], compensate_samples))
-            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
-        else:
-            cycle_samples = digital_triggers.shape[1] + self.piezo_return_samples
-            compensate_sequence = np.zeros((digital_triggers.shape[0], self.piezo_return_samples))
-            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
-        return digital_triggers, chs, cycle_samples
+        return digital_triggers, chs, cycle_samples, dws
 
     def generate_galvo_scan(self, lasers, detectors):
-        digital_triggers, dig_chs, cycle_samples = self.generate_digital_triggers_for_galvo_scan(lasers, detectors)
+        digital_triggers, dig_chs, cycle_samples, dwl = self.generate_digital_triggers_for_galvo_scan(lasers, detectors)
         pos = 1
         gv_chs = []
         for i, nps in enumerate(self.galvo_scan_pos):
@@ -228,10 +216,23 @@ class TriggerSequence:
         for i in range(n):
             galvo_sequences[i] = np.tile(galvo_sequences[i], self.galvo_scan_pos[pch])
         digital_triggers = np.tile(digital_triggers, self.galvo_scan_pos[pch])
-        return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos
+        return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, dwl
+
+    def generate_digital_triggers_for_piezo_scan(self, lasers, detectors):
+        digital_triggers, chs, dws = self.generate_digital_triggers(lasers, detectors)
+        if 2 in detectors:
+            compensate_samples = max(self.piezo_return_samples, self.standby_samples)
+            cycle_samples = digital_triggers.shape[1] + compensate_samples
+            compensate_sequence = np.zeros((digital_triggers.shape[0], compensate_samples))
+            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
+        else:
+            cycle_samples = digital_triggers.shape[1] + self.piezo_return_samples
+            compensate_sequence = np.zeros((digital_triggers.shape[0], self.piezo_return_samples))
+            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
+        return digital_triggers, chs, cycle_samples, dws
 
     def generate_piezo_scan(self, lasers, detectors):
-        digital_triggers, dig_chs, cycle_samples = self.generate_digital_triggers_for_piezo_scan(lasers, detectors)
+        digital_triggers, dig_chs, cycle_samples, dwl = self.generate_digital_triggers_for_piezo_scan(lasers, detectors)
         pos = 1
         pz_chs = []
         for i, nps in enumerate(self.piezo_scan_pos):
@@ -253,7 +254,7 @@ class TriggerSequence:
             for i in range(n):
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
-        return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
+        return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos, dwl
 
 
 def convert_list(arrays):

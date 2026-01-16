@@ -13,13 +13,11 @@ class DeviceManager:
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
-        self.cam_set = {}
         try:
             self.camera = flir_cmos.FLIRCamera(logg=self.logg)
-            self.cam_set[0] = self.camera
         except Exception as e:
             from . import mock_cam
-            self.cam_set[0] = mock_cam.MockCamera()
+            self.camera = mock_cam.MockCamera()
             self.logg.error(f"{e}")
         try:
             self.laser = cobolt_laser.CoboltLaser(logg=self.logg, config=self.config)
@@ -34,8 +32,7 @@ class DeviceManager:
     def close(self):
         pass
         try:
-            for key in self.cam_set.keys():
-                self.cam_set[key].close()
+            self.camera.close()
         except Exception as e:
             self.logg.error(f"{e}")
         try:

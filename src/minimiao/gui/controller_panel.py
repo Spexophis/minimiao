@@ -18,11 +18,7 @@ class ControlPanel(QWidget):
     Signal_daq_update = pyqtSignal(int)
     Signal_daq_reset = pyqtSignal()
     Signal_plot_trigger = pyqtSignal()
-    Signal_focus_finding = pyqtSignal()
     Signal_video = pyqtSignal(bool, str)
-    Signal_fft = pyqtSignal(bool)
-    Signal_plot_profile = pyqtSignal()
-    Signal_add_profile = pyqtSignal()
     Signal_data_acquire = pyqtSignal(str, int)
     Signal_save_file = pyqtSignal(str)
 
@@ -64,9 +60,9 @@ class ControlPanel(QWidget):
         self.QSpinBox_cmos_coordinate_ny = cw.SpinBoxWidget(0, 2048, 1, 2048)
         self.QSpinBox_cmos_coordinate_bin = cw.SpinBoxWidget(0, 2048, 1, 1)
         self.QSpinBox_cmos_gain = cw.SpinBoxWidget(0, 300, 1, 0)
-        self.QDoubleSpinBox_cmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.009)
-        self.QDoubleSpinBox_cmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
-        self.QDoubleSpinBox_cmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.050)
+        self.QDoubleSpinBox_cmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.009)
+        self.QDoubleSpinBox_cmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.001)
+        self.QDoubleSpinBox_cmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.050)
 
         cmos_scroll_layout.addRow(cw.LabelWidget(str('CMOS')))
         cmos_scroll_layout.addRow(cw.FrameWidget())
@@ -87,7 +83,7 @@ class ControlPanel(QWidget):
 
     def _create_position_panel(self):
         group = cw.GroupWidget()
-        mcl_piezo_scroll_area, mcl_piezo_scroll_layout = cw.create_scroll_area("G")
+        piezo_scroll_area, piezo_scroll_layout = cw.create_scroll_area("G")
         galvo_scroll_area, galvo_scroll_layout = cw.create_scroll_area("G")
 
         self.QDoubleSpinBox_stage_z = cw.DoubleSpinBoxWidget(0, 100, 0.04, 2, 30.00)
@@ -96,18 +92,20 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_piezo_return_time = cw.DoubleSpinBoxWidget(0, 50, 0.01, 2, 0.05)
         self.QPushButton_focus_finding = cw.PushButtonWidget('Find Focus')
 
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Z (um)')), 10, 0)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Origin / um')), 11, 0)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Step / um')), 11, 1)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Range / um')), 11, 2)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_stage_z, 12, 0)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_step_z, 12, 1)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_range_z, 12, 2)
-        mcl_piezo_scroll_layout.addWidget(cw.FrameWidget(), 13, 0, 1, 3)
-        mcl_piezo_scroll_layout.addWidget(cw.LabelWidget(str('Piezo Return / s')), 14, 0)
-        mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_piezo_return_time, 14, 1)
-        mcl_piezo_scroll_layout.addWidget(cw.FrameWidget(), 16, 0, 1, 3)
-        mcl_piezo_scroll_layout.addWidget(self.QPushButton_focus_finding, 17, 0)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Piezo')), 0, 0)
+        piezo_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 2)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Z (um)')), 2, 0)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Origin / um')), 3, 0)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Step / um')), 3, 1)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Range / um')), 3, 2)
+        piezo_scroll_layout.addWidget(self.QDoubleSpinBox_stage_z, 4, 0)
+        piezo_scroll_layout.addWidget(self.QDoubleSpinBox_step_z, 4, 1)
+        piezo_scroll_layout.addWidget(self.QDoubleSpinBox_range_z, 4, 2)
+        piezo_scroll_layout.addWidget(cw.FrameWidget(), 5, 0, 1, 3)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Piezo Return / s')), 6, 0)
+        piezo_scroll_layout.addWidget(self.QDoubleSpinBox_piezo_return_time, 6, 1)
+        piezo_scroll_layout.addWidget(cw.FrameWidget(), 7, 0, 1, 3)
+        piezo_scroll_layout.addWidget(self.QPushButton_focus_finding, 8, 0)
 
         self.QSpinBox_galvo_frequency = cw.SpinBoxWidget(0, 300, 1, 100)
         self.QLCDNumber_galvo_frequency = cw.LCDNumberWidget(0, 3)
@@ -161,7 +159,7 @@ class ControlPanel(QWidget):
         galvo_scroll_layout.addWidget(self.QPushButton_save_new_galvo_scan_preset, 16, 2)
 
         group_layout = QHBoxLayout(group)
-        group_layout.addWidget(mcl_piezo_scroll_area)
+        group_layout.addWidget(piezo_scroll_area)
         group_layout.addWidget(galvo_scroll_area)
         group.setLayout(group_layout)
         return group
@@ -231,15 +229,15 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#3 - L488')), 0, 5, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_read_488, 1, 5, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_read_488, 2, 5, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#4 - CMOS')), 0, 6, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 6, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 6, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - MPD_0')), 0, 8, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_mpd_h, 1, 8, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_mpd_h, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - MPD_1')), 0, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_mpd_v, 1, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_mpd_v, 2, 9, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#4 - MPD_0')), 0, 6, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_mpd_h, 1, 6, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_mpd_h, 2, 6, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - MPD_1')), 0, 8, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_mpd_v, 1, 8, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_mpd_v, 2, 8, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - CMOS')), 0, 9, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(daq_scroll_area)
@@ -250,21 +248,17 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["MPD", "CMOS"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Point Scan", "Wide Field"])
+        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPDs"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Point Scan", "Static Point"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
-        self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
-        self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
-        self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
-        self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Point Scan 2D", "Point Scan 3D", "Wide Field"])
+        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Point Scan 2D"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
 
-        acq_scroll_layout.addWidget(cw.LabelWidget(str('Camera')), 0, 0, 1, 1)
-        acq_scroll_layout.addWidget(self.QComboBox_imaging_camera_selection, 1, 0, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Detector')), 0, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_imaging_detector_selection, 1, 0, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Live Modes')), 0, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_live_modes, 1, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_save_live_timing_presets, 2, 1, 1, 1)
@@ -275,11 +269,6 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_fft, 3, 2, 1, 1)
-        acq_scroll_layout.addWidget(cw.LabelWidget(str('Profile Axis')), 3, 0, 1, 1)
-        acq_scroll_layout.addWidget(self.QComboBox_profile_axis, 3, 1, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_plot_profile, 4, 0, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_add_profile, 4, 1, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(acq_scroll_area)
@@ -299,11 +288,7 @@ class ControlPanel(QWidget):
         self.QSpinBox_daq_sample_rate.valueChanged.connect(self.update_daq)
         self.QPushButton_reset_daq.clicked.connect(self.reset_daq)
         self.QPushButton_plot_trigger.clicked.connect(self.plot_trigger_sequence)
-        self.QPushButton_focus_finding.clicked.connect(self.run_focus_finding)
         self.QPushButton_video.clicked.connect(self.run_video)
-        self.QPushButton_fft.clicked.connect(self.run_fft)
-        self.QPushButton_plot_profile.clicked.connect(self.run_plot_profile)
-        self.QPushButton_add_profile.clicked.connect(self.run_add_profile)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
         self.QComboBox_live_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
         self.QComboBox_acquisition_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
@@ -321,8 +306,8 @@ class ControlPanel(QWidget):
     def get_cmos_exposure(self):
         return self.QDoubleSpinBox_cmos_t_exposure.value()
 
-    def get_imaging_camera(self):
-        detection_device = self.QComboBox_imaging_camera_selection.currentIndex()
+    def get_imaging_detector(self):
+        detection_device = self.QComboBox_imaging_detector_selection.currentIndex()
         return detection_device
 
     @pyqtSlot(float)
@@ -355,7 +340,7 @@ class ControlPanel(QWidget):
         return self.QDoubleSpinBox_stage_z.value()
 
     def get_piezo_scan_time(self):
-        return self.QDoubleSpinBox_piezo_return_time.value(), self.QDoubleSpinBox_piezo_line_time.value()
+        return self.QDoubleSpinBox_piezo_return_time.value()
 
     def get_piezo_scan_parameters(self):
         axis_origins = self.QDoubleSpinBox_stage_z.value()
@@ -428,39 +413,12 @@ class ControlPanel(QWidget):
         self.Signal_plot_trigger.emit()
 
     @pyqtSlot()
-    def run_focus_finding(self):
-        self.Signal_focus_finding.emit()
-
-    @pyqtSlot()
     def run_video(self):
         vm = self.QComboBox_live_modes.currentText()
         if self.QPushButton_video.isChecked():
             self.Signal_video.emit(True, vm)
-            self.QPushButton_fft.setEnabled(True)
         else:
             self.Signal_video.emit(False, vm)
-            if self.QPushButton_fft.isChecked():
-                self.Signal_fft.emit(False)
-            self.QPushButton_fft.setEnabled(False)
-            self.QPushButton_fft.setChecked(False)
-
-    @pyqtSlot()
-    def run_fft(self):
-        if self.QPushButton_fft.isChecked():
-            self.Signal_fft.emit(True)
-        else:
-            self.Signal_fft.emit(False)
-
-    def get_profile_axis(self):
-        return self.QComboBox_profile_axis.currentText()
-
-    @pyqtSlot()
-    def run_plot_profile(self):
-        self.Signal_plot_profile.emit()
-
-    @pyqtSlot()
-    def run_add_profile(self):
-        self.Signal_add_profile.emit()
 
     @pyqtSlot()
     def run_acquisition(self):

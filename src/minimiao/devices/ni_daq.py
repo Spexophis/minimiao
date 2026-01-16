@@ -37,7 +37,7 @@ class NIDAQ:
         self.galvo_channels = ["Dev1/ao0", "Dev1/ao1"]
         self.piezo_channels = ["Dev1/ao2"]
         self.ttl_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                                 "Dev1/port0/line4", "Dev1/port0/line5"]
+                                 "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
         self.photon_counter_channels = ["/Dev1/ctr0", "/Dev1/ctr1"]
         self.photon_counter_terminals = ["/Dev1/PFI0", "/Dev1/PFI12"]
         self.pmt_channel = ["/Dev1/ai0"]
@@ -178,7 +178,8 @@ class NIDAQ:
         try:
             self.tasks["analog"] = nidaqmx.Task("analog")
             for analog_channel in analog_channels:
-                self.tasks["analog"].ao_channels.add_ao_voltage_chan(analog_channel, min_val=-10., max_val=10.)
+                self.tasks["analog"].ao_channels.add_ao_voltage_chan(self.galvo_channels[analog_channel],
+                                                                     min_val=-10., max_val=10.)
             self.tasks["analog"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                             sample_mode=self.mode,
                                                             samps_per_chan=n_samples)
@@ -206,13 +207,13 @@ class NIDAQ:
         try:
             self.tasks["digital"] = nidaqmx.Task("digital")
             for digital_channel in digital_channels:
-                self.tasks["digital"].do_channels.add_do_chan(digital_channel,
+                self.tasks["digital"].do_channels.add_do_chan(self.ttl_channels[digital_channel],
                                                               line_grouping=LineGrouping.CHAN_PER_LINE)
             self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                              source="/Dev1/ao/SampleClock",
                                                              sample_mode=self.mode,
                                                              samps_per_chan=n_samples)
-            self.tasks["digital"].triggers.start_trigger.cfg_dig_edge_start_trig("/Dev1/ao/StartTrigger")
+            # self.tasks["digital"].triggers.start_trigger.cfg_dig_edge_start_trig("/Dev1/ao/StartTrigger")
             self.tasks["digital"].write(digital_sequences == 1.0, auto_start=False)
             self._active["digital"] = True
         except nidaqmx.DaqWarning as e:
@@ -223,19 +224,16 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_triggers(self,
-                       analog_sequences=None, analog_channels=None,
-                       digital_sequences=None, digital_channels=None,
-                       finite=True):
+    def write_triggers(self, analog_sequences=None, analog_channels=None, digital_sequences=None, digital_channels=None, finite=True):
         if finite:
             self.mode = AcquisitionType.FINITE
         else:
             self.mode = AcquisitionType.CONTINUOUS
         try:
-            if digital_sequences is not None:
-                self.write_digital_sequences(digital_sequences, digital_channels)
             if analog_sequences is not None:
                 self.write_analog_sequences(analog_sequences, analog_channels)
+            if digital_sequences is not None:
+                self.write_digital_sequences(digital_sequences, digital_channels)
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -255,7 +253,7 @@ class NIDAQ:
         self.tasks["photon_counter"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/ao/SampleClock",
                                                                 active_edge=Edge.RISING, sample_mode=self.mode,
                                                                 samps_per_chan=self.photon_counter_length)
-        self.tasks["photon_counter"].triggers.start_trigger.cfg_dig_edge_start_trig("/Dev1/ao/StartTrigger")
+        # self.tasks["photon_counter"].triggers.start_trigger.cfg_dig_edge_start_trig("/Dev1/ao/StartTrigger")
         self.tasks["photon_counter"].in_stream.input_buf_size = self.photon_counter_length
         self.photon_reader = CounterReader(self.tasks["photon_counter"].in_stream)
         self.data = run_threads.PhotonCountList(self.photon_counter_length)

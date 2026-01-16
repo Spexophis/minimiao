@@ -9,7 +9,7 @@ from PyQt6 import QtWidgets, QtGui, QtCore
 class ToolBarWidget(QtWidgets.QToolBar):
     def __init__(self):
         super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('QToolBar {background-color: #121212; color: white;}')
 
 
@@ -20,7 +20,7 @@ class DockWidget(QtWidgets.QDockWidget):
             QDockWidget {
                 background-color: #121212;
                 font-weight: bold;
-                font-size: 10pt;
+                font-size: 9pt;
                 color: #CCCCCC;
             }
             QDockWidget::title {
@@ -54,7 +54,7 @@ class GroupWidget(QtWidgets.QGroupBox):
                 border-bottom-right-radius: 4px;
                 margin-top: 0ex;
                 font-weight: bold;
-                font-size: 10pt;
+                font-size: 9pt;
                 color: #CCCCCC;
             }
             QGroupBox::title {
@@ -124,7 +124,7 @@ class FrameWidget(QtWidgets.QFrame):
 class LabelWidget(QtWidgets.QLabel):
     def __init__(self, name=''):
         super().__init__(name)
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('background-color: #232629; color: #ECECEC; padding: 2px; border-radius: 2px;')
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
 
@@ -132,7 +132,7 @@ class LabelWidget(QtWidgets.QLabel):
 class LCDNumberWidget(QtWidgets.QLCDNumber):
     def __init__(self, num=None, n=None):
         super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet("""
             QLCDNumber {
                 background-color: #121212;
@@ -157,13 +157,13 @@ class SpinBoxWidget(QtWidgets.QSpinBox):
     def __init__(self, range_min, range_max, step, value):
         super().__init__()
 
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setMinimumWidth(self.sizeHint().width())
         self.setMinimumHeight(self.sizeHint().height())
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                            QtWidgets.QSizePolicy.Policy.Fixed)
         max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
-        self.setMaximumWidth(max_value_width + 32)
+        self.setMaximumWidth(max_value_width + 16)
 
         self.setStyleSheet(f'''
             QSpinBox {{
@@ -220,13 +220,13 @@ class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
     def __init__(self, range_min, range_max, step, decimals, value):
         super().__init__()
 
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setMinimumWidth(self.sizeHint().width())
         self.setMinimumHeight(self.sizeHint().height())
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
                            QtWidgets.QSizePolicy.Policy.Fixed)
         max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
-        self.setMaximumWidth(max_value_width + 32)
+        self.setMaximumWidth(max_value_width + 16)
 
         self.setStyleSheet(f'''
             QDoubleSpinBox {{
@@ -292,7 +292,7 @@ class PushButtonWidget(QtWidgets.QPushButton):
         self.setCheckable(checkable)
         self.setEnabled(enable)
         self.setChecked(checked)
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QPushButton {
                 background-color: #121212;
@@ -330,7 +330,7 @@ class PushButtonWidget(QtWidgets.QPushButton):
 class CheckBoxWidget(QtWidgets.QCheckBox):
     def __init__(self, name=''):
         super().__init__(name)
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QCheckBox {
                 background-color: #121212;
@@ -355,7 +355,7 @@ class CheckBoxWidget(QtWidgets.QCheckBox):
 class RadioButtonWidget(QtWidgets.QRadioButton):
     def __init__(self, name='', color="rgb(192, 255, 62)", autoex=False):
         super().__init__(name)
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setAutoExclusive(autoex)
         self.setStyleSheet(f'''
             QRadioButton {{
@@ -383,7 +383,7 @@ class ComboBoxWidget(QtWidgets.QComboBox):
         super().__init__()
         for item in list_items:
             self.addItem(item)
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QComboBox {
                 background-color: #121212;
@@ -411,7 +411,7 @@ class ComboBoxWidget(QtWidgets.QComboBox):
 class LineEditWidget(QtWidgets.QLineEdit):
     def __init__(self):
         super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QLineEdit {
                 background-color: #444444;
@@ -423,7 +423,7 @@ class LineEditWidget(QtWidgets.QLineEdit):
 class TextEditWidget(QtWidgets.QTextEdit):
     def __init__(self):
         super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
             QTextEdit {
                 background-color: #444444;
