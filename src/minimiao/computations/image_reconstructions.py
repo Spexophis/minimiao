@@ -3,7 +3,7 @@
 # Licensed under the MIT License.
 
 import numpy as np
-
+import threading
 
 class ImgRecon:
 
@@ -21,6 +21,12 @@ class ImgRecon:
         self.live_rec_0 = None
         self.live_counts_1 = None
         self.live_rec_1 = None
+        self._reshape_buffer_0 = np.zeros(
+            (self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16)
+        self._reshape_buffer_1 = np.zeros(
+            (self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16)
+
+        self.lock = threading.Lock()
 
     @staticmethod
     def setup_logging():
@@ -83,35 +89,40 @@ class ImgRecon:
         self.live_rec_0 = np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint16)
         self.live_counts_1 = np.zeros(self._gate_len, dtype=np.uint16)
         self.live_rec_1 = np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint16)
+        self._reshape_buffer_0 = np.zeros(
+            (self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16)
+        self._reshape_buffer_1 = np.zeros(
+            (self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16)
 
     def point_scan_live_recon(self, photon_counts, ind, bi_direction: bool = False):
-        if photon_counts.shape[1] == len(ind):
-            self.live_counts_0[ind] = photon_counts[0]
-            self.live_counts_1[ind] = photon_counts[1]
-            gate = self._point_scan_gate_mask
-            per_on_0 = self.live_counts_0[gate]
-            per_on_1 = self.live_counts_1[gate]
+        with self.lock:
+            if photon_counts.shape[1] == len(ind):
+                self.live_counts_0[ind] = photon_counts[0]
+                self.live_counts_1[ind] = photon_counts[1]
+                gate = self._point_scan_gate_mask
+                per_on_0 = self.live_counts_0[gate]
+                per_on_1 = self.live_counts_1[gate]
 
-            if per_on_0.size != self._expected or per_on_1.size != self._expected:
-                self.logg.error(f"Gate-on samples = {per_on_0.size}, Gate-on samples = {per_on_0.size}, expected {self._expected}. ")
+                if per_on_0.size != self._expected or per_on_1.size != self._expected:
+                    self.logg.error(f"Gate-on samples = {per_on_0.size}, Gate-on samples = {per_on_0.size}, expected {self._expected}. ")
+                else:
+                    self._reshape_buffer_0[:] = per_on_0.reshape(
+                        self.point_scan_n_lines,
+                        self.point_scan_n_pixels,
+                        self.point_scan_dwell_samples
+                    )
+                    np.sum(self._reshape_buffer_0, axis=2, out=self.live_rec_0)
+
+                    self._reshape_buffer_1[:] = per_on_1.reshape(
+                        self.point_scan_n_lines,
+                        self.point_scan_n_pixels,
+                        self.point_scan_dwell_samples
+                    )
+                    np.sum(self._reshape_buffer_1, axis=2, out=self.live_rec_1)
+
+                    if bi_direction:
+                        self.live_rec_0[1::2] = self.live_rec_0[1::2, ::-1]
+                        self.live_rec_1[1::2] = self.live_rec_1[1::2, ::-1]
+
             else:
-                img_0 = per_on_0.reshape(
-                    self.point_scan_n_lines,
-                    self.point_scan_n_pixels,
-                    self.point_scan_dwell_samples,
-                ).sum(axis=2)
-
-                img_1 = per_on_1.reshape(
-                    self.point_scan_n_lines,
-                    self.point_scan_n_pixels,
-                    self.point_scan_dwell_samples,
-                ).sum(axis=2)
-
-                if bi_direction:
-                    img_0[1::2] = img_0[1::2, ::-1]
-                    img_1[1::2] = img_1[1::2, ::-1]
-
-                self.live_rec_0 = img_0
-                self.live_rec_1 = img_1
-        else:
-            self.logg.error(f"photon counts = {len(photon_counts)}, indices {len(ind)}. ")
+                self.logg.error(f"photon counts = {len(photon_counts)}, indices {len(ind)}. ")
