@@ -217,3 +217,11 @@ Currently, the project uses manual testing with MockCamera. To test:
 # Run with mock hardware (no devices needed)
 python -m minimiao
 ```
+
+## Acknowledgments
+
+This application is inspired by [ImSwitch](https://github.com/ImSwitch/ImSwitch) and follows the Model-View-Presenter (MVP) architecture.
+ 
+The adaptive optics components are developed based on the [SIM Control Software](https://github.com/Knerlab/SIM_Control_Software).
+ 
+---
