@@ -210,10 +210,14 @@ class LiveViewer(QWidget):
         pi_1.setClipToView(True)
         pi_1.enableAutoRange(x=False)
 
-        layout_plot.addWidget(self.graph_plot_0, 0, 0)
-        layout_plot.addWidget(self.data_plot_0, 0, 1)
-        layout_plot.addWidget(self.graph_plot_1, 1, 0)
-        layout_plot.addWidget(self.data_plot_1, 1, 1)
+        layout_plot.addWidget(cw.LabelWidget(str('MPD #0')), 0, 0)
+        layout_plot.addWidget(cw.FrameWidget(), 1, 0, 1, 2)
+        layout_plot.addWidget(self.graph_plot_0, 2, 0)
+        layout_plot.addWidget(self.data_plot_0, 2, 1)
+        layout_plot.addWidget(cw.LabelWidget(str('MPD #1')), 3, 0)
+        layout_plot.addWidget(cw.FrameWidget(), 4, 0, 1, 2)
+        layout_plot.addWidget(self.graph_plot_1, 5, 0)
+        layout_plot.addWidget(self.data_plot_1, 5, 1)
         return layout_plot
 
     def on_mouse(self, ix, iy, val):

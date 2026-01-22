@@ -44,19 +44,19 @@ class AOPanel(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        self.image_panel = self._create_image_panel()
         self.parameter_panel = self._create_parameter_panel()
+        self.image_panel = self._create_image_panel()
         self.shwfs_panel = self._create_shwfs_panel()
-        self.dwfs_panel = self._create_dwfs_panel()
         self.dm_panel = self._create_dm_panel()
         self.sensorless_panel = self._create_sensorless_panel()
+        self.dwfs_panel = self._create_dwfs_panel()
 
-        main_layout.addWidget(self.image_panel)
         main_layout.addWidget(self.parameter_panel)
+        main_layout.addWidget(self.image_panel)
         main_layout.addWidget(self.shwfs_panel)
-        main_layout.addWidget(self.dwfs_panel)
         main_layout.addWidget(self.dm_panel)
         main_layout.addWidget(self.sensorless_panel)
+        main_layout.addWidget(self.dwfs_panel)
 
         main_layout.addStretch(1)
         self.setLayout(main_layout)
@@ -94,7 +94,7 @@ class AOPanel(QWidget):
         self.QSpinBox_radius_foc = cw.SpinBoxWidget(0, 64, 1, 12)
         self.QDoubleSpinBox_foc_background = cw.DoubleSpinBoxWidget(0, 1, 0.01, 2, 0.1)
 
-        confocal_shwfs_parameters_scroll_layout.addRow(cw.LabelWidget(str('Illumination')))
+        confocal_shwfs_parameters_scroll_layout.addRow(cw.LabelWidget(str('SHWFS')))
         confocal_shwfs_parameters_scroll_layout.addRow(cw.FrameWidget())
         confocal_shwfs_parameters_scroll_layout.addRow(cw.LabelWidget(str('Method')), self.QComboBox_wfrmd_foc)
         confocal_shwfs_parameters_scroll_layout.addRow(cw.LabelWidget(str('X_center (Base)')),
@@ -114,7 +114,32 @@ class AOPanel(QWidget):
         confocal_shwfs_parameters_scroll_layout.addRow(cw.LabelWidget(str('Background')),
                                                        self.QDoubleSpinBox_foc_background)
 
+        cmos_scroll_area, cmos_scroll_layout = cw.create_scroll_area()
+
+        self.QSpinBox_cmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 1, 0)
+        self.QSpinBox_cmos_coordinate_y = cw.SpinBoxWidget(0, 2048, 1, 0)
+        self.QSpinBox_cmos_coordinate_nx = cw.SpinBoxWidget(0, 2048, 1, 2048)
+        self.QSpinBox_cmos_coordinate_ny = cw.SpinBoxWidget(0, 2048, 1, 2048)
+        self.QSpinBox_cmos_coordinate_bin = cw.SpinBoxWidget(0, 2048, 1, 1)
+        self.QSpinBox_cmos_gain = cw.SpinBoxWidget(0, 300, 1, 0)
+        self.QDoubleSpinBox_cmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.009)
+        self.QDoubleSpinBox_cmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.001)
+        self.QDoubleSpinBox_cmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.050)
+
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('CMOS')))
+        cmos_scroll_layout.addRow(cw.FrameWidget())
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('X')), self.QSpinBox_cmos_coordinate_x)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Y')), self.QSpinBox_cmos_coordinate_y)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Nx')), self.QSpinBox_cmos_coordinate_nx)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_cmos_coordinate_ny)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Binx')), self.QSpinBox_cmos_coordinate_bin)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Gain')), self.QSpinBox_cmos_gain)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Clean / s')), self.QDoubleSpinBox_cmos_t_clean)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_cmos_t_exposure)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Standby / s')), self.QDoubleSpinBox_cmos_t_standby)
+
         group_layout = QHBoxLayout(group)
+        group_layout.addWidget(cmos_scroll_area)
         group_layout.addWidget(confocal_shwfs_parameters_scroll_area)
         group.setLayout(group_layout)
         return group
@@ -123,7 +148,7 @@ class AOPanel(QWidget):
         group = cw.GroupWidget()
         image_shwfs_scroll_area, image_shwfs_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_wfs_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "SCMOS", "Thorlabs"])
+        self.QComboBox_wfs_camera_selection = cw.ComboBoxWidget(list_items=["CMOS"])
         self.QPushButton_img_shwfs_base = cw.PushButtonWidget('SetBase', enable=True)
         self.QPushButton_run_img_wfs = cw.PushButtonWidget('RunWFS', checkable=True)
         self.QPushButton_run_img_wfr = cw.PushButtonWidget('RunWFR', enable=True)
@@ -138,22 +163,6 @@ class AOPanel(QWidget):
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(image_shwfs_scroll_area)
-        group.setLayout(group_layout)
-        return group
-
-    def _create_dwfs_panel(self):
-        group = cw.GroupWidget()
-        dwfs_scroll_area, dwfs_scroll_layout = cw.create_scroll_area("G")
-        
-        self.QSpinBox_close_loop_number = cw.SpinBoxWidget(0, 100, 1, 1)
-        self.QPushButton_dwfs_cl_correction = cw.PushButtonWidget('Close Loop Correction')
-
-        dwfs_scroll_layout.addWidget(cw.LabelWidget(str('Loop #   (0 - infinite)')), 0, 0, 1, 1)
-        dwfs_scroll_layout.addWidget(self.QSpinBox_close_loop_number, 0, 1, 1, 1)
-        dwfs_scroll_layout.addWidget(self.QPushButton_dwfs_cl_correction, 0, 2, 1, 1)
-
-        group_layout = QHBoxLayout(group)
-        group_layout.addWidget(dwfs_scroll_area)
         group.setLayout(group_layout)
         return group
 
@@ -255,6 +264,22 @@ class AOPanel(QWidget):
         group.setLayout(group_layout)
         return group
 
+    def _create_dwfs_panel(self):
+        group = cw.GroupWidget()
+        dwfs_scroll_area, dwfs_scroll_layout = cw.create_scroll_area("G")
+
+        self.QSpinBox_close_loop_number = cw.SpinBoxWidget(0, 100, 1, 1)
+        self.QPushButton_dwfs_cl_correction = cw.PushButtonWidget('Close Loop Correction')
+
+        dwfs_scroll_layout.addWidget(cw.LabelWidget(str('Loop #   (0 - infinite)')), 0, 0, 1, 1)
+        dwfs_scroll_layout.addWidget(self.QSpinBox_close_loop_number, 0, 1, 1, 1)
+        dwfs_scroll_layout.addWidget(self.QPushButton_dwfs_cl_correction, 0, 2, 1, 1)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(dwfs_scroll_area)
+        group.setLayout(group_layout)
+        return group
+
     def _set_signal_connections(self):
         self.QPushButton_img_shwfs_base.clicked.connect(self.img_wfs_base)
         self.QPushButton_run_img_wfs.clicked.connect(self.run_img_wfs)
@@ -276,6 +301,17 @@ class AOPanel(QWidget):
         self.QPushButton_sensorless_auto.clicked.connect(self.run_sensorless_auto)
         self.QPushButton_sensorless_metric_acqs.clicked.connect(self.run_sensorless_metric_acquisition)
         self.QPushButton_sensorless_ml_acqs.clicked.connect(self.run_sensorless_ml_acquisition)       
+
+    def get_cmos_roi(self):
+        return [self.QSpinBox_cmos_coordinate_x.value(), self.QSpinBox_cmos_coordinate_y.value(),
+                self.QSpinBox_cmos_coordinate_nx.value(), self.QSpinBox_cmos_coordinate_ny.value(),
+                self.QSpinBox_cmos_coordinate_bin.value()]
+
+    def get_cmos_gain(self):
+        return self.QSpinBox_cmos_gain.value()
+
+    def get_cmos_exposure(self):
+        return self.QDoubleSpinBox_cmos_t_exposure.value()
 
     def display_img_wf_properties(self, properties):
         self.lcdNumber_wfmin_img.display(properties[0])

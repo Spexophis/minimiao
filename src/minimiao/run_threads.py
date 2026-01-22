@@ -76,8 +76,8 @@ class PhotonCountThread(threading.Thread):
         self.running = True
         while self.running:
             with self.lock:
-                self.daq.get_photon_count(self.ind)
-            time.sleep(0.001)  # 1 ms yield (tune)
+                self.daq.get_photon_counts(self.ind)
+            time.sleep(0.008)  # 8 ms yield (tune)
 
     def stop(self):
         self.running = False
@@ -90,8 +90,10 @@ class PhotonCountList:
         self.data_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
         for data_list in self.data_lists:
             data_list.extend([0])
-        self.count_arrays = [np.zeros(max_length, dtype=np.int64), np.zeros(max_length, dtype=np.int64)]
-        self.count_indices = [1, 1]
+        self.count_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
+        self.ind_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
+        self.count_starts = [1, 1]
+        self.count_ends = [1, 1]
         self.count_lens = [max_length, max_length]
         self.callback = None
         self.request = None
@@ -100,47 +102,30 @@ class PhotonCountList:
     def add_element(self, elements: list, num: int, ind: int):
         with self.lock:
             d = np.asarray(elements, dtype=np.int64)
+            self.count_starts[ind] = self.count_ends[ind] % self.count_lens[ind]
+            self.count_ends[ind] = (self.count_ends[ind] + num) % self.count_lens[ind]
             counts = np.diff(np.insert(d, 0, self.data_lists[ind][-1]))
-            # Circular buffer
-            start_idx = self.count_indices[ind]
-            end_idx = (self.count_indices[ind] + num) % self.count_lens[ind]
-            if end_idx > start_idx:
-                self.count_arrays[ind][start_idx:end_idx] = counts
-            else:
-                # Wrap around
-                remaining = self.count_lens[ind] - start_idx
-                self.count_arrays[ind][start_idx:] = counts[:remaining]
-                self.count_arrays[ind][:end_idx] = counts[remaining:]
-
-            self.count_indices[ind] = end_idx
+            self.count_lists[ind].extend(counts.tolist())
             self.data_lists[ind].extend(elements)
-
+            if self.count_starts[ind] <= self.count_ends[ind]:
+                indices = np.arange(self.count_starts[ind], self.count_ends[ind])
+            else:
+                indices = np.concatenate(
+                    (np.arange(self.count_starts[ind], self.count_lens[ind]), np.arange(self.count_ends[ind])))
+            self.ind_lists[ind].extend(indices.tolist())
             if self.callback is not None:
-                self.callback(counts.tolist(), list(range(start_idx, end_idx)))
-
-    def get_recent_elements(self, ind, n_samples=None):
-        if n_samples is None:
-            return self.count_arrays[ind].copy()
-        idx = self.count_indices[ind]
-        if n_samples <= idx:
-            return self.count_arrays[ind][idx-n_samples:idx].copy()
-        else:
-            # Wrap around
-            return np.concatenate([
-                self.count_arrays[ind][self.count_lens[ind]-(n_samples-idx):],
-                self.count_arrays[ind][:idx]
-            ])
+                self.callback(counts, list(indices), ind)
 
     def get_elements(self, ind):
         return (np.array(self.data_lists[ind]) if self.data_lists[ind] else None,
-                self.count_arrays[ind] if self.count_arrays[ind] else None)
+                self.count_lists[ind] if self.count_lists[ind] else None)
 
     def on_update(self, callback):
         self.callback = callback
 
 
 class PSLiveWorker(QThread):
-    psr_ready = pyqtSignal(object, object)
+    psr_ready = pyqtSignal(object, object, object, object)
     psr_new = pyqtSignal()
 
     def __init__(self, dat, reco, fps=10, parent=None):
@@ -158,10 +143,10 @@ class PSLiveWorker(QThread):
         while self._running:
             self.msleep(self.period_ms)
             with self.reco.lock:
-                img_0_copy = self.reco.live_rec_0.copy()
-                img_1_copy = self.reco.live_rec_1.copy()
-            counts_0_copy = self.dat.count_arrays[0].copy()
-            counts_1_copy = self.dat.count_arrays[1].copy()
+                img_0_copy = self.reco.live_rec[0].copy()
+                img_1_copy = self.reco.live_rec[1].copy()
+            counts_0_copy = self.dat.count_lists[0].copy()
+            counts_1_copy = self.dat.count_lists[1].copy()
             self.psr_ready.emit(counts_0_copy, img_0_copy, counts_1_copy, img_1_copy)
             self.psr_new.emit()
 

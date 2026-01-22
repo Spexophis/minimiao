@@ -8,7 +8,7 @@ import os
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=2.5e5, logg=None):
+    def __init__(self, sample_rate=80e3, logg=None):
         self.logg = logg or self.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
@@ -94,8 +94,9 @@ class TriggerSequence:
             self.dot_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.dot_ranges)]
             self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
                             zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
-            self.galvo_step_response_samples = int(np.ceil(self.galvo_step_response * self.sample_rate))
-            self.galvo_return_samples = int(np.ceil(self.galvo_return_time * self.sample_rate))
+            self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
+            self.galvo_step_response_samples = round(self.galvo_step_response * 1e-6 * self.sample_rate)
+            self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
         except ValueError:
             for attr, value in original_values.items():
                 setattr(self, attr, value)

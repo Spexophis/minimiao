@@ -9,10 +9,9 @@ import time
 import numpy as np
 import pandas as pd
 import tifffile as tf
-from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
 
 from . import run_threads
-from .utilities import image_processor as ipr
 
 
 class CommandExecutor(QObject):
@@ -142,9 +141,9 @@ class CommandExecutor(QObject):
 
     def set_camera_roi(self):
         try:
-            expo = self.ctrl_panel.get_cmos_exposure()
+            expo = self.ao_panel.get_cmos_exposure()
             self.devs.camera.set_exposure(expo)
-            x, y, nx, ny, bx, by = self.ctrl_panel.get_cmos_roi()
+            x, y, nx, ny, bx, by = self.ao_panel.get_cmos_roi()
             self.devs.camera.set_roi(x, y, nx, ny)
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
@@ -212,6 +211,7 @@ class CommandExecutor(QObject):
         if sw:
             try:
                 self.prepare_video(md)
+                self.logg.info(f"Finish preparing video")
             except Exception as e:
                 self.logg.error(f"Error preparing imaging video: {e}")
                 self.devs.daq.stop_triggers()
@@ -224,7 +224,8 @@ class CommandExecutor(QObject):
     def start_video(self):
         try:
             self.devs.daq.run_triggers()
-            self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0, self.viewer.photon_pool.buf_1)
+            self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0,
+                                     self.viewer.photon_pool.buf_1)
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -274,6 +275,8 @@ class CommandExecutor(QObject):
     def data_acquisition(self, acq_mod: str, acq_num: int):
         if acq_mod == "Point Scan 2D":
             self.run_point_scan(acq_num)
+        # elif acq_mod == "Static Point":
+        #     self.run_static_point(acq_num)
         else:
             self.logg.error(f"Invalid video mode")
 
@@ -284,12 +287,13 @@ class CommandExecutor(QObject):
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r"_recon_image.tif"), self.rec.live_rec.astype(np.float16))
+        tf.imwrite(str(fd + r"_recon_image.tif"), np.array(self.rec.live_rec).astype(np.float16))
         try:
-            res = np.zeros((3, self.rec.gate_len))
+            res = np.zeros((4, self.rec.gate_len))
             res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
             res[1] = self.rec.point_scan_gate_mask * 1
-            res[2] = np.array(self.devs.daq.data.count_list)
+            res[2] = np.array(self.devs.daq.data.count_lists[0])
+            res[3] = np.array(self.devs.daq.data.count_lists[1])
             np.save(str(fd + r"_photon_counts.npy"), res)
         except Exception as e:
             self.logg.error(f"Error writing photon counting data: {e}")
@@ -306,21 +310,20 @@ class CommandExecutor(QObject):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
-        ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
+        dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_scan(self.lasers, [0, 1])
+        self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
         self.devs.daq.photon_counter_mode = 1
         self.devs.daq.psr = self.rec
         self.rec.point_scan_gate_mask = dtr[-1]
-        self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
-                                       n_pixels=self.trg.piezo_scan_pos[0],
-                                       dwell_samples=dwl)
+        self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
+                                       dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
-        self.devs.daq.photon_counter_length = self.rec.gate_len
+        self.devs.daq.photon_counter_length = dtr.shape[1]
         self.devs.daq.prepare_photon_counter()
         fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
-        np.save(str(fd), np.vstack((ptr, dtr)))
-    
+        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+
     def point_scan(self):
         tim = time.strftime("%Y%m%d%H%M%S")
         try:

@@ -5,8 +5,8 @@
 
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtWidgets import QSplitter, QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from . import custom_widgets as cw
 
@@ -35,51 +35,19 @@ class ControlPanel(QWidget):
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        self.camera_panel = self._create_camera_panel()
         self.position_panel = self._create_position_panel()
         self.laser_panel = self._create_laser_panel()
         self.daq_panel = self._create_daq_panel()
         self.acq_panel = self._create_acquisition_panel()
 
-        main_layout.addWidget(self.camera_panel)
-        main_layout.addWidget(self.position_panel)
-        main_layout.addWidget(self.laser_panel)
-        main_layout.addWidget(self.daq_panel)
-        main_layout.addWidget(self.acq_panel)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.position_panel)
+        splitter.addWidget(self.laser_panel)
+        splitter.addWidget(self.daq_panel)
+        splitter.addWidget(self.acq_panel)
 
-        main_layout.addStretch(1)
+        main_layout.addWidget(splitter)
         self.setLayout(main_layout)
-
-    def _create_camera_panel(self):
-        group = cw.GroupWidget()
-        cmos_scroll_area, cmos_scroll_layout = cw.create_scroll_area()
-
-        self.QSpinBox_cmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 1, 0)
-        self.QSpinBox_cmos_coordinate_y = cw.SpinBoxWidget(0, 2048, 1, 0)
-        self.QSpinBox_cmos_coordinate_nx = cw.SpinBoxWidget(0, 2048, 1, 2048)
-        self.QSpinBox_cmos_coordinate_ny = cw.SpinBoxWidget(0, 2048, 1, 2048)
-        self.QSpinBox_cmos_coordinate_bin = cw.SpinBoxWidget(0, 2048, 1, 1)
-        self.QSpinBox_cmos_gain = cw.SpinBoxWidget(0, 300, 1, 0)
-        self.QDoubleSpinBox_cmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.009)
-        self.QDoubleSpinBox_cmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.001)
-        self.QDoubleSpinBox_cmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.050)
-
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('CMOS')))
-        cmos_scroll_layout.addRow(cw.FrameWidget())
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('X')), self.QSpinBox_cmos_coordinate_x)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Y')), self.QSpinBox_cmos_coordinate_y)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Nx')), self.QSpinBox_cmos_coordinate_nx)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_cmos_coordinate_ny)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Binx')), self.QSpinBox_cmos_coordinate_bin)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Gain')), self.QSpinBox_cmos_gain)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Clean / s')), self.QDoubleSpinBox_cmos_t_clean)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_cmos_t_exposure)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Standby / s')), self.QDoubleSpinBox_cmos_t_standby)
-
-        group_layout = QHBoxLayout(group)
-        group_layout.addWidget(cmos_scroll_area)
-        group.setLayout(group_layout)
-        return group
 
     def _create_position_panel(self):
         group = cw.GroupWidget()
@@ -119,44 +87,42 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_dot_step_y = cw.DoubleSpinBoxWidget(0, 10, 0.0001, 5, 0.01720)
         self.QDoubleSpinBox_galvo_offset_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.0)
         self.QDoubleSpinBox_galvo_offset_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.0)
-        self.QDoubleSpinBox_galvo_step_response = cw.DoubleSpinBoxWidget(0, 1, 0.001, 3, 0.050)
-        self.QDoubleSpinBox_galvo_return_time = cw.DoubleSpinBoxWidget(0, 1, 0.001, 3, 0.050)
+        self.QSpinBox_galvo_step_response = cw.SpinBoxWidget(0, 2000, 1, 320)
+        self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 800)
         self.QComboBox_galvo_scan_presets = cw.ComboBoxWidget(list_items=[])
         self.QPushButton_save_galvo_scan_presets = cw.PushButtonWidget("Save Scan")
         self.QLineEdit_new_galvo_scan_preset = cw.LineEditWidget()
         self.QPushButton_save_new_galvo_scan_preset = cw.PushButtonWidget("New Scan")
 
         galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo Scanner')), 0, 0)
-        galvo_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 2)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('X / v')), 2, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_x, 2, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Scan Range / V')), 3, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_x, 3, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Range / V')), 4, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_x, 4, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Step / V')), 5, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_x, 5, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset X / V')), 6, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_x, 6, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Y / v')), 7, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_y, 7, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Scan Range / V')), 8, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_y, 8, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Range / V')), 9, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_y, 9, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Step / V')), 10, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_y, 10, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset Y / V')), 11, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_y, 11, 1)
-        galvo_scroll_layout.addWidget(cw.FrameWidget(), 12, 0, 1, 2)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo Return / s')), 13, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_return_time, 13, 1)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo StpResp / s')), 14, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_step_response, 14, 1)
-        galvo_scroll_layout.addWidget(self.QComboBox_galvo_scan_presets, 15, 0, 1, 2)
-        galvo_scroll_layout.addWidget(self.QPushButton_save_galvo_scan_presets, 15, 2)
-        galvo_scroll_layout.addWidget(self.QLineEdit_new_galvo_scan_preset, 16, 0, 1, 2)
-        galvo_scroll_layout.addWidget(self.QPushButton_save_new_galvo_scan_preset, 16, 2)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('X Origin / v')), 1, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_x, 1, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Scan Range / V')), 2, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_x, 2, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Range / V')), 3, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_x, 3, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Step / V')), 4, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_x, 4, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset X / V')), 5, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_x, 5, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Y Origin / v')), 1, 2)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_y, 1, 3)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Scan Range / V')), 2, 2)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_y, 2, 3)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Range / V')), 3, 2)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_y, 3, 3)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Step / V')), 4, 2)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_y, 4, 3)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset Y / V')), 5, 2)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_y, 5, 3)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo Return / us')), 6, 0)
+        galvo_scroll_layout.addWidget(self.QSpinBox_galvo_return_time, 6, 1)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo StpResp / us')), 7, 0)
+        galvo_scroll_layout.addWidget(self.QSpinBox_galvo_step_response, 7, 1)
+        galvo_scroll_layout.addWidget(self.QComboBox_galvo_scan_presets, 8, 0, 1, 2)
+        galvo_scroll_layout.addWidget(self.QPushButton_save_galvo_scan_presets, 8, 2)
+        galvo_scroll_layout.addWidget(self.QLineEdit_new_galvo_scan_preset, 9, 0, 1, 2)
+        galvo_scroll_layout.addWidget(self.QPushButton_save_new_galvo_scan_preset, 9, 2)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(piezo_scroll_area)
@@ -198,7 +164,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         daq_scroll_area, daq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QSpinBox_daq_sample_rate = cw.SpinBoxWidget(100, 1250, 1, 250)
+        self.QSpinBox_daq_sample_rate = cw.SpinBoxWidget(0, 80, 1, 80)
         self.QPushButton_plot_trigger = cw.PushButtonWidget("Plot Triggers")
         self.QPushButton_reset_daq = cw.PushButtonWidget("Reset")
         self.QDoubleSpinBox_ttl_start_on_405 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
@@ -295,21 +261,6 @@ class ControlPanel(QWidget):
         self.QPushButton_save_live_timing_presets.clicked.connect(lambda: self.save_digital_timing_preset("live"))
         self.QPushButton_save_acquisition_timing_presets.clicked.connect(lambda: self.save_digital_timing_preset("acquisition"))
 
-    def get_cmos_roi(self):
-        return [self.QSpinBox_cmos_coordinate_x.value(), self.QSpinBox_cmos_coordinate_y.value(),
-                self.QSpinBox_cmos_coordinate_nx.value(), self.QSpinBox_cmos_coordinate_ny.value(),
-                self.QSpinBox_cmos_coordinate_bin.value()]
-
-    def get_cmos_gain(self):
-        return self.QSpinBox_cmos_gain.value()
-
-    def get_cmos_exposure(self):
-        return self.QDoubleSpinBox_cmos_t_exposure.value()
-
-    def get_imaging_detector(self):
-        detection_device = self.QComboBox_imaging_detector_selection.currentIndex()
-        return detection_device
-
     @pyqtSlot(float)
     def set_galvo_x(self, value: float):
         vy = self.QDoubleSpinBox_galvo_y.value()
@@ -329,7 +280,7 @@ class ControlPanel(QWidget):
                         [self.QDoubleSpinBox_dot_range_x.value(), self.QDoubleSpinBox_dot_range_y.value()]]
         dot_pos = [self.QDoubleSpinBox_dot_step_x.value(), self.QDoubleSpinBox_dot_step_y.value()]
         offsets = [self.QDoubleSpinBox_galvo_offset_x.value(), self.QDoubleSpinBox_galvo_offset_y.value()]
-        returns = [self.QDoubleSpinBox_galvo_return_time.value(), self.QDoubleSpinBox_galvo_step_response.value()]
+        returns = [self.QSpinBox_galvo_return_time.value(), self.QSpinBox_galvo_step_response.value()]
         return galvo_positions, galvo_ranges, dot_pos, offsets, returns
 
     @pyqtSlot(float)
@@ -397,15 +348,15 @@ class ControlPanel(QWidget):
         digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),
                           self.QDoubleSpinBox_ttl_start_off_488.value(),
                           self.QDoubleSpinBox_ttl_start_read_488.value(),
-                          self.QDoubleSpinBox_ttl_start_cmos.value(),
                           self.QDoubleSpinBox_ttl_start_mpd_h.value(),
-                          self.QDoubleSpinBox_ttl_start_mpd_v.value()]
+                          self.QDoubleSpinBox_ttl_start_mpd_v.value(),
+                          self.QDoubleSpinBox_ttl_start_cmos.value()]
         digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
                         self.QDoubleSpinBox_ttl_stop_off_488.value(),
                         self.QDoubleSpinBox_ttl_stop_read_488.value(),
-                        self.QDoubleSpinBox_ttl_stop_cmos.value(),
                         self.QDoubleSpinBox_ttl_stop_mpd_h.value(),
-                        self.QDoubleSpinBox_ttl_stop_mpd_v.value()]
+                        self.QDoubleSpinBox_ttl_stop_mpd_v.value(),
+                        self.QDoubleSpinBox_ttl_stop_cmos.value()]
         return digital_starts, digital_ends
 
     @pyqtSlot()
