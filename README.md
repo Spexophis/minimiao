@@ -375,7 +375,7 @@ Contributions are welcome! Please:
 
 This application is inspired by [ImSwitch](https://github.com/ImSwitch/ImSwitch) and follows the Model-View-Presenter (MVP) architecture.
 
-Parts of the Python code, especially the adaptive optics processing, are inherited from the [SIM Control Software](https://github.com/Knerlab/SIM_Control_Software) repository.
+The adaptive optics part are developed based on the [SIM Control Software](https://github.com/Knerlab/SIM_Control_Software).
 
 **Built with:**
 - PyQt6 for GUI framework
