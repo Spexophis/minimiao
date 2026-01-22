@@ -201,7 +201,7 @@ class CommandExecutor(QObject):
                                              dt_s=1 / self.devs.daq.sample_rate,
                                              px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
         if getattr(self.viewer, "psr_worker", None) is None:
-            self.viewer.psr_worker = run_threads.PSLiveWorker(self.devs.daq.data, self.rec, fps=10)
+            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data, fps=10)
             self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
             self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
             self.viewer.psr_worker.start()
@@ -292,8 +292,8 @@ class CommandExecutor(QObject):
             res = np.zeros((4, self.rec.gate_len))
             res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
             res[1] = self.rec.point_scan_gate_mask * 1
-            res[2] = np.array(self.devs.daq.data.count_lists[0])
-            res[3] = np.array(self.devs.daq.data.count_lists[1])
+            res[2] = np.array(self.devs.daq.mpd_data.count_lists[0])
+            res[3] = np.array(self.devs.daq.mpd_data.count_lists[1])
             np.save(str(fd + r"_photon_counts.npy"), res)
         except Exception as e:
             self.logg.error(f"Error writing photon counting data: {e}")
@@ -304,7 +304,7 @@ class CommandExecutor(QObject):
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
         except Exception as e:
             self.logg.error(f"Error writing piezo scanning data: {e}")
-        self.devs.daq.data = None
+        self.devs.daq.mpd_data = None
 
     def prepare_point_scan(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()

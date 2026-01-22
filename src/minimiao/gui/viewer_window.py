@@ -55,11 +55,11 @@ class PhotonPool(QObject):
         self.img_0 = np.zeros(px, dtype=np.float64)
         self.img_1 = np.zeros(px, dtype=np.float64)
 
-    def new_acquire(self, counts_0, recon_img_0, counts_1, recon_img_1):
-        self.buf_0.extend(counts_0)
-        self.buf_1.extend(counts_1)
-        self.img_0 = recon_img_0
-        self.img_1 = recon_img_1
+    def new_acquire(self, recon_img, counts):
+        self.buf_0.extend(counts[0])
+        self.buf_1.extend(counts[1])
+        self.img_0 = recon_img[0]
+        self.img_1 = recon_img[1]
 
     def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None, px:tuple | None = None):
         if max_len is not None:
@@ -93,7 +93,6 @@ class LiveViewer(QWidget):
         self.psr_mode = False
         self.fft_mode = False
         self.fft_worker = None
-        self.view_stack.setCurrentIndex(0)
         self._setup_signal_connections()
 
     def _setup_ui(self):
@@ -122,7 +121,6 @@ class LiveViewer(QWidget):
         self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
-        self.QComboBox_viewer_selection.currentIndexChanged.connect(self.switch_viewer)
 
     def _create_image_widgets(self):
         layout_view = QVBoxLayout()
@@ -131,22 +129,14 @@ class LiveViewer(QWidget):
         self.image_viewer = gl_viewer.GLGray16Viewer(use_pbo=True)
         self.image_viewer.set_levels(0, 65535, 1.0)
 
-        self.fft_viewer = gl_viewer.GLGray16Viewer(use_pbo=False)
-
-        self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.image_viewer)  # index 0
-        self.view_stack.addWidget(self.fft_viewer)  # index 1
-
         controls = QWidget()
         row = QHBoxLayout(controls)
-        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image", "FFT"])
         self.QSlider_black = cw.SliderWidget(0, 65535, 0)
         self.QSpinBox_black = cw.SpinBoxWidget(0, 65535, 1, 0)
         self.QSlider_white = cw.SliderWidget(0, 65535, 65535)
         self.QSpinBox_white = cw.SpinBoxWidget(0, 65535, 1, 65535)
         self.QPushButton_contrast_manual = cw.PushButtonWidget("Set")
         self.QPushButton_contrast_auto = cw.PushButtonWidget("Auto Set")
-        row.addWidget(self.QComboBox_viewer_selection)
         row.addWidget(cw.LabelWidget("Min"))
         row.addWidget(cw.LabelWidget("0"))
         row.addWidget(self.QSlider_black)
@@ -161,7 +151,7 @@ class LiveViewer(QWidget):
         self.QLabel_cursor = cw.LabelWidget("x:-  y:-  v:-")
 
         layout_view.addWidget(controls)
-        layout_view.addWidget(self.view_stack, stretch=1)
+        layout_view.addWidget(self.image_viewer, stretch=1)
         layout_view.addWidget(self.QLabel_cursor)
         return layout_view
 
@@ -231,10 +221,6 @@ class LiveViewer(QWidget):
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-
-    @pyqtSlot(int)
-    def switch_viewer(self, ind: int):
-        self.view_stack.setCurrentIndex(ind)
 
     def on_camera_update_from_thread(self, frame: np.ndarray):
         """Runs in camera thread. Do NOT touch Qt widgets here."""

@@ -214,11 +214,11 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPDs"])
+        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPDs", "PMT"])
         self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Point Scan", "Static Point"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Point Scan 2D"])
+        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Point Scan 2D", "Static Point 2D"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")

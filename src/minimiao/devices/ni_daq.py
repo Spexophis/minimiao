@@ -28,7 +28,7 @@ class NIDAQ:
         self._active = {}
         self._running = {}
         self.tasks, self._active, self._running, = self._configure()
-        self.data = None
+        self.mpd_data = None
         self.acq_threads = []
         self.sample_rate = 80e3
         self.duty_cycle = float(0.5)
@@ -40,8 +40,8 @@ class NIDAQ:
         self.photon_counter_channels = ["/Dev1/ctr0", "/Dev1/ctr1"]
         self.photon_counter_terminals = ["/Dev1/PFI0", "/Dev1/PFI12"]
         self.pmt_channel = ["/Dev1/ai0"]
+        self.pmt_data = None
         self._photon_counter_length = int(2 ** 16)
-        self.pmt_reader = None
         self.photon_counter_mode = 0
         self.psr = None
 
@@ -255,16 +255,16 @@ class NIDAQ:
                                            active_edge=Edge.RISING, sample_mode=self.mode,
                                            samps_per_chan=self.photon_counter_length)
             tsk.in_stream.input_buf_size = self.photon_counter_length
-        self.data = run_threads.PhotonCountList(self.photon_counter_length)
-        self.acq_threads = [run_threads.PhotonCountThread(self, 0), run_threads.PhotonCountThread(self, 1)]
+        self.mpd_data = run_threads.MPDCountList(self.photon_counter_length)
+        self.acq_threads = [run_threads.MPDCountThread(self, 0), run_threads.MPDCountThread(self, 1)]
         if self.photon_counter_mode:
-            self.data.on_update(self.psr.point_scan_live_recon)
+            self.mpd_data.on_update(self.psr.point_scan_live_recon)
         self._active["photon_counters"] = True
 
     def _on_photon_0_available(self,number_of_samples):
         try:
             counts = self.tasks["photon_counters"][0].read(number_of_samples_per_channel=number_of_samples, timeout=0.0)
-            self.data.add_element(counts, len(counts), 0)
+            self.mpd_data.add_element(counts, len(counts), 0)
         except Exception as e:
             self.logg.error(f"Photon count callback error: {e}")
         return 0
@@ -272,7 +272,7 @@ class NIDAQ:
     def _on_photon_1_available(self,number_of_samples):
         try:
             counts = self.tasks["photon_counters"][1].read(number_of_samples_per_channel=number_of_samples, timeout=0.0)
-            self.data.add_element(counts, len(counts), 1)
+            self.mpd_data.add_element(counts, len(counts), 1)
         except Exception as e:
             self.logg.error(f"Photon count callback error: {e}")
         return 0
@@ -296,32 +296,33 @@ class NIDAQ:
             # total = self.tasks["photon_counters"][ind].in_stream.total_samp_per_chan_acquired
             if avail > 0:
                 counts = self.tasks["photon_counters"][ind].read(number_of_samples_per_channel=avail, timeout=0.0)
-                self.data.add_element(counts, avail, ind)
+                self.mpd_data.add_element(counts, avail, ind)
         except nidaqmx.DaqWarning as e:
             self.logg.error("DAQ read error %s: %s", e.error_code, e)
 
     def get_data(self):
-        edg_num, count_data = self.data.get_elements()
+        edg_num, count_data = self.mpd_data.get_elements()
         return count_data
 
     def prepare_pmt_reader(self):
         self.tasks["pmt_reader"] = nidaqmx.Task("pmt_reader")
-        self.tasks["pmt_reader"].ai_channels.add_ai_voltage_chan(self.pmt_channel, min_val=-10., max_val=10.)
-        self.tasks["pmt_reader"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/ao/SampleClock",
-                                                            sample_mode=self.mode,
+        self.tasks["pmt_reader"].ai_channels.add_ai_voltage_chan(self.pmt_channel[0], min_val=-10., max_val=10.)
+        self.tasks["pmt_reader"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
+                                                            sample_mode=self.mode, active_edge=Edge.RISING,
                                                             samps_per_chan=self.photon_counter_length)
         self.tasks["pmt_reader"].in_stream.input_buf_size = self.photon_counter_length
-        self.pmt_reader = AnalogSingleChannelReader(self.tasks["pmt_reader"].in_stream)
+        self.acq_threads.append(run_threads.PMTAmpThread(self))
+        self.pmt_data = run_threads.PMTAmpList(self.photon_counter_length)
+        if self.photon_counter_mode:
+            self.pmt_data.on_update(self.psr.point_scan_live_recon)
         self._active["pmt_reader"] = True
 
-    def get_pmt(self):
+    def get_pmt_amps(self):
         try:
             avail = self.tasks["pmt_reader"].in_stream.avail_samp_per_chan
             if avail > 0:
-                amps = np.empty(avail, dtype=np.float64)
-                self.pmt_reader.read_many_sample(data=amps, number_of_samples_per_channel=avail, timeout=0.0)
-                # amps = self.tasks["pmt_reader"].read(number_of_samples_per_channel=avail, timeout=0.0)
-                # self.data.add_element(counts, avail)
+                amps = self.tasks["pmt_reader"].read(number_of_samples_per_channel=avail, timeout=0.0)
+                self.pmt_data.add_element(amps, avail)
         except nidaqmx.DaqWarning as e:
             self.logg.error("DAQ read error %s: %s", e.error_code, e)
 
@@ -334,7 +335,10 @@ class NIDAQ:
                 for task in self.tasks["photon_counters"]:
                     task.start()
                 self._running["photon_counters"] = True
-                self.start_photon_count()
+            if self._active["pmt_reader"]:
+                self.tasks["pmt_reader"].start()
+                self._running["pmt_reader"] = True
+            self.start_photon_count()
             if self._active["analog"]:
                 self.tasks["analog"].start()
                 self._running["analog"] = True
@@ -352,6 +356,8 @@ class NIDAQ:
                         for task in self.tasks["photon_counters"]:
                             task.wait_until_done(WAIT_INFINITELY)
                         self._running["photon_counters"] = False
+                    if self._active["pmt_reader"] and self._running["pmt_reader"]:
+                        self.tasks["pmt_reader"].wait_until_done(WAIT_INFINITELY)
                     if self._active["digital"] and self._running["digital"]:
                         self.tasks["digital"].wait_until_done(WAIT_INFINITELY)
                 except nidaqmx.DaqWarning as e:
@@ -374,6 +380,9 @@ class NIDAQ:
                 for task in self.tasks["photon_counters"]:
                     task.stop()
                 self._running["photon_counters"] = False
+            if self._active["pmt_reader"] and self._running["pmt_reader"]:
+                self.tasks["pmt_reader"].stop()
+                self._running["pmt_reader"] = False
             if self._active["digital"] and self._running["digital"]:
                 self.tasks["digital"].stop()
                 self._running["digital"] = False
@@ -393,6 +402,10 @@ class NIDAQ:
                     task.close()
                     task = None
                 self._active["photon_counters"] = False
+            if self._active["pmt_reader"]:
+                self.tasks["pmt_reader"].close()
+                self.tasks["pmt_reader"] = None
+                self._active["pmt_reader"] = False
             if self._active["digital"]:
                 self.tasks["digital"].close()
                 self.tasks["digital"] = None

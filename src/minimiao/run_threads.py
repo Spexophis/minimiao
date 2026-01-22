@@ -63,7 +63,7 @@ class CameraDataList:
         self.callback = callback
 
 
-class PhotonCountThread(threading.Thread):
+class MPDCountThread(threading.Thread):
 
     def __init__(self, daq, ind):
         threading.Thread.__init__(self)
@@ -84,7 +84,7 @@ class PhotonCountThread(threading.Thread):
         self.join()
 
 
-class PhotonCountList:
+class MPDCountList:
 
     def __init__(self, max_length):
         self.data_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
@@ -123,14 +123,67 @@ class PhotonCountList:
     def on_update(self, callback):
         self.callback = callback
 
+class PMTAmpThread(threading.Thread):
+
+    def __init__(self, daq):
+        threading.Thread.__init__(self)
+        self.daq = daq
+        self.running = False
+        self.lock = threading.Lock()
+
+    def run(self):
+        self.running = True
+        while self.running:
+            with self.lock:
+                self.daq.get_pmt_amps()
+            time.sleep(0.008)  # 8 ms yield (tune)
+
+    def stop(self):
+        self.running = False
+        self.join()
+
+
+class PMTAmpList:
+
+    def __init__(self, max_length):
+        self.data_list = deque(maxlen=max_length)
+        self.ind_list = deque(maxlen=max_length)
+        self.count_len = max_length
+        self.count_starts = 1
+        self.count_ends = 1
+        self.callback = None
+        self.request = None
+        self.lock = threading.Lock()
+
+    def add_element(self, elements: list, num: int):
+        with self.lock:
+            self.count_starts = self.count_ends % self.count_len
+            self.count_ends = (self.count_ends + num) % self.count_len
+            self.data_list.extend(elements)
+            if self.count_starts <= self.count_ends:
+                indices = list(range(self.count_starts, self.count_ends))
+            else:
+                indices = list(range(self.count_starts, self.count_len))
+                indices.extend(list(range(self.count_ends)))
+            self.ind_list.extend(indices)
+            if self.callback is not None:
+                self.callback(elements, indices, 2)
+
+    def get_elements(self):
+        return np.array(self.data_list) if self.data_list else None
+
+    def on_update(self, callback):
+        self.callback = callback
+
 
 class PSLiveWorker(QThread):
-    psr_ready = pyqtSignal(object, object, object, object)
+    psr_ready = pyqtSignal(object, object)
     psr_new = pyqtSignal()
 
-    def __init__(self, dat, reco, fps=10, parent=None):
+    def __init__(self, reco, mpd_dat=None, pmt_dat=None, fps=10, parent=None):
         super().__init__(parent)
-        self.dat = dat
+        self.mpd_dat = mpd_dat
+        self.pmt_dat = pmt_dat
         self.reco = reco
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
@@ -143,11 +196,10 @@ class PSLiveWorker(QThread):
         while self._running:
             self.msleep(self.period_ms)
             with self.reco.lock:
-                img_0_copy = self.reco.live_rec[0].copy()
-                img_1_copy = self.reco.live_rec[1].copy()
-            counts_0_copy = self.dat.count_lists[0].copy()
-            counts_1_copy = self.dat.count_lists[1].copy()
-            self.psr_ready.emit(counts_0_copy, img_0_copy, counts_1_copy, img_1_copy)
+                img_copy = self.reco.live_rec.copy()
+            counts_copy = self.mpd_dat.count_lists.copy()
+            # amp_copy = self.pmt_dat.data_list.copy()
+            self.psr_ready.emit(img_copy, counts_copy)
             self.psr_new.emit()
 
 
