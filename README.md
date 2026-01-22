@@ -196,17 +196,17 @@ pip install -e .
 
 ```
 minimiao/
-├── src/minimiao/          # Main package
-│   ├── __main__.py        # Entry point
-│   ├── main.py            # AppWrapper
-│   ├── executor.py        # CommandExecutor
-│   ├── devices/           # Hardware drivers
+├── src/minimiao/          
+│   ├── __main__.py        
+│   ├── main.py            
 │   ├── gui/               # PyQt6 GUI
-│   ├── computations/      # Signal processing
-│   └── utilities/         # Helper functions
-├── pyproject.toml         # Project configuration
-├── uv.lock                # Locked dependencies
-└── CLAUDE.md              # Developer documentation
+│   ├── devices/           # Hardware interface wrappers / APIs
+│   ├── executor.py        # Command executor & resource manager
+│   ├── run_threads.py     # Multithreading infrastructure
+│   ├── computations/      # Image processing & signal computation
+│   └── utilities/         # Shared utility functions
+├── pyproject.toml         
+└── uv.lock                # Locked dependencies
 ```
 
 ### Running Tests
