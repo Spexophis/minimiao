@@ -236,6 +236,7 @@ minimiao/
 │   ├── __main__.py        # Entry point
 │   ├── main.py            # AppWrapper
 │   ├── executor.py        # CommandExecutor
+│   ├── run_threads.py     # Threading infrastructure
 │   ├── devices/           # Hardware drivers
 │   ├── gui/               # PyQt6 GUI
 │   ├── computations/      # Signal processing
