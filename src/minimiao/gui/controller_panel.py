@@ -522,8 +522,3 @@ class ControlPanel(QWidget):
                     widget.setValue(value)
         except FileNotFoundError:
             pass
-
-    @staticmethod
-    def write_config(dataframe, dfd):
-        with open(dfd, 'w') as f:
-            json.dump(dataframe, f, indent=4)

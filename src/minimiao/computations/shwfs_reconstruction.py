@@ -5,7 +5,7 @@
 
 import os
 import time
-
+import json
 import numpy as np
 import tifffile as tf
 from scipy.signal import fftconvolve as corr
@@ -324,3 +324,9 @@ class WavefrontSensing:
             dm.control_matrix_modal = control_matrix_modal
             sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Modal Control Matrix"] = fn
             sv.write_config(sv.configs, sv.cfd)
+
+
+    @staticmethod
+    def write_config(dataframe, dfd):
+        with open(dfd, 'w') as f:
+            json.dump(dataframe, f, indent=4)

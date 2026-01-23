@@ -3,7 +3,7 @@
 # Licensed under the MIT License.
 
 
-from . import image_reconstructions, shwfs_reconstruction, trigger_generator
+from . import image_reconstructions, shwfs_reconstruction, trigger_generator, dynamic_controller
 
 
 class ComputationManager:

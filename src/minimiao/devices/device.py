@@ -6,13 +6,14 @@
 from . import cobolt_laser
 from . import flir_cmos
 from . import ni_daq
-
+from . import alpao_dm
 
 class DeviceManager:
-    def __init__(self, config=None, logg=None, path=None):
+    def __init__(self, config=None, logg=None, path=None, cf=None):
         self.config = config
         self.logg = logg or self.setup_logging()
         self.data_folder = path
+        self.cf = cfg
         try:
             self.camera = flir_cmos.FLIRCamera(logg=self.logg)
         except Exception as e:
@@ -25,6 +26,11 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.daq = ni_daq.NIDAQ(logg=self.logg)
+        except Exception as e:
+            self.logg.error(f"{e}")
+        self.logg.info("Finish initiating devices")
+        try:
+            self.dm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cf=self.cf)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
@@ -41,6 +47,10 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.daq.close()
+        except Exception as e:
+            self.logg.error(f"{e}")
+        try:
+            self.dm.close()
         except Exception as e:
             self.logg.error(f"{e}")
 

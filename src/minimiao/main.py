@@ -85,12 +85,11 @@ class AppWrapper:
 
         selected_file = select_file_from_folder(None, self.data_folder)
         if not selected_file:
-            print("No file selected. Exiting.")
+            self.error_logger.error("No file selected. Exiting.")
             sys.exit(0)
-
-        print(f"Selected file: {selected_file}")
+        self.error_logger.info(f"Selected file: {selected_file}")
         self.configs = load_config(selected_file)
-        self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder, cf=selected_file)
         self.cmp = computator.ComputationManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)

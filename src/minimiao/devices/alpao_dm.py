@@ -8,13 +8,14 @@ import os
 import struct
 import sys
 import time
-
+import json
 import numpy as np
 import pandas as pd
 import tifffile as tf
 
 from minimiao.utilities import image_processor as ipr
 from minimiao.utilities import zernike_generator as tz
+from minimiao.computations import dynamic_controller as dc
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
 if (8 * struct.calcsize("P")) == 32:
@@ -25,8 +26,9 @@ else:
 
 class DeformableMirror:
 
-    def __init__(self, name="ALPAO DM97", logg=None, config=None, path=None):
+    def __init__(self, name="ALPAO DM97", logg=None, config=None, path=None, cfn=None):
         self.dtp = path
+        self.cfn = cfn
         self.logg = logg or self.setup_logging()
         self.config = config or self.load_configs()
         self.dm_name = name
@@ -36,6 +38,8 @@ class DeformableMirror:
             self._configure_dm()
         else:
             raise RuntimeError(f"Error Initializing DM {self.dm_name}")
+        self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
+                                        calib=self.ctrl_calib)
         try:
             self.set_dm(self.dm_cmd[self.current_cmd])
         except Exception as e:
@@ -228,7 +232,8 @@ class DeformableMirror:
         df = pd.DataFrame(cmd, index=np.arange(self.n_actuator), columns=['Push'])
         df.to_excel(str(fd), index_label='Actuator')
         self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Initial Flat"] = str(fd)
-        self.config.write_config(self.config, self.config.cfd)
+        with open(self.cfn, 'w') as f:
+            json.dump(self.config, f, indent=4)
 
     def save_sensorless_results(self, fd, a, v, p):
         df1 = pd.DataFrame(v, index=a, columns=['Values'])
