@@ -214,7 +214,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPDs", "PMT"])
+        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPD_0 + MPD_1", "MPD_0 + PMT"])
         self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Point Scan", "Static Point"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
@@ -344,6 +344,9 @@ class ControlPanel(QWidget):
     def reset_daq(self):
         self.Signal_daq_reset.emit()
 
+    def get_detector(self):
+        return self.QComboBox_imaging_detector_selection.currentIndex()
+
     def get_digital_parameters(self):
         digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),
                           self.QDoubleSpinBox_ttl_start_off_488.value(),
@@ -394,7 +397,8 @@ class ControlPanel(QWidget):
             "QDoubleSpinBox_galvo_offset_x": self.QDoubleSpinBox_galvo_offset_x.value(),
             "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value()
         }
-        self.config.write_config(self.galvo_scan_presets, self.config.configs["Galvo Scan Presets"])
+        with open(self.config["Galvo Scan Presets"], 'w') as f:
+            json.dump(self.galvo_scan_presets, f, indent=4)
 
     @pyqtSlot(str)
     def load_selected_preset(self, set_name: str):
@@ -426,7 +430,8 @@ class ControlPanel(QWidget):
                 "QDoubleSpinBox_galvo_offset_x": self.QDoubleSpinBox_galvo_offset_x.value(),
                 "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value()
             }
-            self.config.write_config(self.galvo_scan_presets, self.config.configs["Galvo Scan Presets"])
+            with open(self.config["Galvo Scan Presets"], 'w') as f:
+                json.dump(self.galvo_scan_presets, f, indent=4)
             self.QComboBox_galvo_scan_presets.addItem(new_preset_name)
             self.QComboBox_galvo_scan_presets.setCurrentText(new_preset_name)
             self.QLineEdit_new_galvo_scan_preset.clear()
@@ -517,3 +522,8 @@ class ControlPanel(QWidget):
                     widget.setValue(value)
         except FileNotFoundError:
             pass
+
+    @staticmethod
+    def write_config(dataframe, dfd):
+        with open(dfd, 'w') as f:
+            json.dump(dataframe, f, indent=4)

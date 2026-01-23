@@ -32,6 +32,7 @@ class CommandExecutor(QObject):
         self._set_signal_executions()
         self._initial_setup()
         self.lasers = []
+        self.detector = {0: [0, 1], 1: [0]}
         self.task_worker = None
 
     @staticmethod
@@ -177,15 +178,17 @@ class CommandExecutor(QObject):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
+        dn = self.ctrl_panel.get_detector()
+        self.viewer.set_plot_1(dn)
         if vd_mod == "Point Scan":
-            dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_scan(self.lasers, [0, 1])
+            dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_scan(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=False)
             self.devs.daq.photon_counter_mode = 1
             self.devs.daq.psr = self.rec
             self.viewer.psr_mode = True
         elif vd_mod == "Static Point":
-            dtr, dch, pdw = self.trg.generate_digital_triggers(self.lasers, [0, 1])
+            dtr, dch, pdw = self.trg.generate_digital_triggers(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=False)
             self.devs.daq.photon_counter_mode = 0
             self.viewer.psr_mode = False
@@ -196,12 +199,14 @@ class CommandExecutor(QObject):
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
         self.devs.daq.photon_counter_length = dtr.shape[1]
-        self.devs.daq.prepare_photon_counter()
+        self.devs.daq.prepare_photon_counter(2 - dn)
+        if dn:
+            self.devs.daq.prepare_pmt_reader()
         self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
                                              dt_s=1 / self.devs.daq.sample_rate,
                                              px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
         if getattr(self.viewer, "psr_worker", None) is None:
-            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data, fps=10)
+            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data, self.devs.daq.pmt_data, fps=10)
             self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
             self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
             self.viewer.psr_worker.start()

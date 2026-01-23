@@ -33,7 +33,7 @@ class NIDAQ:
         self.sample_rate = 80e3
         self.duty_cycle = float(0.5)
         self.mode = None
-        self.galvo_channels = ["Dev1/ao2", "Dev1/ao3"]
+        self.galvo_channels = ["Dev1/ao0", "Dev1/ao1"]
         self.piezo_channels = ["Dev1/ao2"]
         self.ttl_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
                              "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
@@ -244,8 +244,14 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def prepare_photon_counter(self):
-        self.tasks["photon_counters"] = [nidaqmx.Task("photon_counter_0"), nidaqmx.Task("photon_counter_1")]
+    def prepare_photon_counter(self, n=2):
+        self.tasks["photon_counters"] = []
+        self.acq_threads = []
+        for i in range(n):
+            tsk_name = f"photon_counter_{i}"
+            self.tasks["photon_counters"].append(nidaqmx.Task(tsk_name))
+            self.acq_threads.append(run_threads.MPDCountThread(self, i))
+        self.mpd_data = run_threads.MPDCountList(self.photon_counter_length)
         for n, tsk in enumerate(self.tasks["photon_counters"]):
             c = tsk.ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channels[n],
                                                         edge=Edge.RISING)
@@ -255,27 +261,9 @@ class NIDAQ:
                                            active_edge=Edge.RISING, sample_mode=self.mode,
                                            samps_per_chan=self.photon_counter_length)
             tsk.in_stream.input_buf_size = self.photon_counter_length
-        self.mpd_data = run_threads.MPDCountList(self.photon_counter_length)
-        self.acq_threads = [run_threads.MPDCountThread(self, 0), run_threads.MPDCountThread(self, 1)]
         if self.photon_counter_mode:
             self.mpd_data.on_update(self.psr.point_scan_live_recon)
         self._active["photon_counters"] = True
-
-    def _on_photon_0_available(self,number_of_samples):
-        try:
-            counts = self.tasks["photon_counters"][0].read(number_of_samples_per_channel=number_of_samples, timeout=0.0)
-            self.mpd_data.add_element(counts, len(counts), 0)
-        except Exception as e:
-            self.logg.error(f"Photon count callback error: {e}")
-        return 0
-
-    def _on_photon_1_available(self,number_of_samples):
-        try:
-            counts = self.tasks["photon_counters"][1].read(number_of_samples_per_channel=number_of_samples, timeout=0.0)
-            self.mpd_data.add_element(counts, len(counts), 1)
-        except Exception as e:
-            self.logg.error(f"Photon count callback error: {e}")
-        return 0
 
     def start_photon_count(self):
         for acq in self.acq_threads:

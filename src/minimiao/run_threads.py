@@ -167,7 +167,7 @@ class PMTAmpList:
                 indices.extend(list(range(self.count_ends)))
             self.ind_list.extend(indices)
             if self.callback is not None:
-                self.callback(elements, indices, 2)
+                self.callback(np.array(elements), indices, 1)
 
     def get_elements(self):
         return np.array(self.data_list) if self.data_list else None
@@ -177,7 +177,7 @@ class PMTAmpList:
 
 
 class PSLiveWorker(QThread):
-    psr_ready = pyqtSignal(object, object)
+    psr_ready = pyqtSignal(object, object, object)
     psr_new = pyqtSignal()
 
     def __init__(self, reco, mpd_dat=None, pmt_dat=None, fps=10, parent=None):
@@ -198,8 +198,11 @@ class PSLiveWorker(QThread):
             with self.reco.lock:
                 img_copy = self.reco.live_rec.copy()
             counts_copy = self.mpd_dat.count_lists.copy()
-            # amp_copy = self.pmt_dat.data_list.copy()
-            self.psr_ready.emit(img_copy, counts_copy)
+            if self.pmt_dat is not None:
+                amp_copy = self.pmt_dat.data_list.copy()
+            else:
+                amp_copy = None
+            self.psr_ready.emit(img_copy, counts_copy, amp_copy)
             self.psr_new.emit()
 
 

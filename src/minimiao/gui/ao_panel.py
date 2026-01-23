@@ -38,7 +38,6 @@ class AOPanel(QWidget):
         self.config = config
         self.logg = logg
         self._setup_ui()
-        self.QComboBox_wfs_camera_selection.setCurrentIndex(1)
         self.load_spinbox_values()
 
     def _setup_ui(self):

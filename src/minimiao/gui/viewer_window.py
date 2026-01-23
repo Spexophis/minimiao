@@ -55,9 +55,12 @@ class PhotonPool(QObject):
         self.img_0 = np.zeros(px, dtype=np.float64)
         self.img_1 = np.zeros(px, dtype=np.float64)
 
-    def new_acquire(self, recon_img, counts):
+    def new_acquire(self, recon_img, counts, amps=None):
         self.buf_0.extend(counts[0])
-        self.buf_1.extend(counts[1])
+        if amps is not None:
+            self.buf_1.extend(amps)
+        else:
+            self.buf_1.extend(counts[1])
         self.img_0 = recon_img[0]
         self.img_1 = recon_img[1]
 
@@ -188,6 +191,8 @@ class LiveViewer(QWidget):
         pi_0.setClipToView(True)
         pi_0.enableAutoRange(x=False)
 
+        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT"])
+
         self.data_plot_1 = pg.PlotWidget()
         self.data_plot_1.showGrid(x=True, y=True)
 
@@ -201,11 +206,9 @@ class LiveViewer(QWidget):
         pi_1.enableAutoRange(x=False)
 
         layout_plot.addWidget(cw.LabelWidget(str('MPD #0')), 0, 0)
-        layout_plot.addWidget(cw.FrameWidget(), 1, 0, 1, 2)
         layout_plot.addWidget(self.graph_plot_0, 2, 0)
         layout_plot.addWidget(self.data_plot_0, 2, 1)
-        layout_plot.addWidget(cw.LabelWidget(str('MPD #1')), 3, 0)
-        layout_plot.addWidget(cw.FrameWidget(), 4, 0, 1, 2)
+        layout_plot.addWidget(self.QComboBox_plot_selection, 3, 0)
         layout_plot.addWidget(self.graph_plot_1, 5, 0)
         layout_plot.addWidget(self.data_plot_1, 5, 1)
         return layout_plot
@@ -267,8 +270,8 @@ class LiveViewer(QWidget):
         if self.fft_mode:
             self.fft_worker.push_frame(self.pool.buffer(idx))
 
-    def on_fft_frame(self, frame_u16):
-        self.fft_viewer.set_frame(frame_u16)
+    def set_plot_1(self, n):
+        self.QComboBox_plot_selection.setCurrentIndex(n)
 
     def plot_trace(self, y, overlay=False):
         y = np.asarray(y)
