@@ -5,8 +5,6 @@ A Python application for modular microscope control and imaging processing with 
 
 - [Prerequisites](#prerequisites)
 - [Installation](#installation)
-  - [Option 1: Using uv (Recommended)](#option-1-using-uv-recommended)
-  - [Option 2: Using pip](#option-2-using-pip)
 - [Running the Application](#running-the-application)
 - [Configuration](#configuration)
 - [Development Setup](#development-setup)
