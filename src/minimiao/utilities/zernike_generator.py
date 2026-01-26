@@ -5,6 +5,8 @@
 
 import numpy as np
 from scipy.special import factorial
+from functools import lru_cache
+
 
 num_znk = 16
 
@@ -68,25 +70,41 @@ def _zernike_j_nm(j):
     return n, m
 
 
+@lru_cache(maxsize=256)
+def _radial_polynomial(n, m, k, rho_val):
+    """Cache individual radial polynomial terms"""
+    return (-1) ** k * factorial(n - k) / (
+            factorial(k) * factorial((n + abs(m)) // 2 - k) *
+            factorial((n - abs(m)) // 2 - k)) * rho_val ** (n - 2 * k)
+
+
 def _zernike(n, m, rho, phi):
     if (n < 0) or (n < abs(m)) or (n % 2 != abs(m) % 2):
         raise ValueError("n and m are not valid Zernike indices")
+
     kmax = int((n - abs(m)) / 2)
-    _R = 0
-    _O = 0
-    _C = 0
-    if m == 0:
-        _C = np.sqrt(n + 1)
+
+    # Vectorized radial computation with caching
+    if isinstance(rho, np.ndarray):
+        _R = np.zeros_like(rho, dtype=float)
+        for k in range(kmax + 1):
+            # Cache works on scalar values
+            coeff = (-1) ** k * factorial(n - k) / (
+                    factorial(k) * factorial((n + abs(m)) // 2 - k) *
+                    factorial((n - abs(m)) // 2 - k))
+            _R += coeff * rho ** (n - 2 * k)
     else:
-        _C = np.sqrt(2 * n + 1)
-    for k in range(kmax + 1):
-        _R += (-1) ** k * factorial(n - k) / (
-                factorial(k) * factorial(0.5 * (n + abs(m)) - k) * factorial(0.5 * (n - abs(m)) - k)) * rho ** (
-                      n - 2 * k)
+        _R = sum(_radial_polynomial(n, m, k, rho) for k in range(kmax + 1))
+
+    # Normalization
+    _C = np.sqrt(n + 1) if m == 0 else np.sqrt(2 * n + 1)
+
+    # Angular component
     if m >= 0:
         _O = np.cos(m * phi)
-    if m < 0:
-        _O = - np.sin(m * phi)
+    else:
+        _O = -np.sin(m * phi)
+
     return _C * _R * _O
 
 

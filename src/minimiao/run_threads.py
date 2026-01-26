@@ -13,23 +13,36 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
-
-    def __init__(self, cam):
+    def __init__(self, cam, interval=0.001):
         super().__init__()
         self.cam = cam
         self.running = False
-        self.lock = threading.Lock()  # instance lock, not class-level
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.interval = interval
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
+                # Acquire images while holding the lock
                 self.cam.get_images()
-            time.sleep(0.001)  # 1 ms yield (tune)
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.condition.notify()  # Wake up thread immediately
         self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate acquisition"""
+        with self.condition:
+            self.condition.notify()
 
 
 class CameraDataList:
@@ -65,23 +78,36 @@ class CameraDataList:
 
 class MPDCountThread(threading.Thread):
 
-    def __init__(self, daq, ind):
+    def __init__(self, daq, ind, interval=0.004):
         threading.Thread.__init__(self)
         self.daq = daq
         self.ind = ind
+        self.interval = interval
         self.running = False
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
                 self.daq.get_photon_counts(self.ind)
-            time.sleep(0.008)  # 8 ms yield (tune)
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.condition.notify()  # Wake up immediately
         self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate count"""
+        with self.condition:
+            self.condition.notify()
 
 
 class MPDCountList:
@@ -125,22 +151,35 @@ class MPDCountList:
 
 class PMTAmpThread(threading.Thread):
 
-    def __init__(self, daq):
+    def __init__(self, daq, interval=0.004):
         threading.Thread.__init__(self)
         self.daq = daq
+        self.interval = interval
         self.running = False
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
                 self.daq.get_pmt_amps()
-            time.sleep(0.008)  # 8 ms yield (tune)
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.condition.notify()  # Wake up immediately
         self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate count"""
+        with self.condition:
+            self.condition.notify()
 
 
 class PMTAmpList:
@@ -187,23 +226,45 @@ class PSLiveWorker(QThread):
         self.reco = reco
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
+        self._lock = threading.Lock()
 
     def stop(self):
+        """Stop worker thread gracefully"""
         self._running = False
-        self.wait()
+
+        if not self.wait(2000):
+            self.terminate()
+            self.wait(1000)
+
+        self.clear_data()
+
+    def clear_data(self):
+        """Release references to large data objects"""
+        with self._lock:
+            self.mpd_dat = None
+            self.pmt_dat = None
+            self.reco = None
 
     def run(self):
-        while self._running:
-            self.msleep(self.period_ms)
-            with self.reco.lock:
-                img_copy = self.reco.live_rec.copy()
-            counts_copy = self.mpd_dat.count_lists.copy()
-            if self.pmt_dat is not None:
-                amp_copy = self.pmt_dat.data_list.copy()
-            else:
-                amp_copy = None
-            self.psr_ready.emit(img_copy, counts_copy, amp_copy)
-            self.psr_new.emit()
+        try:
+            while self._running:
+                self.msleep(self.period_ms)
+                with self._lock:
+                    if self.mpd_dat is None or self.reco is None:
+                        break
+                    img_copy = self.reco.live_rec
+                    counts_copy = self.mpd_dat.count_lists
+                    if self.pmt_dat is not None:
+                        amp_copy = self.pmt_dat.data_list
+                    else:
+                        amp_copy = None
+                self.psr_ready.emit(img_copy, counts_copy, amp_copy)
+                self.psr_new.emit()
+        except Exception as e:
+            import logging
+            logging.error(f"PSLiveWorker error: {e}")
+        finally:
+            self.clear_data()
 
 
 class FFTWorker(QThread):
@@ -214,52 +275,76 @@ class FFTWorker(QThread):
         self.fps = float(fps)
         self._running = True
         self._latest = None
-        self._win = None  # cached window for ROI
+        self._win = None
+        self._lock = threading.Lock()
 
     def stop(self):
+        """Stop worker thread gracefully"""
         self._running = False
-        self.wait(2)
+
+        if not self.wait(2000):  # 2 second timeout
+            self.terminate()  # Force terminate if hung
+            self.wait(1000)
+
+        self.clear_data()
+
+    def clear_data(self):
+        """Release memory-intensive resources"""
+        with self._lock:
+            self._latest = None
+            self._win = None
 
     def push_frame(self, frame_u16: np.ndarray):
-        if frame_u16 is None or frame_u16.ndim != 2:
+        if not self._running or frame_u16 is None or frame_u16.ndim != 2:
             return
-        f = frame_u16
-        self._latest = np.array(f, copy=True)
 
-    def _ensure_window(self, n: int):
-        if self._win is None or self._win.shape[0] != n:
-            w1 = np.hanning(n).astype(np.float32)
-            self._win = np.outer(w1, w1)
+        with self._lock:
+            self._latest = np.array(frame_u16, copy=True)
 
     def run(self):
         period = 1.0 / max(self.fps, 0.1)
         next_t = time.perf_counter()
 
-        while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
+        try:
+            while self._running:
+                now = time.perf_counter()
+                if now < next_t:
+                    self.msleep(int((next_t - now) * 1000))
+                    continue
+                next_t = now + period
 
-            if self._latest is None:
-                continue
+                with self._lock:
+                    if self._latest is None:
+                        continue
+                    img = self._latest
 
-            img = self._latest
-            n = img.shape[0]
-            self._ensure_window(n)
+                # Process without holding lock
+                n = img.shape[0]
+                self._ensure_window(n)
 
-            ft = np.fft.fftshift(np.fft.fft2(img * self._win))
-            mag = np.log1p(np.abs(ft)).astype(np.float32)
+                ft = np.fft.fftshift(np.fft.fft2(img * self._win))
+                mag = np.log1p(np.abs(ft)).astype(np.float32)
 
-            mn = float(mag.min())
-            mx = float(mag.max())
-            if mx <= mn:
-                out = np.zeros_like(mag, dtype=np.uint16)
-            else:
-                out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+                mn = float(mag.min())
+                mx = float(mag.max())
+                if mx <= mn:
+                    out = np.zeros_like(mag, dtype=np.uint16)
+                else:
+                    out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
 
-            self.fft_ready.emit(out)
+                if self._running:
+                    self.fft_ready.emit(out)
+
+        except Exception as e:
+            import logging
+            logging.error(f"FFTWorker error: {e}")
+        finally:
+            self.clear_data()
+
+    def _ensure_window(self, n: int):
+        if self._win is None or self._win.shape[0] != n:
+            w1 = np.hanning(n).astype(np.float32)
+            self._win = np.outer(w1, w1)
 
 
 class TaskWorker(QThread):

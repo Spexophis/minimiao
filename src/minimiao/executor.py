@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 import tifffile as tf
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 
 from . import run_threads
 
@@ -98,9 +98,18 @@ class CommandExecutor(QObject):
     def set_piezo_position_z(self, pos_z):
         try:
             self.devs.daq.set_piezo_position([pos_z / 10.], [0])
-            time.sleep(0.1)
+            QTimer.singleShot(100, lambda: self._update_piezo_display_z())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
+
+    def _update_piezo_display_z(self):
+        """Update display after piezo has settled"""
+        pass
+        # try:
+        #     position = self.devs.daq.read_piezo_position(2)
+        #     self.ctrl_panel.display_piezo_position_x(position)
+        # except Exception as e:
+        #     self.logg.error(f"MCL Piezo Read Error: {e}")
 
     def update_piezo_scanner(self):
         axis_origins, axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
@@ -206,7 +215,8 @@ class CommandExecutor(QObject):
                                              dt_s=1 / self.devs.daq.sample_rate,
                                              px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
         if getattr(self.viewer, "psr_worker", None) is None:
-            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data, self.devs.daq.pmt_data, fps=10)
+            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data, self.devs.daq.pmt_data,
+                                                              fps=10, parent=self.viewer)
             self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
             self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
             self.viewer.psr_worker.start()
@@ -251,6 +261,27 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
 
+    def _cleanup_psr_worker(self):
+        """Properly cleanup psr worker"""
+        worker = getattr(self.viewer, "psr_worker", None)
+        if worker is not None:
+            # Stop the worker thread
+            worker.stop()
+
+            # Disconnect all signals
+            try:
+                worker.psr_ready.disconnect()
+                worker.psr_new.disconnect()
+            except TypeError:
+                pass  # Already disconnected
+
+            # Clear data references
+            worker.clear_data()
+
+            # Delete worker
+            worker.deleteLater()  # Qt will delete when safe
+            self.viewer.psr_worker = None
+
     @pyqtSlot()
     def plot_trigger(self):
         try:
@@ -292,7 +323,8 @@ class CommandExecutor(QObject):
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r"_recon_image.tif"), np.array(self.rec.live_rec).astype(np.float16))
+        img_res = np.array(self.rec.live_rec).astype(np.float16)
+        tf.imwrite(str(fd + r"_recon_image.tif"), data=img_res, compression='zlib')
         try:
             res = np.zeros((4, self.rec.gate_len))
             res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
