@@ -3,13 +3,14 @@
 # Licensed under the MIT License.
 
 
-from . import image_reconstructions, shwfs_reconstruction, trigger_generator, dynamic_controller
+from minimiao import logger
+from . import image_reconstructions, shwfs_reconstruction, trigger_generator
 
 
 class ComputationManager:
     def __init__(self, config=None, logg=None, path=None):
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.rec = image_reconstructions.ImgRecon(logg=self.logg)
         self.wfp = shwfs_reconstruction.WavefrontSensing(logg=self.logg)

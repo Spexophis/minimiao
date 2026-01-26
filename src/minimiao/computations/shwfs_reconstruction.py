@@ -3,16 +3,18 @@
 # Licensed under the MIT License.
 
 
+import json
 import os
 import time
-import json
+
 import numpy as np
 import tifffile as tf
 from scipy.signal import fftconvolve as corr
 from skimage.filters import threshold_otsu
 
-from minimiao.utilities import zernike_generator as tz
+from minimiao import logger
 from minimiao.utilities import image_processor as ipr
+from minimiao.utilities import zernike_generator as tz
 
 fft2 = np.fft.fft2
 ifft2 = np.fft.ifft2
@@ -23,7 +25,7 @@ pi = np.pi
 class WavefrontSensing:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.n_lenslets_x = 18
         self.n_lenslets_y = 18
         self.n_lenslets = self.n_lenslets_x * self.n_lenslets_y
@@ -324,7 +326,6 @@ class WavefrontSensing:
             dm.control_matrix_modal = control_matrix_modal
             sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Modal Control Matrix"] = fn
             sv.write_config(sv.configs, sv.cfd)
-
 
     @staticmethod
     def write_config(dataframe, dfd):

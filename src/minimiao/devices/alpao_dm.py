@@ -4,18 +4,20 @@
 
 
 import csv
+import json
 import os
 import struct
 import sys
 import time
-import json
+
 import numpy as np
 import pandas as pd
 import tifffile as tf
 
+from minimiao import logger
+from minimiao.computations import dynamic_controller as dc
 from minimiao.utilities import image_processor as ipr
 from minimiao.utilities import zernike_generator as tz
-from minimiao.computations import dynamic_controller as dc
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
 if (8 * struct.calcsize("P")) == 32:
@@ -26,20 +28,20 @@ else:
 
 class DeformableMirror:
 
-    def __init__(self, name="ALPAO DM97", logg=None, config=None, path=None, cfn=None):
+    def __init__(self, name="ALPAO", logg=None, config=None, path=None, cfn=None):
         self.dtp = path
         self.cfn = cfn
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         self.dm_name = name
-        self.dm_serial = self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Serial"]
+        self.dm_serial = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Serial"]
         self.dm, self.n_actuator = self._initialize_dm(self.dm_serial)
         if self.dm is not None:
             self._configure_dm()
         else:
             raise RuntimeError(f"Error Initializing DM {self.dm_name}")
-        self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
-                                        calib=self.ctrl_calib)
+        # self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
+        #                               calib=self.ctrl_calib)
         try:
             self.set_dm(self.dm_cmd[self.current_cmd])
         except Exception as e:
@@ -73,45 +75,43 @@ class DeformableMirror:
             return None, None
 
     def _configure_dm(self):
+        self.dm_cmd = [[0.] * self.n_actuator]
         try:
-            influence_function_images = tf.imread(
-                self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Influence Function Images"])
+            influence_function_images = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Influence Function Images"])
             nct, self.nly, self.nlx = influence_function_images.shape
             self.nls = self.nly * self.nlx
-            self.control_matrix_phase = tf.imread(
-                self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Phase Control Matrix"])
-            self.control_matrix_zonal = tf.imread(
-                self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Zonal Control Matrix"])
-            self.initial_flat = self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name][
-                "Initial Flat"]
-            self.ctrl_calib = self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name][
-                "Control Calibration"]
-        except Exception as e:
-            self.logg.error(f"Error Loading DM {self.dm_name} files: {e}")
-        try:
-            self.control_matrix_modal = tf.imread(
-                self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Modal Control Matrix"])
-        except Exception as e:
-            self.logg.error(f"Error Loading DM {self.dm_name} modal control file: {e}")
-        if hasattr(self, "initial_flat"):
-            self.dm_cmd = [[0.] * self.n_actuator]
-            self.read_cmd(self.initial_flat)
-            self.current_cmd = 1
-            self.correction = []
-            self.temp_cmd = []
-            self.amp = 0.1
             self.n_zernike = tz.num_znk
             self.az = None
             self.zernike = tz.zernike_polynomials(size=[self.nly, self.nlx])
             self.zslopes = tz.zernike_derivatives(size=[self.nly, self.nlx])
             # self.z2c = self.zernike_modes()
-        else:
-            self.dm_cmd = [[0.] * self.n_actuator]
+        except Exception as e:
+            self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.control_matrix_phase = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Phase Control Matrix"])
+        except Exception as e:
+            self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.control_matrix_zonal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Zonal Control Matrix"])
+        except Exception as e:
+            self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        # try:
+        #     self.ctrl_calib = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Control Calibration"]
+        # except Exception as e:
+        #     self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.control_matrix_modal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Modal Control Matrix"])
+        except Exception as e:
+            self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.read_cmd(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Initial Flat"])
+            self.current_cmd = 1
+        except Exception as e:
             self.current_cmd = 0
-            self.correction = []
-            self.temp_cmd = []
-            self.amp = 0.1
-            self.logg.error(f"Missing initial flat, started with Null")
+            self.logg.error(f"Error Loading DM {self.dm_name} Initial Flat: {e}\n Started with Null")
+        self.correction = []
+        self.temp_cmd = []
+        self.amp = 0.1
 
     def close(self):
         self.write_cmd(path=self.dtp, t=time.strftime("%Y%m%d%H%M%S") + '_')
@@ -226,12 +226,12 @@ class DeformableMirror:
                     df.to_excel(writer, sheet_name=sheet_name, index_label='Actuator')
 
     def write_flat_cmd(self, t, cmd):
-        path = self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Calibration File Folder"]
+        path = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Calibration File Folder"]
         filename = f"flat_file_{self.dm_serial}_{t}.xlsx"
         fd = os.path.join(path, filename)
         df = pd.DataFrame(cmd, index=np.arange(self.n_actuator), columns=['Push'])
         df.to_excel(str(fd), index_label='Actuator')
-        self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Initial Flat"] = str(fd)
+        self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Initial Flat"] = str(fd)
         with open(self.cfn, 'w') as f:
             json.dump(self.config, f, indent=4)
 

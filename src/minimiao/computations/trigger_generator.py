@@ -4,12 +4,14 @@
 
 
 import numpy as np
-import os
+
+from minimiao import logger
+
 
 class TriggerSequence:
 
     def __init__(self, sample_rate=80e3, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
         # digital triggers
@@ -30,7 +32,8 @@ class TriggerSequence:
         self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.dot_ranges)]
         self.dot_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.dot_ranges)]
         self.dot_steps = [0.02, 0.02]  # volts
-        self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
+        self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
+                        zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
         # piezo scanner
         self.piezo_conv_factors = [10.]
@@ -74,8 +77,8 @@ class TriggerSequence:
             self.sample_rate = sample_rate  # Hz
 
     def update_galvo_scan_parameters(self, origins=None, ranges=None, foci=None, offsets=None, returns=None):
-        original_values = {"galvo_origins": self.galvo_origins, "galvo_ranges": self.galvo_ranges, 
-                           "galvo_starts": self.galvo_starts, "galvo_stops": self.galvo_stops, 
+        original_values = {"galvo_origins": self.galvo_origins, "galvo_ranges": self.galvo_ranges,
+                           "galvo_starts": self.galvo_starts, "galvo_stops": self.galvo_stops,
                            "galvo_offset": self.galvo_offsets, "dot_steps": self.dot_steps, "dot_pos": self.dot_pos,
                            "galvo_return_time": self.galvo_return_time, "galvo_step_response": self.galvo_step_response}
         try:

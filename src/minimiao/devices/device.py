@@ -2,18 +2,19 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-
+from minimiao import logger
+from . import alpao_dm
 from . import cobolt_laser
 from . import flir_cmos
 from . import ni_daq
-from . import alpao_dm
+
 
 class DeviceManager:
     def __init__(self, config=None, logg=None, path=None, cf=None):
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
-        self.cf = cfg
+        self.cf = cf
         try:
             self.camera = flir_cmos.FLIRCamera(logg=self.logg)
         except Exception as e:
@@ -28,9 +29,8 @@ class DeviceManager:
             self.daq = ni_daq.NIDAQ(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
-        self.logg.info("Finish initiating devices")
         try:
-            self.dm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cf=self.cf)
+            self.dm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cfn=self.cf)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
@@ -53,17 +53,3 @@ class DeviceManager:
             self.dm.close()
         except Exception as e:
             self.logg.error(f"{e}")
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
-
-if __name__ == '__main__':
-    import json
-    with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
-        cfg = json.load(f)
-    devs = DeviceManager(config=cfg)
-    devs.close()

@@ -3,12 +3,15 @@
 # Licensed under the MIT License.
 
 
-import sys
 import os
+import sys
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from . import custom_widgets as cw
+
+from minimiao import logger
 from . import controller_panel, ao_panel, viewer_window
+from . import custom_widgets as cw
 
 
 class MainWindow(QMainWindow):
@@ -17,7 +20,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self._set_dark_theme()
         self._setup_ui()
@@ -105,6 +108,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == '__main__':
     import json
+
     app = QApplication(sys.argv)
     with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
         cfg = json.load(f)

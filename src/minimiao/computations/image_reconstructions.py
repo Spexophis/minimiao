@@ -2,13 +2,17 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-import numpy as np
 import threading
+
+import numpy as np
+
+from minimiao import logger
+
 
 class ImgRecon:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._gate_len = 256
         self._point_scan_gate_mask = np.zeros(self._gate_len, dtype=bool)
 
@@ -80,12 +84,15 @@ class ImgRecon:
         return img
 
     def prepare_point_scan_live_recon(self):
-        self.live_counts = [np.zeros(self._gate_len, dtype=np.uint16),
-                            np.zeros(self._gate_len, dtype=np.uint16)]
-        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint16),
-                         np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint16)]
-        self._reshape_buffer = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16),
-                                np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples), dtype=np.uint16)]
+        self.live_counts = [np.zeros(self._gate_len, dtype=np.float64),
+                            np.zeros(self._gate_len, dtype=np.float64)]
+        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.float64),
+                         np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.float64)]
+        self._reshape_buffer = [
+            np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples),
+                     dtype=np.float64),
+            np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples),
+                     dtype=np.float64)]
 
     def point_scan_live_recon(self, photon_counts, ind_list, ind, bi_direction: bool = False):
         with self.lock:

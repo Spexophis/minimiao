@@ -9,11 +9,13 @@ Linear quadratic Gaussian (LQG) control based on Kalman filter
 import numpy as np
 from scipy.linalg import solve_continuous_are, svd
 
+from minimiao import logger
+
 
 class DynamicControl:
 
     def __init__(self, n_states=16, n_inputs=16, n_outputs=16, calib=None, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.n_states = n_states
         self.n_inputs = n_inputs
         self.n_outputs = n_outputs
