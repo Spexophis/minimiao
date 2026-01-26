@@ -2,12 +2,14 @@
 
 
 import platform
-import threading
-from collections import deque
 from ctypes import *
+from dataclasses import dataclass
 from enum import IntEnum
+from typing import Optional
 
 import numpy as np
+
+from minimiao import logger, run_threads
 
 __date__ = '2021-06-30'
 __copyright__ = 'Copyright (C) 2021-2024 Hamamatsu Photonics K.K.'
@@ -2158,39 +2160,68 @@ class Dcam:
         return True
 
 
+@dataclass
+class CameraSettings:
+    t_clean: Optional[float] = None
+    t_readout: Optional[float] = None
+    t_exposure: Optional[float] = None
+    t_accumulate: Optional[float] = None
+    t_kinetic: Optional[float] = None
+    line_interval: float = 1e-05
+    line_exposure: float = 0.001
+    bin_h: int = 1
+    bin_v: int = 1
+    cp_h: int = 1024
+    cp_w: int = 1024
+    start_h: int = 1
+    end_h: int = 1024
+    start_v: int = 1
+    end_v: int = 1024
+    _pixels_x: int = 1024
+    _pixels_y: int = 1024
+    _img_size: int = 0
+    ps: float = 6.5  # micron
+    buffer_size: Optional[int] = None
+    acq_num: int = 0
+    acq_first: int = 0
+    acq_last: int = 0
+    valid_index: int = 0
+
+    def __post_init__(self):
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_x(self) -> int:
+        return self._pixels_x
+
+    @pixels_x.setter
+    def pixels_x(self, value: int):
+        self._pixels_x = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_y(self) -> int:
+        return self._pixels_y
+
+    @pixels_y.setter
+    def pixels_y(self, value: int):
+        self._pixels_y = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def img_size(self) -> int:
+        return self._img_size
+
+
 class HamamatsuCamera:
-    class CameraSettings:
-        def __init__(self):
-            self.t_clean = 0
-            self.t_readout = 0.002
-            self.t_exposure = 0
-            self.t_accumulate = 0
-            self.t_kinetic = 0
-            self.line_interval = 1e-05
-            self.line_exposure = 0.001
-            self.bin_h = 1
-            self.bin_v = 1
-            self.start_h = 1
-            self.end_h = 1024
-            self.start_v = 1
-            self.end_v = 1024
-            self.pixels_x = 1024
-            self.pixels_y = 1024
-            self.img_size = self.pixels_x * self.pixels_y
-            self.ps = 6.5  # micron
-            self.buffer_size = None
-            self.acq_num = 0
-            self.acq_first = 0
-            self.acq_last = 0
-            self.valid_index = 0
 
     def __init__(self, logg=None, **kwds):
         """
         Open the connection to the camera specified by camera_id.
         """
         super().__init__(**kwds)
-        self.logg = logg or self.setup_logging()
-        self._settings = self.CameraSettings()
+        self.logg = logg or logger.setup_logging()
+        self._settings = CameraSettings()
         self.dcam, self.properties = self._initialize_api()
         if self.dcam is not None:
             self.is_sequence = True
@@ -2375,8 +2406,8 @@ class HamamatsuCamera:
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2415,7 +2446,7 @@ class HamamatsuCamera:
         for i in range(0, number_of_images, 1):
             index = (start_frame_index + i) % self.buffer_size
             dat.append(self.dcam.buf_getframedata(index))
-        self.data.add_element(dat, start_frame_index, last)
+        self.data.add_element(dat, [start_frame_index, last])
 
     def get_last_image(self):
         if self.data is not None:
@@ -2493,8 +2524,8 @@ class HamamatsuCamera:
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2519,51 +2550,3 @@ class HamamatsuCamera:
             return self.data.get_elements()
         else:
             return None
-
-
-class AcquisitionThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
-
-    def __init__(self, cam):
-        threading.Thread.__init__(self)
-        self.cam = cam
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.lock:
-                self.cam.get_images()
-
-    def stop(self):
-        self.running = False
-        self.join()
-
-
-class DataList:
-
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
-        self.callback = None
-
-    def add_element(self, elements, start_ind, end_ind):
-        self.data_list.extend(elements)
-        self.ind_list.extend(list(range(start_ind, end_ind + 1)))
-        self.emit_update()
-
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def get_last_element(self):
-        return self.data_list[-1].copy() if self.data_list else None
-
-    def is_empty(self):
-        return len(self.data_list) == 0
-
-    def on_update(self, callback):
-        self.callback = callback
-
-    def emit_update(self):
-        if self.callback is not None:
-            self.callback(self)

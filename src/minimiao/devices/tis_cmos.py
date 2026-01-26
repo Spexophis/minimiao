@@ -11,6 +11,7 @@ import ctypes
 import numpy as np
 from collections import deque
 import tisgrabber as tis
+from minimiao import logger
 
 ic = ctypes.cdll.LoadLibrary(r'C:\Program Files\The Imaging Source Europe GmbH\sources\tisgrabber_x64.dll')
 tis.declareFunctions(ic)
@@ -89,7 +90,7 @@ class TISCamera:
             self.valid_index = 0
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.data = CallbackData(8)
         self.frame_ready = ic.FRAMEREADYCALLBACK(frame_ready_callback)

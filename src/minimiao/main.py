@@ -11,8 +11,9 @@ import sys
 import json
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
+
 from .devices import device
-from . import executor
+from . import executor, logger
 from .gui import main_window
 from .computations import computator
 
@@ -82,7 +83,7 @@ class AppWrapper:
         QSpinBox { background-color: #222; color: #f0f0f0; border: 1px solid #333; }
         """)
         self.data_folder = setup_folder()
-        self.error_logger = setup_logger(self.data_folder)
+        self.error_logger = logger.setup_logger(self.data_folder)
 
         selected_file = select_file_from_folder(None, self.data_folder)
         if not selected_file:

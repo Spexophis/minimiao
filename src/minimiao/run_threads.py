@@ -7,29 +7,42 @@ import threading
 import time
 import traceback
 from collections import deque
-from itertools import chain
+
 import numpy as np
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
 
-    def __init__(self, cam):
+    def __init__(self, cam, interval=0.001):
         super().__init__()
         self.cam = cam
         self.running = False
         self.lock = threading.Lock()  # instance lock, not class-level
+        self.condition = threading.Condition(self.lock)
+        self.interval = interval
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
                 self.cam.get_images()
-            time.sleep(0.001)  # 1 ms yield (tune)
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.condition.notify()  # Wake up thread immediately
         self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate acquisition"""
+        with self.condition:
+            self.condition.notify()
 
 
 class CameraDataList:
@@ -65,22 +78,35 @@ class CameraDataList:
 
 class PhotonCountThread(threading.Thread):
 
-    def __init__(self, daq):
+    def __init__(self, daq, interval=0.001):
         threading.Thread.__init__(self)
         self.daq = daq
         self.running = False
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.interval = interval
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
                 self.daq.get_photon_count()
-            time.sleep(0.004)  # 1 ms yield (tune)
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.condition.notify()  # Wake up immediately
         self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate count"""
+        with self.condition:
+            self.condition.notify()
 
 
 class PhotonCountList:
@@ -131,16 +157,46 @@ class PSLiveWorker(QThread):
         self.reco = reco
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
+        self._lock = threading.Lock()
 
     def stop(self):
+        """Stop worker thread"""
         self._running = False
-        self.wait()
+
+        if not self.wait(2000):
+            self.terminate()
+            self.wait(1000)
+
+        self.clear_data()
+
+    def clear_data(self):
+        """Release references to large data objects"""
+        with self._lock:
+            self.dat = None
+            self.reco = None
 
     def run(self):
-        while self._running:
-            self.msleep(self.period_ms)
-            self.psr_ready.emit(list(self.dat.count_list).copy(), self.reco.live_rec.copy())
-            self.psr_new.emit()
+        try:
+            while self._running:
+                self.msleep(self.period_ms)
+
+                with self._lock:
+                    if self.dat is None or self.reco is None:
+                        break
+
+                    if self._running:
+                        count_copy = list(self.dat.count_list)
+                        rec_copy = self.reco.live_rec
+
+                if self._running:
+                    self.psr_ready.emit(count_copy, rec_copy)
+                    self.psr_new.emit()
+
+        except Exception as e:
+            import logging
+            logging.error(f"PSLiveWorker error: {e}")
+        finally:
+            self.clear_data()
 
 
 class FFTWorker(QThread):
@@ -151,52 +207,75 @@ class FFTWorker(QThread):
         self.fps = float(fps)
         self._running = True
         self._latest = None
-        self._win = None  # cached window for ROI
+        self._win = None
+        self._lock = threading.Lock()
 
     def stop(self):
+        """Stop worker thread"""
         self._running = False
-        self.wait(2)
+
+        if not self.wait(2000):
+            self.terminate()
+            self.wait(1000)
+
+        self.clear_data()
+
+    def clear_data(self):
+        with self._lock:
+            self._latest = None
+            self._win = None
 
     def push_frame(self, frame_u16: np.ndarray):
-        if frame_u16 is None or frame_u16.ndim != 2:
+        if not self._running or frame_u16 is None or frame_u16.ndim != 2:
             return
-        f = frame_u16
-        self._latest = np.array(f, copy=True)
 
-    def _ensure_window(self, n: int):
-        if self._win is None or self._win.shape[0] != n:
-            w1 = np.hanning(n).astype(np.float32)
-            self._win = np.outer(w1, w1)
+        with self._lock:
+            self._latest = np.array(frame_u16, copy=True)
 
     def run(self):
         period = 1.0 / max(self.fps, 0.1)
         next_t = time.perf_counter()
 
-        while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
+        try:
+            while self._running:
+                now = time.perf_counter()
+                if now < next_t:
+                    self.msleep(int((next_t - now) * 1000))
+                    continue
+                next_t = now + period
 
-            if self._latest is None:
-                continue
+                with self._lock:
+                    if self._latest is None:
+                        continue
+                    img = self._latest
 
-            img = self._latest
-            n = img.shape[0]
-            self._ensure_window(n)
+                # Process without holding lock
+                n = img.shape[0]
+                self._ensure_window(n)
 
-            ft = np.fft.fftshift(np.fft.fft2(img * self._win))
-            mag = np.log1p(np.abs(ft)).astype(np.float32)
+                ft = np.fft.fftshift(np.fft.fft2(img * self._win))
+                mag = np.log1p(np.abs(ft)).astype(np.float32)
 
-            mn = float(mag.min())
-            mx = float(mag.max())
-            if mx <= mn:
-                out = np.zeros_like(mag, dtype=np.uint16)
-            else:
-                out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+                mn = float(mag.min())
+                mx = float(mag.max())
+                if mx <= mn:
+                    out = np.zeros_like(mag, dtype=np.uint16)
+                else:
+                    out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
 
-            self.fft_ready.emit(out)
+                if self._running:  # Check before emit
+                    self.fft_ready.emit(out)
+
+        except Exception as e:
+            import logging
+            logging.error(f"FFTWorker error: {e}")
+        finally:
+            self.clear_data()
+
+    def _ensure_window(self, n: int):
+        if self._win is None or self._win.shape[0] != n:
+            w1 = np.hanning(n).astype(np.float32)
+            self._win = np.outer(w1, w1)
 
 
 class TaskWorker(QThread):
@@ -221,3 +300,61 @@ class TaskWorker(QThread):
     @staticmethod
     def _do_nothing():
         pass
+
+
+class WorkerManager:
+    """Context manager for PyQt worker lifecycle"""
+
+    def __init__(self, worker_class, *args, parent=None, **kwargs):
+        self.worker_class = worker_class
+        self.args = args
+        self.kwargs = kwargs
+        self.parent = parent
+        self.worker = None
+        self.connections = []
+
+    def __enter__(self):
+        """Create and start worker"""
+        self.worker = self.worker_class(*self.args, parent=self.parent, **self.kwargs)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """Stop and cleanup worker"""
+        self.cleanup()
+        return False  # Don't suppress exceptions
+
+    def connect(self, signal, slot, connection_type=Qt.ConnectionType.QueuedConnection):
+        """Connect signal and track it for cleanup"""
+        signal.connect(slot, connection_type)
+        self.connections.append((signal, slot))
+        return self
+
+    def start(self):
+        """Start the worker thread"""
+        if self.worker:
+            self.worker.start()
+        return self
+
+    def cleanup(self):
+        """Cleanup worker and connections"""
+        if self.worker is None:
+            return
+
+        # Stop worker
+        self.worker.stop()
+
+        # Disconnect all signals
+        for signal, slot in self.connections:
+            try:
+                signal.disconnect(slot)
+            except TypeError:
+                pass
+        self.connections.clear()
+
+        # Clear data if method exists
+        if hasattr(self.worker, 'clear_data'):
+            self.worker.clear_data()
+
+        # Schedule deletion
+        self.worker.deleteLater()
+        self.worker = None

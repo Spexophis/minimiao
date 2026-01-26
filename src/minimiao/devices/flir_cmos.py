@@ -8,6 +8,8 @@ import time
 import PySpin
 import numpy as np
 
+from minimiao import logger
+
 
 def read_writeable(node):
     return PySpin.IsReadable(node) and PySpin.IsWritable(node)
@@ -40,7 +42,7 @@ class FLIRCamera:
             self.data = None
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.syst, self.cam_list = self._initialize_sdk()
         self.cam = self.cam_list[0]

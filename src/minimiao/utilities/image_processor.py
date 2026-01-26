@@ -3,9 +3,10 @@
 # Licensed under the MIT License.
 
 
+from functools import lru_cache
 import numpy as np
 from numpy.fft import fft2, fftshift
-from scipy.optimize import curve_fit
+from scipy.optimize import curve_fit, minimize
 from skimage import filters
 import matplotlib.pyplot as plt
 
@@ -324,13 +325,26 @@ def shift(arr, shifts=None):
     return arr
 
 
+@lru_cache(maxsize=32)
 def get_pupil(nx_, rd_):
+    """Compute pupil function (cached)"""
     msk = shift(disc_array(shape=(nx_, nx_), radi=rd_)) / np.sqrt(np.pi * rd_ ** 2) / nx_
     phi = np.zeros((nx_, nx_))
     return msk * np.exp(1j * phi)
 
 
+@lru_cache(maxsize=32)
 def get_psf(nx_, rd_):
+    """
+    Compute Point Spread Function (cached)
+
+    Args:
+        nx_: Grid size (int)
+        rd_: Radius (float)
+
+    Returns:
+        Normalized PSF array
+    """
     bpp = get_pupil(nx_, rd_)
     psf_ = np.abs((fft2(fftshift(bpp)))) ** 2
     return psf_ / psf_.sum()
@@ -348,46 +362,110 @@ def get_correlation(image_to_be_computed, shift_orientation, shift_spacing, xv, 
     return np.abs(a), np.angle(a)
 
 
-def find_pattern(data, angle=0., spacing=0.268, nps=10, r_ang=0.005, r_sp=0.005, verbose=False):
+def find_pattern_coarse_to_fine(data, angle=0., spacing=0.268,
+                                nps_coarse=5, nps_fine=3,
+                                r_ang=0.005, r_sp=0.005, verbose=False):
+    """
+    Two-stage search: coarse grid, then fine grid around best
+    """
+    nx, ny = data.shape
+    df = fs / nx
+    radius = (na / wl) / df
+    xv_, yv_ = meshgrid(nx, nx)
+    psf_ = get_psf(nx, radius)  # Cached!
+
+    # Coarse grid (6×6 = 36 evaluations)
+    d_ang_coarse = 2 * r_ang / nps_coarse
+    d_sp_coarse = 2 * r_sp / nps_coarse
+    ang_iter_coarse = np.linspace(angle - r_ang, angle + r_ang, nps_coarse + 1)
+    sp_iter_coarse = np.linspace(spacing - r_sp, spacing + r_sp, nps_coarse + 1)
+
+    mags_coarse = np.zeros((nps_coarse + 1, nps_coarse + 1))
+    for m, ang in enumerate(ang_iter_coarse):
+        for n, sp in enumerate(sp_iter_coarse):
+            mag, _ = get_correlation(data, ang, sp, xv_, yv_, psf_)
+            mags_coarse[m, n] = mag
+
+    # Find coarse maximum
+    m_best, n_best = np.unravel_index(np.argmax(mags_coarse), mags_coarse.shape)
+    ang_best_coarse = ang_iter_coarse[m_best]
+    sp_best_coarse = sp_iter_coarse[n_best]
+
+    # Fine grid around best (4×4 = 16 evaluations)
+    r_ang_fine = d_ang_coarse
+    r_sp_fine = d_sp_coarse
+    ang_iter_fine = np.linspace(ang_best_coarse - r_ang_fine,
+                                ang_best_coarse + r_ang_fine, nps_fine + 1)
+    sp_iter_fine = np.linspace(sp_best_coarse - r_sp_fine,
+                               sp_best_coarse + r_sp_fine, nps_fine + 1)
+
+    mags_fine = np.zeros((nps_fine + 1, nps_fine + 1))
+    phs_fine = np.zeros((nps_fine + 1, nps_fine + 1))
+    for m, ang in enumerate(ang_iter_fine):
+        for n, sp in enumerate(sp_iter_fine):
+            mag, phase = get_correlation(data, ang, sp, xv_, yv_, psf_)
+            mags_fine[m, n] = mag
+            phs_fine[m, n] = phase
+
+    # Find fine maximum
+    m_best, n_best = np.unravel_index(np.argmax(mags_fine), mags_fine.shape)
+
+    return ang_iter_fine[m_best], sp_iter_fine[n_best], phs_fine[m_best, n_best]
+
+
+def find_pattern_optimized(data, angle=0., spacing=0.268,
+                           r_ang=0.005, r_sp=0.005, verbose=False):
+    """
+    Use Nelder-Mead simplex optimization instead of grid search
+    """
     nx, ny = data.shape
     df = fs / nx
     radius = (na / wl) / df
     xv_, yv_ = meshgrid(nx, nx)
     psf_ = get_psf(nx, radius)
-    d_ang = 2 * r_ang / nps
-    d_sp = 2 * r_sp / nps
-    ang_iter = np.arange(-r_ang, r_ang + d_ang / 2, d_ang) + angle
-    sp_iter = np.arange(-r_sp, r_sp + d_sp / 2, d_sp) + spacing
-    mags = np.zeros((nps + 1, nps + 1))
-    phs = np.zeros((nps + 1, nps + 1))
-    for m, ang in enumerate(ang_iter):
-        for n, sp in enumerate(sp_iter):
-            mag, phase = get_correlation(data, ang, sp, xv_, yv_, psf_)
-            if np.isnan(mag):
-                mags[m, n] = 0.0
-            else:
-                mags[m, n] = mag
-                phs[m, n] = phase
+
+    # Objective function (negative because we want to maximize)
+    def objective(params):
+        ang, sp = params
+        mag, _ = get_correlation(data, ang, sp, xv_, yv_, psf_)
+        return -mag  # Negative for minimization
+
+    # Optimization with Nelder-Mead (typically 15-30 evaluations)
+    result = minimize(
+        objective,
+        x0=[angle, spacing],  # Initial guess
+        method='Nelder-Mead',
+        bounds=[(angle - r_ang, angle + r_ang),
+                (spacing - r_sp, spacing + r_sp)],
+        options={'maxiter': 50, 'xatol': 1e-6}
+    )
+
+    # Get phase at optimum
+    _, phase_best = get_correlation(data, result.x[0], result.x[1], xv_, yv_, psf_)
+
     if verbose:
-        plt.figure()  # Set the figure size for better visualization
-        plt.subplot(211)  # First subplot for magnitudes
-        plt.imshow(mags, vmin=mags.min(), vmax=mags.max(),
-                   extent=(sp_iter.min(), sp_iter.max(), ang_iter.max(), ang_iter.min()),
-                   interpolation='none', cmap='viridis')
-        plt.colorbar()
-        plt.title('Magnitude')
-        plt.xlabel('Spatial Iteration')
-        plt.ylabel('Angular Iteration')
-        plt.subplot(212)
-        plt.imshow(phs, extent=(sp_iter.min(), sp_iter.max(), ang_iter.max(), ang_iter.min()),
-                   interpolation='none', cmap='twilight')
-        plt.colorbar()
-        plt.title('Phase')
-        plt.xlabel('Spatial Iteration')
-        plt.ylabel('Angular Iteration')
-        plt.tight_layout()
-        plt.show()
-    m, n = np.where(mags == mags.max())
-    ang_max = m[0] * d_ang - r_ang + angle
-    sp_max = n[0] * d_sp - r_sp + spacing
-    return ang_max, sp_max, mags[m, n]
+        print(f"Converged in {result.nfev} evaluations")
+        print(f"Angle: {result.x[0]:.6f}, Spacing: {result.x[1]:.6f}")
+
+    return result.x[0], result.x[1], phase_best
+
+
+def find_pattern_hybrid(data, angle=0., spacing=0.268,
+                        r_ang=0.005, r_sp=0.005, verbose=False):
+    """
+    Coarse grid + optimization refinement
+    """
+    # 5×5 coarse grid (25 evaluations)
+    ang_coarse, sp_coarse, _ = find_pattern_coarse_to_fine(
+        data, angle, spacing,
+        nps_coarse=4, nps_fine=0,  # Only coarse
+        r_ang=r_ang, r_sp=r_sp
+    )
+
+    # Stage 2: Optimize from best grid point (~10 evaluations)
+    ang_final, sp_final, phase_final = find_pattern_optimized(
+        data, ang_coarse, sp_coarse,
+        r_ang=r_ang / 5, r_sp=r_sp / 5  # Smaller search region
+    )
+
+    return ang_final, sp_final, phase_final

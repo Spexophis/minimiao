@@ -17,7 +17,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self._set_dark_theme()
         self._setup_ui()
@@ -28,12 +28,6 @@ class MainWindow(QMainWindow):
         import logging
         logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
         return logging
-
-    def closeEvent(self, event, **kwargs):
-        self.aboutToClose.emit()
-        self.ctrl_panel.save_spinbox_values()
-        self.ao_panel.save_spinbox_values()
-        super().closeEvent(event)
 
     def _setup_ui(self):
         self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
@@ -101,6 +95,35 @@ class MainWindow(QMainWindow):
     @staticmethod
     def refresh_gui():
         QApplication.processEvents()
+
+    def closeEvent(self, event, **kwargs):
+        self._cleanup_workers()
+        self.aboutToClose.emit()
+        self.ctrl_panel.save_spinbox_values()
+        self.ao_panel.save_spinbox_values()
+        super().closeEvent(event)
+
+    def _cleanup_workers(self):
+        """Stop and cleanup all active workers"""
+        # Cleanup FFT worker
+        if hasattr(self.viewer, 'fft_worker') and self.viewer.fft_worker is not None:
+            try:
+                self.viewer.fft_worker.stop()
+                self.viewer.fft_worker.clear_data()
+                self.viewer.fft_worker.deleteLater()
+            except Exception as e:
+                print(f"Error cleaning up FFT worker: {e}")
+            self.viewer.fft_worker = None
+
+        # Cleanup PSR worker
+        if hasattr(self.viewer, 'psr_worker') and self.viewer.psr_worker is not None:
+            try:
+                self.viewer.psr_worker.stop()
+                self.viewer.psr_worker.clear_data()
+                self.viewer.psr_worker.deleteLater()
+            except Exception as e:
+                print(f"Error cleaning up PSR worker: {e}")
+            self.viewer.psr_worker = None
 
 
 if __name__ == '__main__':

@@ -23,7 +23,7 @@ pi = np.pi
 class WavefrontSensing:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.n_lenslets_x = 18
         self.n_lenslets_y = 18
         self.n_lenslets = self.n_lenslets_x * self.n_lenslets_y

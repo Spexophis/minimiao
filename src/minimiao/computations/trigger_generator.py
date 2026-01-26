@@ -4,12 +4,12 @@
 
 
 import numpy as np
-import os
+from minimiao import logger
 
 class TriggerSequence:
 
     def __init__(self, sample_rate=2.5e5, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
         # digital triggers

@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 import tifffile as tf
-from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal
+from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 
 from . import run_threads
 from .utilities import image_processor as ipr
@@ -37,6 +37,7 @@ class CommandExecutor(QObject):
         self.lasers = []
         self.slm_seq = ""
         self.cameras = {"imaging": 0, "wfs": 1, "focus_lock": 2}
+        self._focal_stack_state = None
         self.task_worker = None
 
     @staticmethod
@@ -196,40 +197,55 @@ class CommandExecutor(QObject):
         try:
             if port == "software":
                 self.devs.piezo.move_position(0, pos_x)
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_x())
             else:
                 self.devs.daq.set_piezo_position([pos_x / 10.], [0])
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_x())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
+
+    def _update_piezo_display_x(self):
+        try:
+            position = self.devs.piezo.read_position(0)
+            self.ctrl_panel.display_piezo_position_x(position)
+        except Exception as e:
+            self.logg.error(f"MCL Piezo Read Error: {e}")
 
     def set_piezo_position_y(self, pos_y, port="analog"):
         try:
             if port == "software":
                 self.devs.piezo.move_position(1, pos_y)
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_y())
             else:
                 self.devs.daq.set_piezo_position([pos_y / 10.], [1])
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_y())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
+
+    def _update_piezo_display_y(self):
+        try:
+            position = self.devs.piezo.read_position(1)
+            self.ctrl_panel.display_piezo_position_y(position)
+        except Exception as e:
+            self.logg.error(f"MCL Piezo Read Error: {e}")
 
     def set_piezo_position_z(self, pos_z, port="analog"):
         try:
             if port == "software":
                 self.devs.piezo.move_position(2, pos_z)
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_z())
             else:
                 self.devs.daq.set_piezo_position([pos_z / 10.], [2])
-                time.sleep(0.1)
-                self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
+                QTimer.singleShot(100, lambda: self._update_piezo_display_z())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
+
+    def _update_piezo_display_z(self):
+        try:
+            position = self.devs.piezo.read_position(2)
+            self.ctrl_panel.display_piezo_position_z(position)
+        except Exception as e:
+            self.logg.error(f"MCL Piezo Read Error: {e}")
 
     def update_piezo_scanning(self):
         axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
@@ -384,7 +400,8 @@ class CommandExecutor(QObject):
                                                  dt_s=1/self.devs.daq.sample_rate,
                                                  px=(self.trg.piezo_scan_pos[1], self.trg.piezo_scan_pos[0]))
             if getattr(self.viewer, "psr_worker", None) is None:
-                self.viewer.psr_worker = run_threads.PSLiveWorker(self.devs.daq.data, self.rec, fps=10)
+                self.viewer.psr_worker = run_threads.PSLiveWorker(self.devs.daq.data, self.rec, fps=10,
+                                                                  parent=self.viewer)
                 self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
                 self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
                 self.viewer.psr_worker.start()
@@ -430,9 +447,7 @@ class CommandExecutor(QObject):
                 self.devs.cam_set[self.cameras["imaging"]].stop_live()
                 self.devs.daq.stop_triggers()
             else:
-                if getattr(self.viewer, "psr_worker", None) is not None:
-                    self.viewer.psr_worker.stop()
-                    self.viewer.psr_worker = None
+                self._cleanup_psr_worker()
                 self.devs.daq.stop_photon_count()
                 self.devs.daq.stop_triggers()
             self.logg.info(r"Live Video Stopped")
@@ -443,19 +458,42 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
 
+    def _cleanup_psr_worker(self):
+        worker = getattr(self.viewer, "psr_worker", None)
+        if worker is not None:
+            worker.stop()
+            try:
+                worker.psr_ready.disconnect()
+                worker.psr_new.disconnect()
+            except TypeError:
+                pass
+            worker.clear_data()
+            worker.deleteLater()
+            self.viewer.psr_worker = None
+
     @pyqtSlot(bool)
     def fft(self, on: bool):
         if on:
             if getattr(self.viewer, "fft_worker", None) is None:
-                self.viewer.fft_worker = run_threads.FFTWorker(fps=10)
+                self.viewer.fft_worker = run_threads.FFTWorker(fps=10, parent=self.viewer)
                 self.viewer.fft_worker.fft_ready.connect(self.viewer.on_fft_frame, Qt.ConnectionType.QueuedConnection)
                 self.viewer.fft_worker.start()
             self.viewer.fft_mode = True
         else:
             self.viewer.fft_mode = False
-            if getattr(self.viewer, "fft_worker", None) is not None:
-                self.viewer.fft_worker.stop()
-                self.viewer.fft_worker = None
+            self._cleanup_fft_worker()
+
+    def _cleanup_fft_worker(self):
+        worker = getattr(self.viewer, "fft_worker", None)
+        if worker is not None:
+            worker.stop()
+            try:
+                worker.fft_ready.disconnect()
+            except TypeError:
+                pass
+            worker.clear_data()
+            worker.deleteLater()
+            self.viewer.fft_worker = None
 
     @pyqtSlot()
     def profile_plot(self):
@@ -527,14 +565,18 @@ class CommandExecutor(QObject):
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r".tif"), data=self.devs.cam_set[self.cameras["imaging"]].get_data())
-        with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            df_idx = pd.DataFrame(list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
-                                  columns=["acquisition_sequence"])
-            df_idx.to_excel(writer, sheet_name="acquisition_sequence", index=False)
-            for i, arr in enumerate(self.trg.piezo_scan_positions):
-                df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
-                df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+
+        camera_data = self.devs.cam_set[self.cameras["imaging"]].get_data()
+        ind_list = self.devs.cam_set[self.cameras["imaging"]].data.ind_list
+        piezo_positions = self.trg.piezo_scan_positions
+
+        tf.imwrite(str(fd + r".tif"), data=camera_data, compression='zlib')
+        np.savez_compressed(
+            str(fd + r"_metadata.npz"),
+            acquisition_sequence=np.array(ind_list),
+            **{f'piezo_axis_{i}': arr for i, arr in enumerate(piezo_positions)}
+        )
+        # Cleanup
         self.devs.cam_set[self.cameras["imaging"]].data = None
 
     @pyqtSlot(str)
@@ -585,6 +627,91 @@ class CommandExecutor(QObject):
         # self.devs.cam_set[self.cameras["focus_lock"]].set_exposure(self.ctrl_panel.get_tis_expo())
         # self.devs.cam_set[self.cameras["focus_lock"]].prepare_live()
 
+    def start_focal_stack_acquisition(self, zps, data, pzs):
+        """Start non-blocking z-stack acquisition"""
+        self._focal_stack_state = {
+            'zps': zps,
+            'data': data,
+            'pzs': pzs,
+            'current_index': 0
+        }
+        self._acquire_next_z_slice()
+
+    def _acquire_next_z_slice(self):
+        """Acquire one z-slice and schedule the next"""
+        state = self._focal_stack_state
+
+        if state['current_index'] >= len(state['zps']):
+            # All slices acquired - finalize
+            self._finalize_focal_stack()
+            return
+
+        z = state['zps'][state['current_index']]
+
+        # Move piezo
+        try:
+            self.devs.piezo.move_position(2, z)
+        except Exception as e:
+            self.logg.error(f"Piezo move failed: {e}")
+            return
+
+        # Wait for piezo to settle, then trigger acquisition
+        QTimer.singleShot(100, self._trigger_acquisition)
+
+    def _trigger_acquisition(self):
+        """Trigger camera acquisition after piezo settled"""
+        try:
+            self.devs.daq.run_triggers()
+        except Exception as e:
+            self.logg.error(f"Trigger start failed: {e}")
+            return
+
+        # Step 3: Wait for acquisition (40ms), then stop and process
+        QTimer.singleShot(40, self._process_acquisition)
+
+    def _process_acquisition(self):
+        """Stop acquisition and process the image"""
+        state = self._focal_stack_state
+
+        try:
+            self.devs.daq.stop_triggers(_close=False)
+            temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
+
+            if temp is not None:
+                state['data'].append(temp)
+                focus_measure = ipr.calculate_focus_measure_with_sobel(temp - temp.min())
+                state['pzs'].append(focus_measure)
+
+            # Move to next slice
+            state['current_index'] += 1
+
+            # Schedule next acquisition immediately
+            QTimer.singleShot(0, self._acquire_next_z_slice)
+
+        except Exception as e:
+            self.logg.error(f"Acquisition processing failed: {e}")
+
+    def _finalize_focal_stack(self):
+        """Save data and plot results"""
+        state = self._focal_stack_state
+
+        # Save TIFF
+        fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
+        tf.imwrite(fd, np.asarray(state['data']))
+
+        # Plot trace
+        self.viewer.plot_trace(y=state['pzs'], x=state['zps'])
+
+        # Find peak
+        fp = ipr.peak_find(state['zps'], state['pzs'])
+        if isinstance(fp, str):
+            self.logg.error(fp)
+        else:
+            self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue(fp)
+
+        # Cleanup
+        self._focal_stack_state = None
+
     def focus_finding(self):
         try:
             self.prepare_focus_finding()
@@ -606,24 +733,25 @@ class CommandExecutor(QObject):
                 self.devs.slm.activate()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
-            for i, z in enumerate(zps):
-                self.set_piezo_position_z(z, port="software")
-                time.sleep(0.1)
-                self.devs.daq.run_triggers()
-                time.sleep(0.04)
-                self.devs.daq.stop_triggers(_close=False)
-                temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
-                data.append(temp)
-                # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
-                pzs.append(ipr.calculate_focus_measure_with_sobel(temp - temp.min()))
-            fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
-            tf.imwrite(fd, np.asarray(data))
-            self.viewer.plot_trace(y=pzs, x=zps)
-            fp = ipr.peak_find(zps, pzs)
-            if isinstance(fp, str):
-                self.logg.error(fp)
-            else:
-                self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue(fp)
+            self.start_focal_stack_acquisition(zps, data, pzs)
+            # for i, z in enumerate(zps):
+            #     self.set_piezo_position_z(z, port="software")
+            #     time.sleep(0.1)
+            #     self.devs.daq.run_triggers()
+            #     time.sleep(0.04)
+            #     self.devs.daq.stop_triggers(_close=False)
+            #     temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
+            #     data.append(temp)
+            #     # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
+            #     pzs.append(ipr.calculate_focus_measure_with_sobel(temp - temp.min()))
+            # fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
+            # tf.imwrite(fd, np.asarray(data))
+            # self.viewer.plot_trace(y=pzs, x=zps)
+            # fp = ipr.peak_find(zps, pzs)
+            # if isinstance(fp, str):
+            #     self.logg.error(fp)
+            # else:
+            #     self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue(fp)
             # time.sleep(0.06)
             # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
             # fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_focus_calibration_stack.tif')
@@ -692,8 +820,7 @@ class CommandExecutor(QObject):
             self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
             self.devs.daq.run_triggers()
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
-            time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield')
+            QTimer.singleShot(200, lambda: self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield'))
         except Exception as e:
             self.finish_widefield()
             self.logg.error(f"Error running widefield: {e}")
@@ -897,7 +1024,7 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters("imaging")
         dtr, ptr, dch, pch, pos = self.trg.generate_piezo_scan(self.lasers, self.cameras["imaging"],
                                                                    self.slm_seq)
-        self.devs.daq.set_piezo_position(pos=list(np.swapaxes(ptr, 0, 1)[0]), indices=pch)
+        self.devs.daq.set_piezo_position(pos=np.swapaxes(ptr, 0, 1)[0].tolist(), indices=pch)
         self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
         self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
                                      digital_sequences=dtr, digital_channels=dch)
@@ -918,10 +1045,12 @@ class CommandExecutor(QObject):
             time.sleep(0.02)
             self.devs.daq.run_triggers()
             time.sleep(1.)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_parallel_scanning',
-                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
-                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
-                          self.trg.piezo_scan_positions)
+            self.svd.emit(
+                time.strftime("%Y%m%d%H%M%S") + '_parallel_scanning',
+                self.devs.cam_set[self.cameras["imaging"]].get_data(),
+                self.devs.cam_set[self.cameras["imaging"]].data.ind_list,
+                self.trg.piezo_scan_positions
+            )
         except Exception as e:
             self.finish_parallel_scan()
             self.logg.error(f"Error running monalisa scanning: {e}")
