@@ -30,7 +30,7 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.dm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cfn=self.cf)
+            self.dfm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cfn=self.cf)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
@@ -50,6 +50,6 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.dm.close()
+            self.dfm.close()
         except Exception as e:
             self.logg.error(f"{e}")

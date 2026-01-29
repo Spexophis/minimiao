@@ -35,6 +35,7 @@ class DeformableMirror:
         self.config = config or self.load_configs()
         self.dm_name = name
         self.dm_serial = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Serial"]
+        self.dm_model = self.dm_name + '_' + self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Model"]
         self.dm, self.n_actuator = self._initialize_dm(self.dm_serial)
         if self.dm is not None:
             self._configure_dm()

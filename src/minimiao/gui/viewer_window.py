@@ -94,8 +94,8 @@ class LiveViewer(QWidget):
         self.data_curve_0 = None
         self.data_curve_1 = None
         self.psr_mode = False
-        self.fft_mode = False
-        self.fft_worker = None
+        self.wfr_mode = False
+        self.wfr_worker = None
         self._setup_signal_connections()
 
     def _setup_ui(self):
@@ -191,7 +191,7 @@ class LiveViewer(QWidget):
         pi_0.setClipToView(True)
         pi_0.enableAutoRange(x=False)
 
-        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT"])
+        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT", "Wavefront"])
 
         self.data_plot_1 = pg.PlotWidget()
         self.data_plot_1.showGrid(x=True, y=True)
@@ -267,8 +267,14 @@ class LiveViewer(QWidget):
     @pyqtSlot(int)
     def on_frame_idx(self, idx: int):
         self.image_viewer.set_frame(self.pool.buffer(idx), token=idx)
-        if self.fft_mode:
-            self.fft_worker.push_frame(self.pool.buffer(idx))
+        if self.wfr_mode:
+            self.wfr_worker.push_frame(self.pool.buffer(idx))
+
+    def on_wfr_frame(self, frame_u16, levels=None):
+        self.graph_img_item_1.setImage(frame_u16, autoLevels=(levels is None))
+        if levels is not None:
+            self.graph_img_item_1.setLevels(levels)
+        # self.data_curve_1.setData(amp_lst)
 
     def set_plot_1(self, n):
         self.QComboBox_plot_selection.setCurrentIndex(n)

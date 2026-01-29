@@ -73,7 +73,8 @@ class AppWrapper:
                                             cf=selected_file)
         self.cmp = computator.ComputationManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
-        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
+        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp,
+                                                self.data_folder, self.configs, self.error_logger, selected_file)
         self.mwd.aboutToClose.connect(self.close)
 
     def run(self):

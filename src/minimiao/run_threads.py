@@ -267,15 +267,14 @@ class PSLiveWorker(QThread):
             self.clear_data()
 
 
-class FFTWorker(QThread):
-    fft_ready = pyqtSignal(object)
+class WFRWorker(QThread):
+    wfr_ready = pyqtSignal(object)
 
-    def __init__(self, fps=10, parent=None):
+    def __init__(self, fps=10, op=None, parent=None):
         super().__init__(parent)
         self.fps = float(fps)
+        self.op = op
         self._running = True
-        self._latest = None
-        self._win = None
         self._lock = threading.Lock()
 
     def stop(self):
@@ -286,20 +285,12 @@ class FFTWorker(QThread):
             self.terminate()  # Force terminate if hung
             self.wait(1000)
 
-        self.clear_data()
-
-    def clear_data(self):
-        """Release memory-intensive resources"""
-        with self._lock:
-            self._latest = None
-            self._win = None
-
     def push_frame(self, frame_u16: np.ndarray):
         if not self._running or frame_u16 is None or frame_u16.ndim != 2:
             return
 
         with self._lock:
-            self._latest = np.array(frame_u16, copy=True)
+            self.op.meas = np.array(frame_u16, copy=True)
 
     def run(self):
         period = 1.0 / max(self.fps, 0.1)
@@ -314,37 +305,18 @@ class FFTWorker(QThread):
                 next_t = now + period
 
                 with self._lock:
-                    if self._latest is None:
+                    if self.op.meas is None:
                         continue
-                    img = self._latest
 
                 # Process without holding lock
-                n = img.shape[0]
-                self._ensure_window(n)
-
-                ft = np.fft.fftshift(np.fft.fft2(img * self._win))
-                mag = np.log1p(np.abs(ft)).astype(np.float32)
-
-                mn = float(mag.min())
-                mx = float(mag.max())
-                if mx <= mn:
-                    out = np.zeros_like(mag, dtype=np.uint16)
-                else:
-                    out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+                self.op.wavefront_reconstruction()
 
                 if self._running:
-                    self.fft_ready.emit(out)
+                    self.wfr_ready.emit(self.op.wf)
 
         except Exception as e:
             import logging
-            logging.error(f"FFTWorker error: {e}")
-        finally:
-            self.clear_data()
-
-    def _ensure_window(self, n: int):
-        if self._win is None or self._win.shape[0] != n:
-            w1 = np.hanning(n).astype(np.float32)
-            self._win = np.outer(w1, w1)
+            logging.error(f"WFRWorker error: {e}")
 
 
 class TaskWorker(QThread):

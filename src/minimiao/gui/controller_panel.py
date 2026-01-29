@@ -366,6 +366,9 @@ class ControlPanel(QWidget):
     def plot_trigger_sequence(self):
         self.Signal_plot_trigger.emit()
 
+    def get_live_mode(self):
+        return self.QComboBox_live_modes.currentText()
+
     @pyqtSlot()
     def run_video(self):
         vm = self.QComboBox_live_modes.currentText()

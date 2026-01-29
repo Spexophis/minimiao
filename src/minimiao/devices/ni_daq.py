@@ -35,8 +35,8 @@ class NIDAQ:
         self.mode = None
         self.galvo_channels = ["Dev1/ao0", "Dev1/ao1"]
         self.piezo_channels = ["Dev1/ao2"]
-        self.ttl_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                             "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
+        self.ttl_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line2",
+                             "Dev1/port0/line3", "Dev1/port0/line4", "Dev1/port0/line5"]
         self.photon_counter_channels = ["/Dev1/ctr0", "/Dev1/ctr1"]
         self.photon_counter_terminals = ["/Dev1/PFI0", "/Dev1/PFI12"]
         self.pmt_channel = ["/Dev1/ai0"]

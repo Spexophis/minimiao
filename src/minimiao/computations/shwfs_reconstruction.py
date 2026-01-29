@@ -36,7 +36,7 @@ class WavefrontSensing:
         self.lenslet_spacing = 23  # spacing between each lenslet
         self.hsp = 16  # size of subimage is 2 * hsp
         self.bg = 0.1
-        self.pixel_size = .0065  # mm
+        self.pixel_size = .00345  # mm
         self.calfactor = (self.pixel_size / 5.2) * 150  # pixel size * focalLength * pitch
         self.method = 'correlation'
         self.mag = 1
@@ -45,8 +45,11 @@ class WavefrontSensing:
         self.CorrCenter = np.unravel_index(section_corr.argmax(), section_corr.shape)
         self._ref = None
         self._meas = None
+        self.gradx = None
+        self.grady = None
         self.wf = None
         self.im = None
+        self.zcs = None
 
     @staticmethod
     def setup_logging():
@@ -86,11 +89,9 @@ class WavefrontSensing:
         self.bg = parameters[8]
         self.calfactor = (self.pixel_size / 5.2) * 150
 
-    def wavefront_reconstruction(self, md='correlation', rt=False):
-        (gradx, grady) = self.get_gradient_xy(mtd=md)
-        self.wf = self.gradient_to_wavefront(gradx, grady)
-        if rt:
-            return self.wf
+    def wavefront_reconstruction(self, md='correlation'):
+        self.gradx, self.grady = self.get_gradient_xy(mtd=md)
+        self.wf = self.gradient_to_wavefront(self.gradx, self.grady)
 
     def gradient_to_wavefront(self, gradx, grady):
         gradx = np.pad(gradx, ((1, 1), (1, 1)), 'constant')
@@ -201,8 +202,7 @@ class WavefrontSensing:
         numx = (np.exp(-2j * pi * kx / nx) - 1)
         numy = (np.exp(-2j * pi * ky / ny) - 1)
         den = 4 * (np.sin(pi * kx / nx) ** 2 + np.sin(pi * ky / ny) ** 2)
-        # sw = (numx * sx + numy * sy) / den
-        sw = np.divide((numx * sx + numy * sy), den, where=den != 0)
+        sw = np.divide(numx * sx + numy * sy, den, out=None, where=den != 0)
         sw[0, 0] = 0.0
         return (ifft2(sw)).real
 
@@ -256,7 +256,7 @@ class WavefrontSensing:
         y -= size[1] / 2.
         return (x * x / (radius[0] * radius[0])) + (y * y / (radius[1] * radius[1])) <= 1
 
-    def generate_influence_matrices(self, data_folder, dm, sv=None, verbose=False):
+    def generate_influence_matrices(self, data_folder, dm, sv=None, cfd=None, verbose=False):
         n_actuators, amp = dm.n_actuator, dm.amp
         dm.nly, dm.nlx = self.n_lenslets_y, self.n_lenslets_x
         dm.nls = self.n_lenslets_y * self.n_lenslets_x
@@ -302,30 +302,30 @@ class WavefrontSensing:
         control_matrix_zonal = ipr.pseudo_inverse(influence_matrix_zonal, n=14)
         control_matrix_modal = ipr.pseudo_inverse(influence_matrix_modal, n=14)
         if sv is not None:
-            fd = sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Calibration File Folder"]
+            fd = sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Calibration File Folder"]
             t = time.strftime("%Y_%m_%d_%H_%M")
             fn = os.path.join(fd, f"influence_function_phase_{t}.tif")
             tf.imwrite(fn, influence_matrix_phase)
             fn = os.path.join(fd, f"control_matrix_phase_{t}.tif")
             tf.imwrite(fn, control_matrix_phase)
             dm.control_matrix_phase = control_matrix_phase
-            sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Phase Control Matrix"] = fn
+            sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Phase Control Matrix"] = fn
             fn = os.path.join(fd, f"influence_function_images_{t}.tif")
             tf.imwrite(fn, wfs_phase)
-            sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Influence Function Images"] = fn
+            sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Influence Function Images"] = fn
             fn = os.path.join(fd, f"influence_function_zonal_{t}.tif")
             tf.imwrite(fn, influence_matrix_zonal)
             fn = os.path.join(fd, f"control_matrix_zonal_{t}.tif")
             tf.imwrite(fn, control_matrix_zonal)
             dm.control_matrix_zonal = control_matrix_zonal
-            sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Zonal Control Matrix"] = fn
+            sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Zonal Control Matrix"] = fn
             fn = os.path.join(fd, f"influence_function_modal_{t}.tif")
             tf.imwrite(fn, influence_matrix_modal)
             fn = os.path.join(fd, f"control_matrix_modal_{t}.tif")
             tf.imwrite(fn, control_matrix_modal)
             dm.control_matrix_modal = control_matrix_modal
-            sv.configs["Adaptive Optics"]["Deformable Mirrors"][dm.dm_name]["Modal Control Matrix"] = fn
-            sv.write_config(sv.configs, sv.cfd)
+            sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Modal Control Matrix"] = fn
+            self.write_config(sv, cfd)
 
     @staticmethod
     def write_config(dataframe, dfd):

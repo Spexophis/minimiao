@@ -5,8 +5,8 @@
 
 import json
 
-from PyQt6.QtCore import pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox, QSplitter
 
 from . import custom_widgets as cw
 
@@ -14,16 +14,16 @@ from . import custom_widgets as cw
 class AOPanel(QWidget):
     Signal_img_shwfs_base = pyqtSignal()
     Signal_img_wfs = pyqtSignal(bool)
-    Signal_img_shwfr_run = pyqtSignal()
-    Signal_img_shwfs_compute_wf = pyqtSignal()
+    Signal_img_shwfr_run = pyqtSignal(bool)
+    Signal_img_shwfs_compute_wf = pyqtSignal(bool)
     Signal_img_shwfs_correct_wf = pyqtSignal(int)
     Signal_img_shwfs_save_wf = pyqtSignal()
     Signal_img_shwfs_acquisition = pyqtSignal()
     Signal_dm_selection = pyqtSignal(str)
     Signal_push_actuator = pyqtSignal(int, float)
     Signal_influence_function = pyqtSignal()
-    Signal_set_zernike = pyqtSignal()
-    Signal_set_dm = pyqtSignal()
+    Signal_set_zernike = pyqtSignal(str, int, float)
+    Signal_set_dm = pyqtSignal(int)
     Signal_set_dm_flat = pyqtSignal()
     Signal_update_cmd = pyqtSignal()
     Signal_load_dm = pyqtSignal()
@@ -39,43 +39,26 @@ class AOPanel(QWidget):
         self.logg = logg
         self._setup_ui()
         self.load_spinbox_values()
+        self._set_signal_connections()
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
 
         self.parameter_panel = self._create_parameter_panel()
-        self.image_panel = self._create_image_panel()
         self.shwfs_panel = self._create_shwfs_panel()
         self.dm_panel = self._create_dm_panel()
         self.sensorless_panel = self._create_sensorless_panel()
         self.dwfs_panel = self._create_dwfs_panel()
 
-        main_layout.addWidget(self.parameter_panel)
-        main_layout.addWidget(self.image_panel)
-        main_layout.addWidget(self.shwfs_panel)
-        main_layout.addWidget(self.dm_panel)
-        main_layout.addWidget(self.sensorless_panel)
-        main_layout.addWidget(self.dwfs_panel)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.parameter_panel)
+        splitter.addWidget(self.shwfs_panel)
+        splitter.addWidget(self.dm_panel)
+        splitter.addWidget(self.sensorless_panel)
+        splitter.addWidget(self.dwfs_panel)
 
-        main_layout.addStretch(1)
+        main_layout.addWidget(splitter)
         self.setLayout(main_layout)
-
-    def _create_image_panel(self):
-        group = cw.GroupWidget()
-        image_shwfs_scroll_area, image_shwfs_scroll_layout = cw.create_scroll_area()
-
-        self.lcdNumber_wfmax_img = cw.LCDNumberWidget()
-        self.lcdNumber_wfmin_img = cw.LCDNumberWidget()
-        self.lcdNumber_wfrms_img = cw.LCDNumberWidget()
-
-        image_shwfs_scroll_layout.addRow(cw.LabelWidget(str('Wavefront MAX')), self.lcdNumber_wfmax_img)
-        image_shwfs_scroll_layout.addRow(cw.LabelWidget(str('Wavefront MIN')), self.lcdNumber_wfmin_img)
-        image_shwfs_scroll_layout.addRow(cw.LabelWidget(str('Wavefront RMS')), self.lcdNumber_wfrms_img)
-
-        group_layout = QHBoxLayout(group)
-        group_layout.addWidget(image_shwfs_scroll_area)
-        group.setLayout(group_layout)
-        return group
 
     def _create_parameter_panel(self):
         group = cw.GroupWidget()
@@ -115,10 +98,10 @@ class AOPanel(QWidget):
 
         cmos_scroll_area, cmos_scroll_layout = cw.create_scroll_area()
 
-        self.QSpinBox_cmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 1, 0)
-        self.QSpinBox_cmos_coordinate_y = cw.SpinBoxWidget(0, 2048, 1, 0)
-        self.QSpinBox_cmos_coordinate_nx = cw.SpinBoxWidget(0, 2048, 1, 2048)
-        self.QSpinBox_cmos_coordinate_ny = cw.SpinBoxWidget(0, 2048, 1, 2048)
+        self.QSpinBox_cmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 4, 0)
+        self.QSpinBox_cmos_coordinate_y = cw.SpinBoxWidget(0, 2048, 2, 0)
+        self.QSpinBox_cmos_coordinate_nx = cw.SpinBoxWidget(0, 2048, 2, 2048)
+        self.QSpinBox_cmos_coordinate_ny = cw.SpinBoxWidget(0, 2048, 4, 2048)
         self.QSpinBox_cmos_coordinate_bin = cw.SpinBoxWidget(0, 2048, 1, 1)
         self.QSpinBox_cmos_gain = cw.SpinBoxWidget(0, 300, 1, 0)
         self.QDoubleSpinBox_cmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.009)
@@ -131,7 +114,7 @@ class AOPanel(QWidget):
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Y')), self.QSpinBox_cmos_coordinate_y)
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Nx')), self.QSpinBox_cmos_coordinate_nx)
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_cmos_coordinate_ny)
-        cmos_scroll_layout.addRow(cw.LabelWidget(str('Binx')), self.QSpinBox_cmos_coordinate_bin)
+        cmos_scroll_layout.addRow(cw.LabelWidget(str('Bin')), self.QSpinBox_cmos_coordinate_bin)
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Gain')), self.QSpinBox_cmos_gain)
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Clean / s')), self.QDoubleSpinBox_cmos_t_clean)
         cmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_cmos_t_exposure)
@@ -146,12 +129,13 @@ class AOPanel(QWidget):
     def _create_shwfs_panel(self):
         group = cw.GroupWidget()
         image_shwfs_scroll_area, image_shwfs_scroll_layout = cw.create_scroll_area()
+        image_wfr_scroll_area, image_wfr_scroll_layout = cw.create_scroll_area()
 
         self.QComboBox_wfs_camera_selection = cw.ComboBoxWidget(list_items=["CMOS"])
         self.QPushButton_img_shwfs_base = cw.PushButtonWidget('SetBase', enable=True)
         self.QPushButton_run_img_wfs = cw.PushButtonWidget('RunWFS', checkable=True)
-        self.QPushButton_run_img_wfr = cw.PushButtonWidget('RunWFR', enable=True)
-        self.QPushButton_img_shwfs_compute_wf = cw.PushButtonWidget('ComputeWF', enable=True)
+        self.QPushButton_run_img_wfr = cw.PushButtonWidget('RunWFR', checkable=True)
+        self.QPushButton_img_shwfs_compute_wf = cw.PushButtonWidget('ComputeWF', checkable=True)
         self.QPushButton_img_shwfs_save_wf = cw.PushButtonWidget('SaveWF', enable=True)
         self.QPushButton_img_shwfs_acquisition = cw.PushButtonWidget('ACQ')
 
@@ -160,8 +144,17 @@ class AOPanel(QWidget):
         image_shwfs_scroll_layout.addRow(self.QPushButton_run_img_wfr, self.QPushButton_img_shwfs_acquisition)
         image_shwfs_scroll_layout.addRow(self.QPushButton_img_shwfs_compute_wf, self.QPushButton_img_shwfs_save_wf)
 
+        self.lcdNumber_wfmax_img = cw.LCDNumberWidget()
+        self.lcdNumber_wfmin_img = cw.LCDNumberWidget()
+        self.lcdNumber_wfrms_img = cw.LCDNumberWidget()
+
+        image_wfr_scroll_layout.addRow(cw.LabelWidget(str('Wavefront MAX')), self.lcdNumber_wfmax_img)
+        image_wfr_scroll_layout.addRow(cw.LabelWidget(str('Wavefront MIN')), self.lcdNumber_wfmin_img)
+        image_wfr_scroll_layout.addRow(cw.LabelWidget(str('Wavefront RMS')), self.lcdNumber_wfrms_img)
+
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(image_shwfs_scroll_area)
+        group_layout.addWidget(image_wfr_scroll_area)
         group.setLayout(group_layout)
         return group
 
@@ -178,8 +171,7 @@ class AOPanel(QWidget):
         self.QSpinBox_zernike_mode = cw.SpinBoxWidget(0, 100, 1, 0)
         self.QDoubleSpinBox_zernike_mode_amp = cw.DoubleSpinBoxWidget(-20, 20, 0.01, 2, 0)
         self.QPushButton_set_zernike_mode = cw.PushButtonWidget('Set Zernike')
-        self.QComboBox_cmd = cw.ComboBoxWidget(list_items=['0', '1'])
-        self.QComboBox_cmd.setCurrentIndex(1)
+        self.QComboBox_cmd = cw.ComboBoxWidget(list_items=[])
         self.QPushButton_setDM = cw.PushButtonWidget('Set DM')
         self.QPushButton_load_dm = cw.PushButtonWidget('Load DM')
         self.QPushButton_update_cmd = cw.PushButtonWidget('Add DM')
@@ -346,11 +338,17 @@ class AOPanel(QWidget):
 
     @pyqtSlot()
     def run_img_wfr(self):
-        self.Signal_img_shwfr_run.emit()
+        if self.QPushButton_run_img_wfr.isChecked():
+            self.Signal_img_shwfr_run.emit(True)
+        else:
+            self.Signal_img_shwfr_run.emit(False)
 
     @pyqtSlot()
     def compute_img_wf(self):
-        self.Signal_img_shwfs_compute_wf.emit()
+        if self.QPushButton_img_shwfs_compute_wf.isChecked():
+            self.Signal_img_shwfs_compute_wf.emit(True)
+        else:
+            self.Signal_img_shwfs_compute_wf.emit(False)
 
     @pyqtSlot()
     def save_img_wf(self):
@@ -377,11 +375,14 @@ class AOPanel(QWidget):
 
     @pyqtSlot()
     def set_dm_zernike(self):
-        self.Signal_set_zernike.emit()
+        md = self.get_img_wfs_method()
+        ind, amp = self.get_zernike_mode()
+        self.Signal_set_zernike.emit(md, ind, amp)
 
     @pyqtSlot()
     def set_dm_acts(self):
-        self.Signal_set_dm.emit()
+        i = self.get_cmd_index()
+        self.Signal_set_dm.emit(i)
 
     @pyqtSlot()
     def update_dm_cmd(self):
@@ -409,7 +410,7 @@ class AOPanel(QWidget):
         return self.QComboBox_dms.currentText()
 
     def get_cmd_index(self):
-        return self.QComboBox_cmd.currentText()
+        return self.QComboBox_cmd.currentIndex()
 
     def update_cmd_index(self, wst=True):
         item = '{}'.format(self.QComboBox_cmd.count())

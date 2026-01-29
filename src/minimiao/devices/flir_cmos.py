@@ -9,7 +9,7 @@ from dataclasses import dataclass
 import PySpin
 import numpy as np
 
-from minimiao import logger
+from minimiao import logger, run_threads
 
 
 def read_writeable(node):
@@ -20,16 +20,16 @@ def read_writeable(node):
 class CameraSettings:
     t_clean: float = 0.001
     t_readout: float = 0.002
-    t_exposure: float = 0.001
+    t_exposure: float = 100
     t_accumulate: float = 0
     t_kinetic: float = 0
     gain: int = 0
     bin_h: int = 1
     bin_v: int = 1
-    start_h: int = 0
-    end_h: int = 2048
-    start_v: int = 0
-    end_v: int = 1536
+    _start_h: int = 0
+    _end_h: int = 2048
+    _start_v: int = 0
+    _end_v: int = 1536
     _pixels_x: int = 2048
     _pixels_y: int = 1536
     _img_size: int = 0
@@ -39,7 +39,6 @@ class CameraSettings:
     acq_first: int = 0
     acq_last: int = 0
     valid_index: int = 0
-    data: object = None
 
     def __post_init__(self):
         self._img_size = self._pixels_x * self._pixels_y
@@ -66,6 +65,23 @@ class CameraSettings:
     def img_size(self) -> int:
         return self._img_size
 
+    @property
+    def start_h(self) -> int:
+        return self._start_h
+
+    @start_h.setter
+    def start_h(self, value: int):
+        self._start_h = value
+
+    @property
+    def start_v(self) -> int:
+        return self._start_v
+
+    @start_v.setter
+    def start_v(self, value: int):
+        self._start_v = value
+
+
 class FLIRCamera:
 
     def __init__(self, logg=None):
@@ -76,6 +92,8 @@ class FLIRCamera:
             self.cam = self.cam_list[0]
             self.node_map, self.node_map_stream = self._configure_camera()
             self._init_camera()
+            self.data = None
+            self.acq_thread = None
         else:
             raise RuntimeError("Failed to initiate FLIR camera.")
 
@@ -150,7 +168,7 @@ class FLIRCamera:
         self.auto_off()
         self.set_bit_depth()
         self.set_acquisition_mode(3)
-        self.set_trigger_mode(2)
+        self.set_trigger_mode(1)
 
     def auto_off(self):
         """
@@ -443,18 +461,25 @@ class FLIRCamera:
 
     def prepare_live(self):
         self.set_gain()
-        self.set_buffer(1)
-        self.open_trigger()
+        self.set_roi()
+        self.set_buffer(self.buffer_size)
+        self.set_exposure_time()
+        # self.open_trigger()
+        self.data = run_threads.CameraDataList(self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self, interval=0.001)
 
     def start_live(self):
+        self.acq_thread.start()
         self.cam.BeginAcquisition()
         self.logg.info('Acquiring images...')
 
     def stop_live(self):
+        self.acq_thread.stop()
+        self.acq_thread = None
         self.cam.EndAcquisition()
-        self.close_trigger()
+        # self.close_trigger()
 
-    def get_image(self, ind=False):
+    def get_images(self):
         try:
             #  Retrieve next received image
             image_result = self.cam.GetNextImage(500)
@@ -470,25 +495,20 @@ class FLIRCamera:
             #  Images retrieved directly from the camera (i.e. non-converted images) need to be released
             #  in order to keep from filling the buffer.
             image_result.Release()
-            if ind:
-                return image_data, image_id
-            else:
-                return image_data
+            self.data.add_element([image_data], [image_id, image_id])
         except PySpin.SpinnakerException as ex:
             self.logg.error('Error: %s' % ex)
-            return None
 
     def get_last_image(self):
-        re = self.get_image(True)
-        if re is not None:
-            return re[0]
+        if self.data is not None:
+            return self.data.get_last_element(True)
         else:
             return None
 
     def prepare_data_acquisition(self):
         self.set_gain()
         self.buffer_size = self.acq_num
-        self.set_buffer(1)
+        self.set_buffer(self.buffer_size)
         self.open_trigger()
 
     def start_data_acquisition(self):
