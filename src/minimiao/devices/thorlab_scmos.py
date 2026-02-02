@@ -4,10 +4,11 @@
 
 
 import os
-from minimiao import run_threads
 
 import numpy as np
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
+
+from minimiao import run_threads, logger
 
 path_to_files = r"C:\Program Files\Thorlabs\Scientific Imaging\Scientific Camera Support\Scientific Camera Interfaces\SDK\Python Toolkit"
 
@@ -33,7 +34,7 @@ class ThorCMOS:
             self.valid_index = 0
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         try:
             self._configure_path()

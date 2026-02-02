@@ -8,6 +8,7 @@ from ctypes import *
 from enum import IntEnum
 
 import numpy as np
+from minimiao import logger
 
 __date__ = '2021-06-30'
 __copyright__ = 'Copyright (C) 2021-2024 Hamamatsu Photonics K.K.'
@@ -2189,7 +2190,7 @@ class HamamatsuCamera:
         Open the connection to the camera specified by camera_id.
         """
         super().__init__(**kwds)
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.dcam, self.properties = self._initialize_api()
         if self.dcam is not None:

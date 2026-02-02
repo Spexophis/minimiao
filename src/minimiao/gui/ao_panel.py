@@ -9,6 +9,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from . import custom_widgets as cw
+from minimiao import logger
 
 
 class AOPanel(QWidget):
@@ -33,10 +34,10 @@ class AOPanel(QWidget):
     Signal_sensorlessAO_metric_acquisition = pyqtSignal()
     Signal_sensorlessAO_ml_acquisition = pyqtSignal()
 
-    def __init__(self, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, config, logg=None, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.config = config
-        self.logg = logg
+        self.logg = logg or logger.setup_logging()
         self._setup_ui()
         self.QComboBox_wfs_camera_selection.setCurrentIndex(1)
         self.load_spinbox_values()
@@ -144,7 +145,7 @@ class AOPanel(QWidget):
     def _create_dwfs_panel(self):
         group = cw.GroupWidget()
         dwfs_scroll_area, dwfs_scroll_layout = cw.create_scroll_area("G")
-        
+
         self.QSpinBox_close_loop_number = cw.SpinBoxWidget(0, 100, 1, 1)
         self.QPushButton_dwfs_cl_correction = cw.PushButtonWidget('Close Loop Correction')
 
@@ -198,7 +199,7 @@ class AOPanel(QWidget):
         dm_scroll_layout.addWidget(self.QPushButton_load_dm, 3, 3, 1, 1)
         dm_scroll_layout.addWidget(self.QPushButton_update_cmd, 4, 2, 1, 1)
         dm_scroll_layout.addWidget(self.QPushButton_change_dm_flat, 4, 3, 1, 1)
-        
+
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(dm_scroll_area)
         group.setLayout(group_layout)
@@ -275,7 +276,7 @@ class AOPanel(QWidget):
         self.QPushButton_sensorless_run.clicked.connect(self.run_sensorless_correction)
         self.QPushButton_sensorless_auto.clicked.connect(self.run_sensorless_auto)
         self.QPushButton_sensorless_metric_acqs.clicked.connect(self.run_sensorless_metric_acquisition)
-        self.QPushButton_sensorless_ml_acqs.clicked.connect(self.run_sensorless_ml_acquisition)       
+        self.QPushButton_sensorless_ml_acqs.clicked.connect(self.run_sensorless_ml_acquisition)
 
     def display_img_wf_properties(self, properties):
         self.lcdNumber_wfmin_img.display(properties[0])

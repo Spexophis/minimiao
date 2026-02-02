@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from dpp_ctrl import api_dpp
 
+from minimiao import logger
+
 zms = [(-1, 1), (1, 1),
        (0, 2), (-2, 2), (2, 2),
        (-1, 3), (1, 3), (-3, 3), (3, 3),
@@ -23,7 +25,7 @@ nz = len(zms)
 class DPP:
 
     def __init__(self, logg=None, config=None, path=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         self.dtp = path
         self.dpp, self.opened_flag = self._initialize()

@@ -8,7 +8,7 @@ import numpy as np
 class ImgRecon:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._gate_len = 256
         self._point_scan_gate_mask = np.zeros(self._gate_len, dtype=bool)
 

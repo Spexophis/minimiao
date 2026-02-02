@@ -3,9 +3,11 @@
 # Licensed under the MIT License.
 
 
+import ctypes as ct
 import os
 import sys
-import ctypes as ct
+
+from minimiao import logger
 
 sys.path.append(r"C:\Program Files\Mad City Labs\NanoDrive\API")
 nano_dll_path = os.path.join(r"C:", os.sep, "Program Files", "Mad City Labs", "NanoDrive", "API", "Madlib.dll")
@@ -14,7 +16,7 @@ nano_dll_path = os.path.join(r"C:", os.sep, "Program Files", "Mad City Labs", "N
 class MCLNanoDrive:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.mcl_piezo = MCLNanoDriveWrapper()
         self.mcl_piezo.release_all_handles()
         self.handle = self.mcl_piezo.init_handle()

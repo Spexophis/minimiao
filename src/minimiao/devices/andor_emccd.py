@@ -4,9 +4,12 @@
 
 
 import sys
+from dataclasses import dataclass
+
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
-from minimiao import run_threads
+
+from minimiao import run_threads, logger
 
 sys.path.append(r'C:\Program Files\Andor SDK')
 
@@ -15,37 +18,77 @@ Trigger_Mode = {0: "Internal", 1: "External", 6: "External Start", 7: "External 
 Acquisition_Mode = {1: "Single Scan", 2: "Accumulate", 3: "Kinetics", 4: "Fast Kinetics", 5: "Run Till Abort"}
 
 
+@dataclass
+class CameraSettings:
+    t_clean: float = 0.02
+    t_readout: float = 0.04
+    t_exposure: float = 100
+    t_accumulate: float = 0
+    t_kinetic: float = 0
+    gain: int = 0
+    bin_h: int = 1
+    bin_v: int = 1
+    _start_h: int = 1
+    _end_h: int = 1024
+    _start_v: int = 1
+    _end_v: int = 1024
+    _pixels_x: int = 1024
+    _pixels_y: int = 1024
+    _img_size: int = 0
+    ps: float = 13  # micron
+    buffer_size: int = 4
+    acq_num: int = 0
+    acq_first: int = 0
+    acq_last: int = 0
+    valid_index: int = 0
+
+    def __post_init__(self):
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_x(self) -> int:
+        return self._pixels_x
+
+    @pixels_x.setter
+    def pixels_x(self, value: int):
+        self._pixels_x = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_y(self) -> int:
+        return self._pixels_y
+
+    @pixels_y.setter
+    def pixels_y(self, value: int):
+        self._pixels_y = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def img_size(self) -> int:
+        return self._img_size
+
+    @property
+    def start_h(self) -> int:
+        return self._start_h
+
+    @start_h.setter
+    def start_h(self, value: int):
+        self._start_h = value
+
+    @property
+    def start_v(self) -> int:
+        return self._start_v
+
+    @start_v.setter
+    def start_v(self, value: int):
+        self._start_v = value
+
+
 class EMCCDCamera:
-    class CameraSettings:
-        def __init__(self):
-            self.temperature = None
-            self.gain = 0
-            self.t_clean = None
-            self.t_readout = None
-            self.t_exposure = None
-            self.t_accumulate = None
-            self.t_kinetic = None
-            self.bin_h = 1
-            self.bin_v = 1
-            self.cp_h = 1024
-            self.cp_w = 1024
-            self.start_h = 1
-            self.end_h = 1024
-            self.start_v = 1
-            self.end_v = 1024
-            self.pixels_x = 1024
-            self.pixels_y = 1024
-            self.img_size = self.pixels_x * self.pixels_y
-            self.ps = 13  # micron
-            self.buffer_size = None
-            self.acq_num = 0
-            self.acq_first = 0
-            self.acq_last = 0
-            self.valid_index = 0
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
-        self._settings = self.CameraSettings()
+        self.logg = logg or logger.setup_logging()
+        self._settings = CameraSettings()
         self.sdk = self._initialize_sdk()
         if self.sdk:
             self._configure_camera()

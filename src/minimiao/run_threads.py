@@ -7,29 +7,54 @@ import threading
 import time
 import traceback
 from collections import deque
-from itertools import chain
+
 import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
-
-    def __init__(self, cam):
+    def __init__(self, cam, interval=0.05):
         super().__init__()
         self.cam = cam
         self.running = False
-        self.lock = threading.Lock()  # instance lock, not class-level
+        self.paused = False
+        self.condition = threading.Condition()
+        self.interval = interval
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
-                self.cam.get_images()
-            time.sleep(0.001)  # 1 ms yield (tune)
+            with self.condition:
+                while self.paused and self.running:
+                    self.condition.wait()
+
+                if not self.running:
+                    break
+
+                self.condition.wait(timeout=self.interval)
+
+                if not self.paused and self.running:
+                    self.cam.get_images()
+
+    def pause(self):
+        with self.condition:
+            self.paused = True
+
+    def resume(self):
+        with self.condition:
+            self.paused = False
+            self.condition.notify()
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.paused = False
+            self.condition.notify()
         self.join()
+
+    def is_paused(self):
+        with self.condition:
+            return self.paused
 
 
 class CameraDataList:
@@ -64,22 +89,46 @@ class CameraDataList:
 
 
 class PhotonCountThread(threading.Thread):
-
-    def __init__(self, daq):
-        threading.Thread.__init__(self)
+    def __init__(self, daq, interval=0.004):
+        super().__init__()
         self.daq = daq
         self.running = False
-        self.lock = threading.Lock()
+        self.paused = False
+        self.condition = threading.Condition()
+        self.interval = interval
 
     def run(self):
         self.running = True
         while self.running:
-            with self.lock:
-                self.daq.get_photon_count()
-            time.sleep(0.004)  # 1 ms yield (tune)
+            with self.condition:
+                # Wait while paused
+                while self.paused and self.running:
+                    self.condition.wait()
+
+                if not self.running:
+                    break
+
+                # Normal wait
+                self.condition.wait(timeout=self.interval)
+
+                # Count if not paused
+                if not self.paused and self.running:
+                    self.daq.get_photon_count()
+
+    def pause(self):
+        with self.condition:
+            self.paused = True
+
+    def resume(self):
+        with self.condition:
+            self.paused = False
+            self.condition.notify()
 
     def stop(self):
-        self.running = False
+        with self.condition:
+            self.running = False
+            self.paused = False
+            self.condition.notify()
         self.join()
 
 
@@ -197,6 +246,58 @@ class FFTWorker(QThread):
                 out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
 
             self.fft_ready.emit(out)
+
+
+class WFRWorker(QThread):
+    wfr_ready = pyqtSignal(object)
+
+    def __init__(self, fps=10, op=None, parent=None):
+        super().__init__(parent)
+        self.fps = float(fps)
+        self.op = op
+        self._running = True
+        self._lock = threading.Lock()
+
+    def stop(self):
+        """Stop worker thread gracefully"""
+        self._running = False
+
+        if not self.wait(2000):  # 2 second timeout
+            self.terminate()  # Force terminate if hung
+            self.wait(1000)
+
+    def push_frame(self, frame_u16: np.ndarray):
+        if not self._running or frame_u16 is None or frame_u16.ndim != 2:
+            return
+
+        with self._lock:
+            self.op.meas = np.array(frame_u16, copy=True)
+
+    def run(self):
+        period = 1.0 / max(self.fps, 0.1)
+        next_t = time.perf_counter()
+
+        try:
+            while self._running:
+                now = time.perf_counter()
+                if now < next_t:
+                    self.msleep(int((next_t - now) * 1000))
+                    continue
+                next_t = now + period
+
+                with self._lock:
+                    if self.op.meas is None:
+                        continue
+
+                # Process without holding lock
+                self.op.wavefront_reconstruction()
+
+                if self._running:
+                    self.wfr_ready.emit(self.op.wf)
+
+        except Exception as e:
+            import logging
+            logging.error(f"WFRWorker error: {e}")
 
 
 class TaskWorker(QThread):

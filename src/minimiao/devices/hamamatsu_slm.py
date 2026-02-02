@@ -6,16 +6,19 @@
 import copy
 import ctypes as ct
 import glob
-import os
 import json
+import os
+
 import numpy as np
 from PIL import Image
+
+from minimiao import logger
 
 
 class LCOS:
 
     def __init__(self, logg=None, config=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         lib = self.config.configs["Spatial Light Modulator"]["Hamamatsu"]["ControlLibrary"]
         self.correction_pattern, self.correction_value = self.load_pre_calibrations()
@@ -48,8 +51,8 @@ class LCOS:
     @staticmethod
     def load_configs():
         config_file = input("Enter configuration file directory: ")
-        from miao.utilities import configurations
-        cfg = configurations.MicroscopeConfiguration(fd=config_file)
+        with open(config_file, 'r') as f:
+            cfg = json.load(f)
         return cfg
 
     def close(self):

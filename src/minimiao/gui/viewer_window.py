@@ -10,6 +10,7 @@ import pyqtgraph as pg
 from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
 
+from minimiao import logger
 from . import custom_widgets as cw
 from . import gl_viewer
 
@@ -57,7 +58,7 @@ class PhotonPool(QObject):
         self.buf.extend(counts)
         self.img = recon_img
 
-    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None, px:tuple | None = None):
+    def reset_buffer(self, max_len: int | None = None, dt_s: float | None = None, px: tuple | None = None):
         if max_len is not None:
             self.max_len = min(int(max_len), int(2 ** 16))
         self.buf = deque(np.zeros(self.max_len, dtype=np.int64), maxlen=self.max_len)
@@ -72,10 +73,10 @@ class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
     psr_view_signal = pyqtSignal()
 
-    def __init__(self, config, logg, parent=None):
+    def __init__(self, config, logg=None, parent=None):
         super().__init__(parent)
         self.config = config
-        self.logg = logg
+        self.logg = logg or logger.setup_logging()
         pg.setConfigOptions(useOpenGL=True, antialias=False)
         self._setup_ui()
         self._overlay_n = 0

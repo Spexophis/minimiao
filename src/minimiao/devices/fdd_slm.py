@@ -6,6 +6,8 @@
 import ctypes as ct
 import subprocess
 
+from minimiao import logger
+
 
 class Dev(ct.Structure):
     pass
@@ -21,7 +23,7 @@ RS232_BAUDRATE = ct.c_uint32(115200)
 
 class QXGA:
     def __init__(self, logg=None, config=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         self.r11 = self._initiate()
         self.get_temperature()

@@ -5,11 +5,13 @@
 
 import pycobolt
 
+from minimiao import logger
+
 
 class CoboltLaser:
 
     def __init__(self, logg=None, config=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         laser_dict = {}
         for las, inf in self.config["Light Sources"]["Lasers"]["Cobolt"].items():
@@ -21,6 +23,7 @@ class CoboltLaser:
         for laser, com_port in laser_dict.items():
             try:
                 lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=com_port)
+                lasers[laser].send_cmd('@cobas 0')
                 self.logg.info("{} Laser Connected".format(laser))
             except Exception as e:
                 self.logg.error(f"Laser Error: {e}")

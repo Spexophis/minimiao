@@ -17,7 +17,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self._set_dark_theme()
         self._setup_ui()

@@ -4,44 +4,89 @@
 
 
 import time
+from dataclasses import dataclass
 
 import PySpin
 import numpy as np
+
+from minimiao import logger
 
 
 def read_writeable(node):
     return PySpin.IsReadable(node) and PySpin.IsWritable(node)
 
 
+@dataclass
+class CameraSettings:
+    t_clean: float = 0.001
+    t_readout: float = 0.002
+    t_exposure: float = 100
+    t_accumulate: float = 0
+    t_kinetic: float = 0
+    gain: int = 0
+    bin_h: int = 1
+    bin_v: int = 1
+    _start_h: int = 0
+    _end_h: int = 2048
+    _start_v: int = 0
+    _end_v: int = 1536
+    _pixels_x: int = 2048
+    _pixels_y: int = 1536
+    _img_size: int = 0
+    ps: float = 3.45  # micron
+    buffer_size: int = 4
+    acq_num: int = 0
+    acq_first: int = 0
+    acq_last: int = 0
+    valid_index: int = 0
+
+    def __post_init__(self):
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_x(self) -> int:
+        return self._pixels_x
+
+    @pixels_x.setter
+    def pixels_x(self, value: int):
+        self._pixels_x = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def pixels_y(self) -> int:
+        return self._pixels_y
+
+    @pixels_y.setter
+    def pixels_y(self, value: int):
+        self._pixels_y = value
+        self._img_size = self._pixels_x * self._pixels_y
+
+    @property
+    def img_size(self) -> int:
+        return self._img_size
+
+    @property
+    def start_h(self) -> int:
+        return self._start_h
+
+    @start_h.setter
+    def start_h(self, value: int):
+        self._start_h = value
+
+    @property
+    def start_v(self) -> int:
+        return self._start_v
+
+    @start_v.setter
+    def start_v(self, value: int):
+        self._start_v = value
+
+
 class FLIRCamera:
-    class CameraSettings:
-        def __init__(self):
-            self.t_clean = 0
-            self.t_readout = 0
-            self.t_exposure = 0
-            self.t_accumulate = 0
-            self.t_kinetic = 0
-            self.gain = 0
-            self.bin_h = 1
-            self.bin_v = 1
-            self.start_h = 0
-            self.end_h = 2048
-            self.start_v = 0
-            self.end_v = 1536
-            self.pixels_x = 2048
-            self.pixels_y = 1536
-            self.img_size = self.pixels_x * self.pixels_y
-            self.ps = 3.45  # micron
-            self.buffer_size = 4
-            self.acq_num = 0
-            self.acq_first = 0
-            self.acq_last = 0
-            self.valid_index = 0
-            self.data = None
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
-        self._settings = self.CameraSettings()
+        self.logg = logg or logger.setup_logging()
+        self._settings = CameraSettings()
         self.syst, self.cam_list = self._initialize_sdk()
         self.cam = self.cam_list[0]
         if self.syst:

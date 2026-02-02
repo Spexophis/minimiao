@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 
 
+from minimiao import logger
 from . import andor_emccd
 from . import cobolt_laser
 from . import fdd_slm
@@ -14,7 +15,7 @@ from . import ni_daq
 class DeviceManager:
     def __init__(self, config=None, logg=None, path=None):
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.cam_set = {}
         try:
@@ -83,6 +84,7 @@ class DeviceManager:
 
 if __name__ == '__main__':
     import json
+
     with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
         cfg = json.load(f)
     devs = DeviceManager(config=cfg)

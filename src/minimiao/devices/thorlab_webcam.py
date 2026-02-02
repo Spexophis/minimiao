@@ -3,15 +3,18 @@
 # Licensed under the MIT License.
 
 
-import numpy as np
 import ctypes as ct
+
+import numpy as np
+
+from minimiao import logger
 
 uc480_dll = r"C:\Program Files\Thorlabs\Scientific Imaging\ThorCam\uc480_64.dll"
 
 
 class ThorCam:
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.uc480 = self._init_dll()
         if self.uc480 is not None:
             try:

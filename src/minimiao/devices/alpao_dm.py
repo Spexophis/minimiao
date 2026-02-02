@@ -13,6 +13,7 @@ import numpy as np
 import pandas as pd
 import tifffile as tf
 
+from minimiao import logger
 from minimiao.utilities import image_processor as ipr
 from minimiao.utilities import zernike_generator as tz
 
@@ -27,7 +28,7 @@ class DeformableMirror:
 
     def __init__(self, name="ALPAO DM97", logg=None, config=None, path=None):
         self.dtp = path
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         self.dm_name = name
         self.dm_serial = self.config["Adaptive Optics"]["Deformable Mirrors"][self.dm_name]["Serial"]

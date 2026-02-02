@@ -9,7 +9,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
 from . import custom_widgets as cw
-
+from minimiao import logger
 
 class ControlPanel(QWidget):
     Signal_check_emccd_temperature = pyqtSignal()
@@ -33,10 +33,10 @@ class ControlPanel(QWidget):
     Signal_data_acquire = pyqtSignal(str, int)
     Signal_save_file = pyqtSignal(str)
 
-    def __init__(self, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, config, logg=None, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.config = config
-        self.logg = logg
+        self.logg = logg or logger.setup_logging()
         self._setup_ui()
         self.load_spinbox_values()
         self.digital_timing_presets = self.load_digital_timing_presets()
