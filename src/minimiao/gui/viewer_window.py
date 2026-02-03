@@ -167,6 +167,8 @@ class LiveViewer(QWidget):
         self.graph_plot_0.setAspectLocked(True)
         self.graph_plot_0.setLabel('left', 'Y Position', units='v')
         self.graph_plot_0.setLabel('bottom', 'X Position', units='v')
+        self.graph_plot_0.getAxis('left').enableAutoSIPrefix(False)
+        self.graph_plot_0.getAxis('bottom').enableAutoSIPrefix(False)
 
         self.graph_img_item_0 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
         self.graph_plot_0.addItem(self.graph_img_item_0)
@@ -176,6 +178,8 @@ class LiveViewer(QWidget):
         self.graph_plot_1.setAspectLocked(True)
         self.graph_plot_1.setLabel('left', 'Y Position', units='v')
         self.graph_plot_1.setLabel('bottom', 'X Position', units='v')
+        self.graph_plot_1.getAxis('left').enableAutoSIPrefix(False)
+        self.graph_plot_1.getAxis('bottom').enableAutoSIPrefix(False)
 
         self.graph_img_item_1 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
         self.graph_plot_1.addItem(self.graph_img_item_1)
@@ -337,18 +341,18 @@ class LiveViewer(QWidget):
                                        yRange=[self.y_min, self.y_max], padding=0)
             self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
                                        yRange=[self.y_min, self.y_max], padding=0)
-        else:
-            self.graph_img_item_0.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
-                                                           self.x_max - self.x_min,
-                                                           self.y_max - self.y_min))
-            self.graph_img_item_1.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
-                                                           self.x_max - self.x_min,
-                                                           self.y_max - self.y_min))
-
-            self.graph_plot_0.setRange(xRange=[self.x_min, self.x_max],
-                                       yRange=[self.y_min, self.y_max], padding=0)
-            self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
-                                       yRange=[self.y_min, self.y_max], padding=0)
+        # else:
+        #     self.graph_img_item_0.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+        #                                                    self.x_max - self.x_min,
+        #                                                    self.y_max - self.y_min))
+        #     self.graph_img_item_1.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+        #                                                    self.x_max - self.x_min,
+        #                                                    self.y_max - self.y_min))
+        #
+        #     self.graph_plot_0.setRange(xRange=[self.x_min, self.x_max],
+        #                                yRange=[self.y_min, self.y_max], padding=0)
+        #     self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
+        #                                yRange=[self.y_min, self.y_max], padding=0)
 
     def set_graph_image(self, img_0: np.ndarray, img_1: np.ndarray, levels=None):
         self.graph_img_item_0.setImage(img_0, autoLevels=(levels is None))
