@@ -268,8 +268,24 @@ class NIDAQ:
     def start_photon_count(self):
         for acq in self.acq_threads:
             if acq:
-                acq.start()
-        self.logg.info("Photon counting started")
+                if acq.started:
+                    acq.resume()
+                    self.logg.info("Photon counting resumed")
+                else:
+                    acq.start()
+                    self.logg.info("Photon counting started")
+
+    def pause_photon_count(self):
+        for acq in self.acq_threads:
+            if acq:
+                acq.pause()
+        self.logg.info("Photon counting paused")
+
+    def resume_photon_count(self):
+        for acq in self.acq_threads:
+            if acq:
+                acq.resume()
+        self.logg.info("Photon counting resumed")
 
     def stop_photon_count(self):
         for acq in self.acq_threads:
@@ -338,19 +354,19 @@ class NIDAQ:
             self.start_triggers()
             if self.mode == AcquisitionType.FINITE:
                 try:
+                    self.logg.info("Trigger is running")
                     if self._active["analog"] and self._running["analog"]:
                         self.tasks["analog"].wait_until_done(WAIT_INFINITELY)
                     if self._active["photon_counters"] and self._running["photon_counters"]:
                         for task in self.tasks["photon_counters"]:
                             task.wait_until_done(WAIT_INFINITELY)
-                        self._running["photon_counters"] = False
                     if self._active["pmt_reader"] and self._running["pmt_reader"]:
                         self.tasks["pmt_reader"].wait_until_done(WAIT_INFINITELY)
                     if self._active["digital"] and self._running["digital"]:
                         self.tasks["digital"].wait_until_done(WAIT_INFINITELY)
+                    self.logg.info("Trigger finished")
                 except nidaqmx.DaqWarning as e:
                     self.logg.warning("DaqWarning caught as exception: %s", e)
-            self.logg.info("Trigger is running")
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:

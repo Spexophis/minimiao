@@ -94,6 +94,8 @@ class LiveViewer(QWidget):
         self.data_curve_0 = None
         self.data_curve_1 = None
         self.psr_mode = False
+        self.x_min, self.x_max = None, None
+        self.y_min, self.y_max = None, None
         self.wfr_mode = False
         self.wfr_worker = None
         self._setup_signal_connections()
@@ -163,8 +165,8 @@ class LiveViewer(QWidget):
 
         self.graph_plot_0 = pg.PlotWidget()
         self.graph_plot_0.setAspectLocked(True)
-        self.graph_plot_0.getPlotItem().hideAxis("left")
-        self.graph_plot_0.getPlotItem().hideAxis("bottom")
+        self.graph_plot_0.setLabel('left', 'Y Position', units='v')
+        self.graph_plot_0.setLabel('bottom', 'X Position', units='v')
 
         self.graph_img_item_0 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
         self.graph_plot_0.addItem(self.graph_img_item_0)
@@ -172,8 +174,8 @@ class LiveViewer(QWidget):
 
         self.graph_plot_1 = pg.PlotWidget()
         self.graph_plot_1.setAspectLocked(True)
-        self.graph_plot_1.getPlotItem().hideAxis("left")
-        self.graph_plot_1.getPlotItem().hideAxis("bottom")
+        self.graph_plot_1.setLabel('left', 'Y Position', units='v')
+        self.graph_plot_1.setLabel('bottom', 'X Position', units='v')
 
         self.graph_img_item_1 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
         self.graph_plot_1.addItem(self.graph_img_item_1)
@@ -279,14 +281,15 @@ class LiveViewer(QWidget):
     def set_plot_1(self, n):
         self.QComboBox_plot_selection.setCurrentIndex(n)
 
-    def plot_trace(self, y, overlay=False):
+    def plot_trace(self, y, x=None, overlay=False):
         y = np.asarray(y)
         if y.size == 0:
             return
         if not overlay:
             self.data_plot_0.clear()
             self._overlay_n = 0
-        x = np.arange(y.size)
+        if x is None:
+            x = np.arange(y.size)
         self.data_plot_0.enableAutoRange(x=True)
         color = pg.intColor(self._overlay_n, hues=12)  # 12 distinct-ish hues, repeats after 12
         pen = pg.mkPen(color=color, width=1.)
@@ -316,6 +319,37 @@ class LiveViewer(QWidget):
         self.data_curve_0.setData(xt, counts_0)
         self.data_curve_1.setData(xt, counts_1)
 
+    def set_graph_with_axes(self, img_0: np.ndarray, img_1: np.ndarray, x_axis=None, y_axis=None, levels=None):
+        self.set_graph_image(img_0, img_1, levels)
+
+        if x_axis is not None and y_axis is not None:
+            self.x_min, self.x_max = x_axis[0], x_axis[-1]
+            self.y_min, self.y_max = y_axis[0], y_axis[-1]
+
+            self.graph_img_item_0.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+                                                           self.x_max - self.x_min,
+                                                           self.y_max - self.y_min))
+            self.graph_img_item_1.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+                                                           self.x_max - self.x_min,
+                                                           self.y_max - self.y_min))
+
+            self.graph_plot_0.setRange(xRange=[self.x_min, self.x_max],
+                                       yRange=[self.y_min, self.y_max], padding=0)
+            self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
+                                       yRange=[self.y_min, self.y_max], padding=0)
+        else:
+            self.graph_img_item_0.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+                                                           self.x_max - self.x_min,
+                                                           self.y_max - self.y_min))
+            self.graph_img_item_1.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
+                                                           self.x_max - self.x_min,
+                                                           self.y_max - self.y_min))
+
+            self.graph_plot_0.setRange(xRange=[self.x_min, self.x_max],
+                                       yRange=[self.y_min, self.y_max], padding=0)
+            self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
+                                       yRange=[self.y_min, self.y_max], padding=0)
+
     def set_graph_image(self, img_0: np.ndarray, img_1: np.ndarray, levels=None):
         self.graph_img_item_0.setImage(img_0, autoLevels=(levels is None))
         if levels is not None:
@@ -327,4 +361,4 @@ class LiveViewer(QWidget):
     def on_psr_frame(self):
         self.stream_trace_update(self.photon_pool.xt, np.array(self.photon_pool.buf_0), np.array(self.photon_pool.buf_1))
         if self.psr_mode:
-            self.set_graph_image(self.photon_pool.img_0, self.photon_pool.img_1)
+            self.set_graph_with_axes(self.photon_pool.img_0, self.photon_pool.img_1)

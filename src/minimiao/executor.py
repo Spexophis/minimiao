@@ -16,6 +16,7 @@ from . import run_threads, logger
 
 
 class CommandExecutor(QObject):
+    sig_plt = pyqtSignal(list, list)
     psv = pyqtSignal(str)
     zsv = pyqtSignal(list, object)
 
@@ -77,6 +78,7 @@ class CommandExecutor(QObject):
         self.ao_panel.Signal_img_shwfs_save_wf.connect(self.save_img_wf)
         # AO
         self.ao_panel.Signal_sensorlessAO_run.connect(self.run_sensorless_iteration)
+        self.sig_plt.connect(self.plot_curve)
 
     def _initial_setup(self):
         try:
@@ -274,6 +276,7 @@ class CommandExecutor(QObject):
             self.devs.daq.run_triggers()
             self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0,
                                      self.viewer.photon_pool.buf_1)
+            self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1], self.trg.dot_pos[0], self.trg.dot_pos[1])
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -314,6 +317,13 @@ class CommandExecutor(QObject):
             # Delete worker
             worker.deleteLater()  # Qt will delete when safe
             self.viewer.psr_worker = None
+
+    @pyqtSlot(list, list)
+    def plot_curve(self, xx: list, yy: list):
+        try:
+            self.viewer.plot_trace(y=yy, x=xx, overlay=False)
+        except Exception as e:
+            self.logg.error(f"Error plotting: {e}")
 
     @pyqtSlot()
     def plot_trigger(self):
@@ -575,6 +585,145 @@ class CommandExecutor(QObject):
             file_name = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S"))
         self.wfr.save_wfs_results(file_name, self.devs.dfm)
 
+    def prepare_sensorless_iteration(self):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.update_trigger_parameters()
+        dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_scan(self.lasers, [0, 1])
+        self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+        self.devs.daq.photon_counter_mode = 1
+        self.devs.daq.psr = self.rec
+        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
+                                       dwell_samples=pdw)
+        self.devs.daq.photon_counter_length = dtr.shape[1]
+        self.devs.daq.prepare_photon_counter()
+
+    def sensorless_iteration(self, dms):
+        ims = []
+        for dmsp in dms:
+            self.devs.dfm.set_dm(dmsp)
+            time.sleep(0.016)
+            self.one_scan()
+            img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+            ims.append(img)
+        return ims
+
+    def one_scan(self):
+        self.rec.prepare_point_scan_live_recon()
+        self.devs.daq.run_triggers()
+        time.sleep(0.01)
+        self.devs.daq.pause_photon_count()
+        self.devs.daq.stop_triggers(_close=False)
+
+    def sensorless_iterations(self):
+        try:
+            mf, err = self.ao_panel.get_sensorless_parameters()
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + mf
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
+        except Exception as e:
+            self.logg.error(f'Error creating directory for sensorless iteration: {e}')
+            return
+        try:
+            self.prepare_sensorless_iteration()
+        except Exception as e:
+            self.logg.error(f"Prepare sensorless iteration Error: {e}")
+            return
+        try:
+            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_sensorless_iteration()
+            md = self.ao_panel.get_img_wfs_method()
+            amprange = [amp_start + step_number * amp_step for step_number in range(amp_step_number)]
+            results = [('Mode', 'Amp', 'Metric')]
+            za = []
+            mv = []
+            zp = [0] * self.devs.dfm.n_zernike
+            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
+            self.logg.info("Sensorless AO iterations start")
+            self.devs.dfm.set_dm(cmd)
+            time.sleep(0.016)
+            if err:
+                images = []
+                for i in range(8):
+                    self.one_scan()
+                    img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+                    images.append(img)
+                if mf == "Max(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "Sum(Intensity)":
+                    mts = [img.sum() for img in images]
+                if mf == "GaussPeak(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "GaussSum(Intensity)":
+                    mts = [img.sum() for img in images]
+                std = np.std(mts)
+                fn = new_folder + r"\original.tiff"
+                tf.imwrite(str(fn), np.asarray(images))
+            else:
+                self.one_scan()
+                fn = new_folder + r"\original.tiff"
+                img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+                tf.imwrite(str(fn), img)
+            for mode in range(mode_start, mode_stop + 1):
+                self.vw.dialog_text.setText(f"Zernike mode #{mode}")
+                labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
+                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in amprange]
+                images = self.sensorless_iteration(cmds)
+                if mf == "Max(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "Sum(Intensity)":
+                    mts = [img.sum() for img in images]
+                if mf == "GaussPeak(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "GaussSum(Intensity)":
+                    mts = [img.sum() for img in images]
+                self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
+                self.sig_plt.emit(amprange, mts)
+                if err:
+                    mts_err = [std] * len(mts)
+                    pm = ipr.peak_find(amprange, mts, mts_err)
+                else:
+                    pm = ipr.peak_find(amprange, mts)
+                if isinstance(pm, str):
+                    self.logg.error(f"zernike mode #{mode} " + pm)
+                else:
+                    zp[mode] = pm
+                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
+                    self.devs.dfm.set_dm(cmd)
+                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
+                for amp, mt in zip(amprange, mts):
+                    results.append((mode, amp, mt))
+                za.extend(amprange)
+                mv.extend(mts)
+                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
+                with tf.TiffWriter(fn) as tif:
+                    for img, label in zip(images, labels):
+                        tif.write(img, description=label)
+            self.devs.dfm.set_dm(cmd)
+            time.sleep(0.016)
+            self.one_scan()
+            fn = new_folder + r"\final.tiff"
+            img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+            tf.imwrite(str(fn), img)
+            self.devs.dfm.dm_cmd.append(cmd)
+            self.ao_panel.update_cmd_index()
+            i = int(self.ao_panel.get_cmd_index())
+            self.devs.dfm.current_cmd = i
+            self.devs.dfm.write_cmd(new_folder, '_')
+            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
+        except Exception as e:
+            self.stop_video()
+            self.logg.error(f"Sensorless AO Error: {e}")
+            return
+        self.stop_video()
+
+    @pyqtSlot()
+    def run_sensorless_iteration(self):
+        self.vw.get_dialog(txt="Sensorless Iteration")
+        self.run_task(task=self.sensorless_iterations)
+
     def influence_function(self):
         try:
             self.prepare_wfs()
@@ -634,131 +783,3 @@ class CommandExecutor(QObject):
     def run_influence_function(self):
         self.vw.get_dialog(txt="Influence Function")
         self.run_task(self.influence_function)
-
-    def sensorless_iteration(self, dms):
-        ims = []
-        for dmsp in dms:
-            self.devs.dfm.set_dm(dmsp)
-            time.sleep(0.016)
-            self.devs.daq.run_triggers()
-            time.sleep(0.032)
-            self.devs.daq.stop_triggers(_close=False)
-            ims.append(self.devs.camera.get_last_image())
-        return ims
-
-    def sensorless_iterations(self):
-        try:
-            lpr, hpr, slf, mf, err = self.ao_panel.get_ao_parameters()
-            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + mf
-            new_folder = os.path.join(self.path, name)
-            os.makedirs(new_folder, exist_ok=True)
-            self.logg.info(f'Directory {new_folder} has been created successfully.')
-        except Exception as e:
-            self.logg.error(f'Error creating directory for sensorless iteration: {e}')
-            return
-        try:
-            vd_mod = self.ctrl_panel.get_live_mode()
-            self.prepare_video(vd_mod, True)
-        except Exception as e:
-            self.logg.error(f"Prepare sensorless iteration Error: {e}")
-            return
-        try:
-            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_ao_iteration()
-            md = self.ao_panel.get_img_wfs_method()
-            amprange = [amp_start + step_number * amp_step for step_number in range(amp_step_number)]
-            results = [('Mode', 'Amp', 'Metric')]
-            za = []
-            mv = []
-            zp = [0] * self.devs.dfm.n_zernike
-            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
-            self.devs.camera.start_live()
-            time.sleep(0.1)
-            self.logg.info("Sensorless AO iterations start")
-            self.devs.dfm.set_dm(cmd)
-            time.sleep(0.016)
-            if err:
-                images = []
-                for i in range(8):
-                    self.devs.daq.run_triggers()
-                    time.sleep(0.032)
-                    self.devs.daq.stop_triggers(_close=False)
-                    images.append(self.devs.camera.get_last_image())
-                if mf == "Max(Intensity)":
-                    mts = [img.max() for img in images]
-                if mf == "Sum(Intensity)":
-                    mts = [img.sum() for img in images]
-                if mf == "SNR(FFT)":
-                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
-                if mf == "HighPass(FFT)":
-                    mts = [ipr.hpf(img, hpr) for img in images]
-                if mf == "Selected(FFT)":
-                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
-                std = np.std(mts)
-                fn = new_folder + r"\original.tiff"
-                tf.imwrite(str(fn), np.asarray(images))
-            else:
-                self.devs.daq.run_triggers()
-                time.sleep(0.032)
-                self.devs.daq.stop_triggers(_close=False)
-                fn = new_folder + r"\original.tiff"
-                tf.imwrite(str(fn), self.devs.camera.get_last_image())
-            for mode in range(mode_start, mode_stop + 1):
-                self.v.dialog_text.setText(f"Zernike mode #{mode}")
-                labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
-                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in amprange]
-                images = self.sensorless_iteration(cmds)
-                if mf == "Max(Intensity)":
-                    mts = [img.max() for img in images]
-                if mf == "Sum(Intensity)":
-                    mts = [img.sum() for img in images]
-                if mf == "SNR(FFT)":
-                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
-                if mf == "HighPass(FFT)":
-                    mts = [ipr.hpf(img, hpr) for img in images]
-                if mf == "Selected(FFT)":
-                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
-                self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
-                self.sig_plt.emit(amprange, mts)
-                if err:
-                    mts_err = [std] * len(mts)
-                    pm = ipr.peak_find(amprange, mts, mts_err)
-                else:
-                    pm = ipr.peak_find(amprange, mts)
-                if isinstance(pm, str):
-                    self.logg.error(f"zernike mode #{mode} " + pm)
-                else:
-                    zp[mode] = pm
-                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
-                    self.devs.dfm.set_dm(cmd)
-                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
-                for amp, mt in zip(amprange, mts):
-                    results.append((mode, amp, mt))
-                za.extend(amprange)
-                mv.extend(mts)
-                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
-                with tf.TiffWriter(fn) as tif:
-                    for img, label in zip(images, labels):
-                        tif.write(img, description=label)
-            self.devs.dfm.set_dm(cmd)
-            time.sleep(0.016)
-            self.devs.daq.run_triggers()
-            time.sleep(0.032)
-            self.devs.daq.stop_triggers(_close=False)
-            fn = new_folder + r"\final.tiff"
-            tf.imwrite(str(fn), self.devs.camera.get_last_image())
-            self.devs.dfm.dm_cmd.append(cmd)
-            self.ao_panel.update_cmd_index()
-            i = int(self.ao_panel.get_cmd_index())
-            self.devs.dfm.current_cmd = i
-            self.devs.dfm.write_cmd(new_folder, '_')
-            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
-        except Exception as e:
-            self.stop_video()
-            self.logg.error(f"Sensorless AO Error: {e}")
-            return
-        self.stop_video()
-
-    @pyqtSlot()
-    def run_sensorless_iteration(self):
-        self.vw.get_dialog(txt="Sensorless Iteration")
-        self.run_task(task=self.sensorless_iterations)

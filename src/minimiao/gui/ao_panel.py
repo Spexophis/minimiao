@@ -29,9 +29,6 @@ class AOPanel(QWidget):
     Signal_load_dm = pyqtSignal()
     Signal_save_dm = pyqtSignal()
     Signal_sensorlessAO_run = pyqtSignal()
-    Signal_sensorlessAO_auto = pyqtSignal()
-    Signal_sensorlessAO_metric_acquisition = pyqtSignal()
-    Signal_sensorlessAO_ml_acquisition = pyqtSignal()
 
     def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -215,13 +212,9 @@ class AOPanel(QWidget):
         self.QDoubleSpinBox_zernike_mode_amps_step = cw.DoubleSpinBoxWidget(-50, 50, 0.005, 3, 0.01)
         self.QDoubleSpinBox_lpf = cw.DoubleSpinBoxWidget(0, 1, 0.05, 2, 0.1)
         self.QDoubleSpinBox_hpf = cw.DoubleSpinBoxWidget(0, 1, 0.05, 2, 0.6)
-        self.QComboBox_metric = cw.ComboBoxWidget(list_items=['Max(Intensity)', 'Sum(Intensity)', 'Mask(Intensity)',
-                                                              'SNR(FFT)', 'HighPass(FFT)', 'Selected(FFT)'])
+        self.QComboBox_metric = cw.ComboBoxWidget(list_items=['Max(Intensity)', 'Sum(Intensity)'])
         self.QDoubleSpinBox_select_frequency = cw.DoubleSpinBoxWidget(0, 50, 0.001, 3, 1.410)
         self.QPushButton_sensorless_run = cw.PushButtonWidget('Run AO')
-        self.QPushButton_sensorless_auto = cw.PushButtonWidget('Auto AO')
-        self.QPushButton_sensorless_metric_acqs = cw.PushButtonWidget('Run MFACQs')
-        self.QPushButton_sensorless_ml_acqs = cw.PushButtonWidget('Run MLACQs')
         self.QRadioButton_sensorless_error = cw.RadioButtonWidget('ErrorIn')
 
         sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Zernike Modes')), 0, 0, 1, 2)
@@ -246,9 +239,6 @@ class AOPanel(QWidget):
         sensorless_scroll_layout.addWidget(self.QComboBox_metric, 1, 5, 1, 1)
         sensorless_scroll_layout.addWidget(self.QRadioButton_sensorless_error, 2, 5, 1, 1)
         sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_run, 3, 5, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_auto, 4, 5, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_metric_acqs, 3, 0, 1, 2)
-        sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_ml_acqs, 4, 0, 1, 2)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(sensorless_scroll_area)
@@ -289,9 +279,6 @@ class AOPanel(QWidget):
         self.QPushButton_change_dm_flat.clicked.connect(self.change_dm_flat)
         self.QPushButton_dwfs_cl_correction.clicked.connect(self.run_close_loop_correction)
         self.QPushButton_sensorless_run.clicked.connect(self.run_sensorless_correction)
-        self.QPushButton_sensorless_auto.clicked.connect(self.run_sensorless_auto)
-        self.QPushButton_sensorless_metric_acqs.clicked.connect(self.run_sensorless_metric_acquisition)
-        self.QPushButton_sensorless_ml_acqs.clicked.connect(self.run_sensorless_ml_acquisition)       
 
     def get_cmos_roi(self):
         return [self.QSpinBox_cmos_coordinate_x.value(), self.QSpinBox_cmos_coordinate_y.value(),
@@ -427,27 +414,13 @@ class AOPanel(QWidget):
     def run_sensorless_correction(self):
         self.Signal_sensorlessAO_run.emit()
 
-    @pyqtSlot()
-    def run_sensorless_auto(self):
-        self.Signal_sensorlessAO_auto.emit()
-
-    @pyqtSlot()
-    def run_sensorless_metric_acquisition(self):
-        self.Signal_sensorlessAO_metric_acquisition.emit()
-
-    @pyqtSlot()
-    def run_sensorless_ml_acquisition(self):
-        self.Signal_sensorlessAO_ml_acquisition.emit()
-
     def get_sensorless_iteration(self):
         return (self.QSpinBox_zernike_mode_start.value(), self.QSpinBox_zernike_mode_stop.value(),
                 self.QDoubleSpinBox_zernike_mode_amps_start.value(), self.QDoubleSpinBox_zernike_mode_amps_step.value(),
                 self.QSpinBox_zernike_mode_amps_stepnum.value())
 
     def get_sensorless_parameters(self):
-        return (self.QDoubleSpinBox_lpf.value(), self.QDoubleSpinBox_hpf.value(),
-                self.QDoubleSpinBox_select_frequency.value(), self.QComboBox_metric.currentText(),
-                self.QRadioButton_sensorless_error.isChecked())
+        return self.QComboBox_metric.currentText(), self.QRadioButton_sensorless_error.isChecked()
 
     def save_spinbox_values(self):
         values = {}

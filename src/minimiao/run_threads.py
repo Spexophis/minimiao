@@ -83,25 +83,46 @@ class MPDCountThread(threading.Thread):
         self.daq = daq
         self.ind = ind
         self.interval = interval
+        self.started = False
         self.running = False
+        self.paused = False
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)
 
     def run(self):
+        self.started = True
         self.running = True
         while self.running:
             with self.condition:
+
+                while self.paused and self.running:
+                    self.condition.wait()
+
+                if not self.running:
+                    break
+
                 self.condition.wait(timeout=self.interval)
 
                 if not self.running:
                     break
 
-                self.daq.get_photon_counts(self.ind)
+                if not self.paused and self.running:
+                    self.daq.get_photon_counts(self.ind)
+
+    def pause(self):
+        with self.condition:
+            self.paused = True
+
+    def resume(self):
+        with self.condition:
+            self.paused = False
+            self.condition.notify()
 
     def stop(self):
         with self.condition:
             self.running = False
-            self.condition.notify()  # Wake up immediately
+            self.paused = False
+            self.condition.notify()
         self.join()
 
     def trigger(self):
@@ -142,9 +163,14 @@ class MPDCountList:
             if self.callback is not None:
                 self.callback(counts, list(indices), ind)
 
+    def get_last_element(self, ind):
+        c = self.data_lists[ind][-1] if self.data_lists[ind][-1] else None
+        return c
+
     def get_elements(self, ind):
-        return (np.array(self.data_lists[ind]) if self.data_lists[ind] else None,
-                self.count_lists[ind] if self.count_lists[ind] else None)
+        r = np.array(self.data_lists[ind]) if self.data_lists[ind] else None
+        d = self.count_lists[ind] if self.count_lists[ind] else None
+        return r, d
 
     def on_update(self, callback):
         self.callback = callback
