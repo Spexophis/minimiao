@@ -57,7 +57,7 @@ class PhotonPool(QObject):
         self.buf.extend(counts)
         self.img = recon_img
 
-    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None, px:tuple | None = None):
+    def reset_buffer(self, max_len: int | None = None, dt_s: float | None = None, px: tuple | None = None):
         if max_len is not None:
             self.max_len = min(int(max_len), int(2 ** 16))
         self.buf = deque(np.zeros(self.max_len, dtype=np.int64), maxlen=self.max_len)
@@ -166,10 +166,10 @@ class LiveViewer(QWidget):
 
         self.graph_plot = pg.PlotWidget()
         self.graph_plot.setAspectLocked(True)
-        self.graph_plot.getPlotItem().hideAxis("left")
-        self.graph_plot.getPlotItem().hideAxis("bottom")
+        self.graph_plot.setLabel('left', 'Y Position', units='v')
+        self.graph_plot.setLabel('bottom', 'X Position', units='v')
 
-        self.graph_img_item = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
+        self.graph_img_item = pg.ImageItem(axisOrder="row-major")
         self.graph_plot.addItem(self.graph_img_item)
         self.graph_plot.invertY(True)
 
@@ -283,6 +283,26 @@ class LiveViewer(QWidget):
 
     def stream_trace_update(self, xt: np.ndarray, counts: np.ndarray):
         self.data_curve.setData(xt, counts)
+
+    def set_graph_with_axes(self, image, x_axis=None, y_axis=None, levels=None):
+        self.graph_img_item.setImage(image, autoLevels=(levels is None))
+
+        if levels is not None:
+            self.graph_img_item.setLevels(levels)
+
+        if x_axis is not None and y_axis is not None:
+            x_min, x_max = x_axis[0], x_axis[-1]
+            y_min, y_max = y_axis[0], y_axis[-1]
+
+            self.graph_img_item.setRect(pg.QtCore.QRectF(x_min, y_min, x_max - x_min, y_max - y_min))
+
+            self.graph_x_axis = x_axis
+            self.graph_y_axis = y_axis
+
+            self.graph_plot.setRange(xRange=[x_min, x_max], yRange=[y_min, y_max],padding=0)
+        else:
+            h, w = image.shape
+            self.graph_img_item.setRect(pg.QtCore.QRectF(0, 0, w, h))
 
     def set_graph_image(self, img2d: np.ndarray, levels=None):
         self.graph_img_item.setImage(img2d, autoLevels=(levels is None))
