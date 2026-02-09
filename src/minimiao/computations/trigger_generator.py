@@ -20,18 +20,18 @@ class TriggerSequence:
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
         # galvo scanner
-        self.galvo_step_response = 3.2e-4  # ~320 us
+        self.galvo_step_response = 2e-4  # ~320 us
         self.galvo_step_response_samples = round(self.galvo_step_response * self.sample_rate)
-        self.galvo_return_time = 8e-4  # ~640 us
+        self.galvo_return_time = 3.2e-4  # ~640 us
         self.galvo_return_samples = round(self.galvo_return_time * self.sample_rate)
         self.galvo_origins = [0.0, 0.0]  # V
-        self.galvo_ranges = [1.0, 1.0]  # V
-        self.galvo_offsets = [0.008, 0.008]  # V
+        self.galvo_ranges = [2.0, 2.6]  # V
+        self.galvo_offsets = [-0.003, -0.005]  # V
         self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
-        self.dot_ranges = [0.8, 0.8]  # V
+        self.dot_ranges = [0.8, 1.1]  # V
         self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.dot_ranges)]
         self.dot_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.dot_ranges)]
-        self.dot_steps = [0.02, 0.02]  # volts
+        self.dot_steps = [0.004, 0.0055]  # volts
         self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
                         zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
@@ -192,6 +192,8 @@ class TriggerSequence:
             raise Exception("Error: zero piezo scan step")
         galvo_sequences = [np.empty((0,)) for _ in range(len(gv_chs))]
         n, pch = 0, 0
+        galvo_offset_x = np.linspace(0, self.galvo_offsets[0], self.galvo_scan_pos[0])
+        self.dot_pos[pch] += galvo_offset_x
         galvo_sequences[n] = np.repeat(self.dot_pos[pch], digital_triggers.shape[1])
         if 2 in detectors:
             galvo_sequences[n] = shift_array(galvo_sequences[n],
@@ -209,6 +211,9 @@ class TriggerSequence:
         digital_triggers = np.pad(digital_triggers, ((0, 0), (0, offset_samples)), mode="constant", constant_values=0)
         n, pch = 1, 1
         galvo_sequences[n] = np.repeat(self.dot_pos[pch], digital_triggers.shape[1])
+        galvo_offset_y = np.linspace(0, self.galvo_offsets[1], digital_triggers.shape[1])
+        galvo_offset_y = np.tile(galvo_offset_y, self.galvo_scan_pos[1])
+        galvo_sequences[n] += galvo_offset_y
         if 2 in detectors:
             galvo_sequences[n] = shift_array(galvo_sequences[n],
                                              max(self.standby_samples, self.galvo_step_response_samples),

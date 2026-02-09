@@ -10,9 +10,9 @@ import numpy as np
 import pandas as pd
 import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer, Qt
-from .utilities import image_processor as ipr
-from .utilities import zernike_generator as tz
+
 from . import run_threads, logger
+from .utilities import image_processor as ipr
 
 
 class CommandExecutor(QObject):
@@ -37,7 +37,7 @@ class CommandExecutor(QObject):
         self._set_signal_executions()
         self._initial_setup()
         self.lasers = []
-        self.detector = {0: [0, 1], 1: [0]}
+        self.detector = {0: [0, 1], 1: [0, 2]}
         self.task_worker = None
 
     @staticmethod
@@ -276,7 +276,8 @@ class CommandExecutor(QObject):
             self.devs.daq.run_triggers()
             self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0,
                                      self.viewer.photon_pool.buf_1)
-            self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1], self.trg.dot_pos[0], self.trg.dot_pos[1])
+            self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1], self.trg.dot_pos[0],
+                                            self.trg.dot_pos[1])
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -449,10 +450,12 @@ class CommandExecutor(QObject):
         try:
             if factory:
                 self.devs.dfm.set_dm(
-                    self.devs.dfm.cmd_add([i * amp for i in self.devs.dfm.z2c[iz]], self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
+                    self.devs.dfm.cmd_add([i * amp for i in self.devs.dfm.z2c[iz]],
+                                          self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
             else:
                 self.devs.dfm.set_dm(
-                    self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(iz, amp, md), self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
+                    self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(iz, amp, md),
+                                          self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
@@ -467,7 +470,8 @@ class CommandExecutor(QObject):
     @pyqtSlot()
     def set_dm_flat(self):
         if int(self.ao_panel.get_cmd_index()) == self.devs.dfm.current_cmd:
-            self.devs.dfm.write_flat_cmd(t=time.strftime("%Y_%m_%d_%H_%M"), cmd=self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd])
+            self.devs.dfm.write_flat_cmd(t=time.strftime("%Y_%m_%d_%H_%M"),
+                                         cmd=self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd])
 
     @pyqtSlot()
     def update_dm(self):
@@ -619,8 +623,14 @@ class CommandExecutor(QObject):
 
     def sensorless_iterations(self):
         try:
-            mf, err = self.ao_panel.get_sensorless_parameters()
-            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + mf
+            src, mf, err = self.ao_panel.get_sensorless_parameters()
+            if src == 0:
+                im = 'MPD_'
+            elif src == 1:
+                im = 'PMT_'
+            else:
+                raise Exception(f"Invalid image source for sensorless iteration: {src}")
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + im + mf
             new_folder = os.path.join(self.path, name)
             os.makedirs(new_folder, exist_ok=True)
             self.logg.info(f'Directory {new_folder} has been created successfully.')
@@ -648,38 +658,42 @@ class CommandExecutor(QObject):
                 images = []
                 for i in range(8):
                     self.one_scan()
-                    img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+                    img = np.array(self.rec.live_rec[src]).astype(np.uint16)
                     images.append(img)
                 if mf == "Max(Intensity)":
                     mts = [img.max() for img in images]
                 if mf == "Sum(Intensity)":
                     mts = [img.sum() for img in images]
                 if mf == "GaussPeak(Intensity)":
-                    mts = [img.max() for img in images]
+                    mts = [ipr.gauss_metric(img, s=False) for img in images]
                 if mf == "GaussSum(Intensity)":
-                    mts = [img.sum() for img in images]
+                    mts = [ipr.gauss_metric(img, s=True) for img in images]
                 std = np.std(mts)
                 fn = new_folder + r"\original.tiff"
                 tf.imwrite(str(fn), np.asarray(images))
             else:
                 self.one_scan()
                 fn = new_folder + r"\original.tiff"
-                img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+                img = np.array(self.rec.live_rec[src]).astype(np.uint16)
                 tf.imwrite(str(fn), img)
             for mode in range(mode_start, mode_stop + 1):
                 self.vw.dialog_text.setText(f"Zernike mode #{mode}")
                 labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
-                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in amprange]
+                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in
+                        amprange]
                 images = self.sensorless_iteration(cmds)
                 if mf == "Max(Intensity)":
                     mts = [img.max() for img in images]
                 if mf == "Sum(Intensity)":
                     mts = [img.sum() for img in images]
                 if mf == "GaussPeak(Intensity)":
-                    mts = [img.max() for img in images]
+                    mts = [ipr.gauss_metric(img, s=False) for img in images]
                 if mf == "GaussSum(Intensity)":
-                    mts = [img.sum() for img in images]
+                    mts = [ipr.gauss_metric(img, s=True) for img in images]
                 self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
+                if any(not isinstance(x, (int, float)) for x in mts):
+                    self.logg.error(f"Invalid metric computation: {mts}")
+                    continue
                 self.sig_plt.emit(amprange, mts)
                 if err:
                     mts_err = [std] * len(mts)
@@ -705,7 +719,7 @@ class CommandExecutor(QObject):
             time.sleep(0.016)
             self.one_scan()
             fn = new_folder + r"\final.tiff"
-            img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+            img = np.array(self.rec.live_rec[src]).astype(np.uint16)
             tf.imwrite(str(fn), img)
             self.devs.dfm.dm_cmd.append(cmd)
             self.ao_panel.update_cmd_index()

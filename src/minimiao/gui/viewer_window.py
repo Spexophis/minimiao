@@ -330,13 +330,17 @@ class LiveViewer(QWidget):
             self.x_min, self.x_max = x_axis[0], x_axis[-1]
             self.y_min, self.y_max = y_axis[0], y_axis[-1]
 
+            h, w = img_0.shape
+            pixel_width = (self.x_max - self.x_min) / w
+            pixel_height = (self.y_max - self.y_min) / h
             self.graph_img_item_0.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
                                                            self.x_max - self.x_min,
                                                            self.y_max - self.y_min))
             self.graph_img_item_1.setRect(pg.QtCore.QRectF(self.x_min, self.y_min,
                                                            self.x_max - self.x_min,
                                                            self.y_max - self.y_min))
-
+            self.graph_plot_0.setAspectLocked(True, ratio=pixel_height / pixel_width)
+            self.graph_plot_1.setAspectLocked(True, ratio=pixel_height / pixel_width)
             self.graph_plot_0.setRange(xRange=[self.x_min, self.x_max],
                                        yRange=[self.y_min, self.y_max], padding=0)
             self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],

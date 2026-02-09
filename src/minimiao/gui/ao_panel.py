@@ -210,10 +210,9 @@ class AOPanel(QWidget):
         self.QDoubleSpinBox_zernike_mode_amps_start = cw.DoubleSpinBoxWidget(-50, 50, 0.005, 3, -0.01)
         self.QSpinBox_zernike_mode_amps_stepnum = cw.SpinBoxWidget(0, 50, 2, 3)
         self.QDoubleSpinBox_zernike_mode_amps_step = cw.DoubleSpinBoxWidget(-50, 50, 0.005, 3, 0.01)
-        self.QDoubleSpinBox_lpf = cw.DoubleSpinBoxWidget(0, 1, 0.05, 2, 0.1)
-        self.QDoubleSpinBox_hpf = cw.DoubleSpinBoxWidget(0, 1, 0.05, 2, 0.6)
-        self.QComboBox_metric = cw.ComboBoxWidget(list_items=['Max(Intensity)', 'Sum(Intensity)'])
-        self.QDoubleSpinBox_select_frequency = cw.DoubleSpinBoxWidget(0, 50, 0.001, 3, 1.410)
+        self.QComboBox_img_src = cw.ComboBoxWidget(list_items=['MPD', 'PMT'])
+        self.QComboBox_metric = cw.ComboBoxWidget(list_items=['Max(Intensity)', 'Sum(Intensity)',
+                                                              "GaussPeak(Intensity)", "GaussSum(Intensity)"])
         self.QPushButton_sensorless_run = cw.PushButtonWidget('Run AO')
         self.QRadioButton_sensorless_error = cw.RadioButtonWidget('ErrorIn')
 
@@ -223,22 +222,18 @@ class AOPanel(QWidget):
         sensorless_scroll_layout.addWidget(cw.LabelWidget(str('To')), 2, 0, 1, 1)
         sensorless_scroll_layout.addWidget(self.QSpinBox_zernike_mode_stop, 2, 1, 1, 1)
         sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Amplitudes')), 0, 2, 1, 2)
-        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('From')), 1, 2, 1, 1)
+        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Start')), 1, 2, 1, 1)
         sensorless_scroll_layout.addWidget(self.QDoubleSpinBox_zernike_mode_amps_start, 1, 3, 1, 1)
         sensorless_scroll_layout.addWidget(cw.LabelWidget(str('StepNum')), 2, 2, 1, 1)
         sensorless_scroll_layout.addWidget(self.QSpinBox_zernike_mode_amps_stepnum, 2, 3, 1, 1)
         sensorless_scroll_layout.addWidget(cw.LabelWidget(str('StepSize')), 3, 2, 1, 1)
         sensorless_scroll_layout.addWidget(self.QDoubleSpinBox_zernike_mode_amps_step, 3, 3, 1, 1)
-        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('LPF')), 0, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QDoubleSpinBox_lpf, 1, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('HPF')), 2, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QDoubleSpinBox_hpf, 3, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Select')), 4, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QDoubleSpinBox_select_frequency, 5, 4, 1, 1)
-        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Image Metric')), 0, 5, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QComboBox_metric, 1, 5, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QRadioButton_sensorless_error, 2, 5, 1, 1)
-        sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_run, 3, 5, 1, 1)
+        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Image Source')), 0, 4, 1, 1)
+        sensorless_scroll_layout.addWidget(self.QComboBox_img_src, 1, 4, 1, 1)
+        sensorless_scroll_layout.addWidget(cw.LabelWidget(str('Image Metric')), 2, 4, 1, 1)
+        sensorless_scroll_layout.addWidget(self.QComboBox_metric, 3, 4, 1, 1)
+        sensorless_scroll_layout.addWidget(self.QRadioButton_sensorless_error, 0, 5, 1, 1)
+        sensorless_scroll_layout.addWidget(self.QPushButton_sensorless_run, 1, 5, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(sensorless_scroll_area)
@@ -420,7 +415,7 @@ class AOPanel(QWidget):
                 self.QSpinBox_zernike_mode_amps_stepnum.value())
 
     def get_sensorless_parameters(self):
-        return self.QComboBox_metric.currentText(), self.QRadioButton_sensorless_error.isChecked()
+        return self.QComboBox_img_src.currentIndex(), self.QComboBox_metric.currentText(), self.QRadioButton_sensorless_error.isChecked()
 
     def save_spinbox_values(self):
         values = {}

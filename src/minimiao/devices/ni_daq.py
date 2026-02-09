@@ -39,6 +39,7 @@ class NIDAQ:
                              "Dev1/port0/line3", "Dev1/port0/line4", "Dev1/port0/line5"]
         self.photon_counter_channels = ["/Dev1/ctr0", "/Dev1/ctr1"]
         self.photon_counter_terminals = ["/Dev1/PFI0", "/Dev1/PFI12"]
+        self.pmt_enable = ["Dev1/ao3"]
         self.pmt_channel = ["/Dev1/ai0"]
         self.pmt_data = None
         self._photon_counter_length = int(2 ** 16)
@@ -321,6 +322,24 @@ class NIDAQ:
             self.pmt_data.on_update(self.psr.point_scan_live_recon)
         self._active["pmt_reader"] = True
 
+    def set_pmt_enable(self, enable=True):
+        try:
+            with nidaqmx.Task() as task:
+                task.ao_channels.add_ao_voltage_chan(self.pmt_enable[0], min_val=0., max_val=5.)
+                if enable:
+                    task.write(float(0))
+                else:
+                    task.write(float(5))
+                task.wait_until_done(WAIT_INFINITELY)
+                task.stop()
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
     def get_pmt_amps(self):
         try:
             avail = self.tasks["pmt_reader"].in_stream.avail_samp_per_chan
@@ -332,6 +351,7 @@ class NIDAQ:
 
     def start_triggers(self):
         try:
+            self.set_pmt_enable(True)
             if self._active["digital"]:
                 self.tasks["digital"].start()
                 self._running["digital"] = True
@@ -377,6 +397,7 @@ class NIDAQ:
 
     def stop_triggers(self, _close=True):
         try:
+            self.set_pmt_enable(False)
             if self._active["analog"] and self._running["analog"]:
                 self.tasks["analog"].stop()
                 self._running["analog"] = False
