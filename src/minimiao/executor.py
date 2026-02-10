@@ -78,6 +78,7 @@ class CommandExecutor(QObject):
         self.ao_panel.Signal_img_shwfs_save_wf.connect(self.save_img_wf)
         # AO
         self.ao_panel.Signal_sensorlessAO_run.connect(self.run_sensorless_iteration)
+        self.ao_panel.Signal_img_shwfs_correct_wf.connect(self.run_close_loop_iteration)
         self.sig_plt.connect(self.plot_curve)
 
     def _initial_setup(self):
@@ -737,6 +738,45 @@ class CommandExecutor(QObject):
     def run_sensorless_iteration(self):
         self.vw.get_dialog(txt="Sensorless Iteration")
         self.run_task(task=self.sensorless_iterations)
+
+    def close_loop_correction(self, n, md, fnd):
+        data = [self.wfr.ref]
+        for i in range(n):
+            self.wfr.meas = self.devs.camera.get_last_image()
+            data.append(self.wfr.meas)
+            gdx, gdy = self.wfr.get_gradient_xy()
+            self.devs.dfm.get_correction((gdx, gdy), md)
+            self.devs.dfm.set_dm(self.devs.dfm.dm_cmd[-1])
+            self.ao_panel.update_cmd_index()
+            i = int(self.ao_panel.get_cmd_index())
+            self.devs.dfm.current_cmd = i
+            self.logg.info(f"Successful close loop correction")
+        tf.imwrite(str(fnd), np.array(data))
+
+    def close_loop_iteration(self):
+        try:
+            self.prepare_wfs()
+        except Exception as e:
+            self.logg.error(f"Error preparing close loop iteration: {e}")
+            return
+        try:
+            md = self.ao_panel.get_img_wfs_method()
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_close_loop_iterations_' + md + r".tif"
+            fnd = os.path.join(self.path, name)
+            self.devs.camera.start_live()
+            n = self.ao_panel.QSpinBox_close_loop_number.value()
+            time.sleep(2)
+            self.close_loop_correction(n, md, fnd)
+        except Exception as e:
+            self.logg.error(f"Error running close loop iteration: {e}")
+            self.stop_wfs()
+            return
+        self.stop_wfs()
+
+    @pyqtSlot()
+    def run_close_loop_iteration(self):
+        self.vw.get_dialog(txt="Close Loop Iteration")
+        self.run_task(self.close_loop_iteration)
 
     def influence_function(self):
         try:

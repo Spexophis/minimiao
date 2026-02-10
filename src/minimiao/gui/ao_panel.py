@@ -16,7 +16,7 @@ class AOPanel(QWidget):
     Signal_img_wfs = pyqtSignal(bool)
     Signal_img_shwfr_run = pyqtSignal(bool)
     Signal_img_shwfs_compute_wf = pyqtSignal(bool)
-    Signal_img_shwfs_correct_wf = pyqtSignal(int)
+    Signal_img_shwfs_correct_wf = pyqtSignal()
     Signal_img_shwfs_save_wf = pyqtSignal()
     Signal_img_shwfs_acquisition = pyqtSignal()
     Signal_dm_selection = pyqtSignal(str)
@@ -62,7 +62,7 @@ class AOPanel(QWidget):
         confocal_shwfs_parameters_scroll_area, confocal_shwfs_parameters_scroll_layout = cw.create_scroll_area()
 
         self.QLabel_wfrmd_foc = cw.LabelWidget(str('Method'))
-        self.QComboBox_wfrmd_foc = cw.ComboBoxWidget(list_items=['correlation', 'centerofmass'])
+        self.QComboBox_wfrmd_foc = cw.ComboBoxWidget(list_items=['correlation', 'centerofmass'], length=100)
         self.QSpinBox_base_xcenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
         self.QSpinBox_base_ycenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
         self.QSpinBox_offset_xcenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
@@ -128,7 +128,7 @@ class AOPanel(QWidget):
         image_shwfs_scroll_area, image_shwfs_scroll_layout = cw.create_scroll_area()
         image_wfr_scroll_area, image_wfr_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_wfs_camera_selection = cw.ComboBoxWidget(list_items=["CMOS"])
+        self.QComboBox_wfs_camera_selection = cw.ComboBoxWidget(list_items=["CMOS"], length=64)
         self.QPushButton_img_shwfs_base = cw.PushButtonWidget('SetBase', enable=True)
         self.QPushButton_run_img_wfs = cw.PushButtonWidget('RunWFS', checkable=True)
         self.QPushButton_run_img_wfr = cw.PushButtonWidget('RunWFR', checkable=True)
@@ -160,7 +160,7 @@ class AOPanel(QWidget):
         dm_scroll_area, dm_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_dms = cw.ComboBoxWidget(list_items=[])
-        self.QComboBox_wfsmd = cw.ComboBoxWidget(list_items=['modal', 'phase', 'zonal'])
+        self.QComboBox_wfsmd = cw.ComboBoxWidget(list_items=['modal', 'phase', 'zonal'], length=64)
         self.QSpinBox_actuator = cw.SpinBoxWidget(0, 96, 1, 0)
         self.QDoubleSpinBox_actuator_push = cw.DoubleSpinBoxWidget(-1, 1, 0.005, 3, 0)
         self.QPushButton_push_actuator = cw.PushButtonWidget('Push')
@@ -210,7 +210,7 @@ class AOPanel(QWidget):
         self.QDoubleSpinBox_zernike_mode_amps_start = cw.DoubleSpinBoxWidget(-50, 50, 0.005, 3, -0.01)
         self.QSpinBox_zernike_mode_amps_stepnum = cw.SpinBoxWidget(0, 50, 2, 3)
         self.QDoubleSpinBox_zernike_mode_amps_step = cw.DoubleSpinBoxWidget(-50, 50, 0.005, 3, 0.01)
-        self.QComboBox_img_src = cw.ComboBoxWidget(list_items=['MPD', 'PMT'])
+        self.QComboBox_img_src = cw.ComboBoxWidget(list_items=['MPD', 'PMT'], length=64)
         self.QComboBox_metric = cw.ComboBoxWidget(list_items=['Max(Intensity)', 'Sum(Intensity)',
                                                               "GaussPeak(Intensity)", "GaussSum(Intensity)"])
         self.QPushButton_sensorless_run = cw.PushButtonWidget('Run AO')
@@ -402,8 +402,7 @@ class AOPanel(QWidget):
 
     @pyqtSlot()
     def run_close_loop_correction(self):
-        n = self.QSpinBox_close_loop_number.value()
-        self.Signal_img_shwfs_correct_wf.emit(n)
+        self.Signal_img_shwfs_correct_wf.emit()
 
     @pyqtSlot()
     def run_sensorless_correction(self):

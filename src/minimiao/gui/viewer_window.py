@@ -197,7 +197,7 @@ class LiveViewer(QWidget):
         pi_0.setClipToView(True)
         pi_0.enableAutoRange(x=False)
 
-        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT", "Wavefront"])
+        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT", "Wavefront"], length=80)
 
         self.data_plot_1 = pg.PlotWidget()
         self.data_plot_1.showGrid(x=True, y=True)

@@ -41,8 +41,9 @@ class DeformableMirror:
             self._configure_dm()
         else:
             raise RuntimeError(f"Error Initializing DM {self.dm_name}")
-        # self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
-        #                               calib=self.ctrl_calib)
+        self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
+                                      calib=self.ctrl_calib)
+        self.g = 0.5
         try:
             self.set_dm(self.dm_cmd[self.current_cmd])
         except Exception as e:
@@ -96,10 +97,10 @@ class DeformableMirror:
             self.control_matrix_zonal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Zonal Control Matrix"])
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
-        # try:
-        #     self.ctrl_calib = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Control Calibration"]
-        # except Exception as e:
-        #     self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.ctrl_calib = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Control Calibration"]
+        except Exception as e:
+            self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
         try:
             self.control_matrix_modal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Modal Control Matrix"])
         except Exception as e:
@@ -136,18 +137,18 @@ class DeformableMirror:
 
     def get_correction(self, measurements, method="phase"):
         if method == 'phase':
-            self.correction.append(list(self.amp * np.dot(self.control_matrix_phase, -measurements.reshape(self.nls))))
+            self.correction.append(list(self.g * self.amp * np.dot(self.control_matrix_phase, -measurements.reshape(self.nls))))
         else:
             gradx, grady = measurements
             measurement = np.concatenate((gradx.reshape(self.nls), grady.reshape(self.nls)))
             if method == 'zonal':
-                self.correction.append(list(np.dot(self.control_matrix_zonal, -measurement)))
+                self.correction.append(list(self.g * np.dot(self.control_matrix_zonal, -measurement)))
             elif method == 'modal':
                 temp = self.get_zernike_coffs(gradx, grady)
                 a = np.zeros((self.n_zernike, 1))
                 a[:, 0] = temp
                 _, u = self.ctrl.compute_control(a, False)
-                self.correction.append(list(np.dot(self.control_matrix_modal, u[:, 0])))
+                self.correction.append(list(self.g * np.dot(self.control_matrix_modal, u[:, 0])))
             else:
                 self.logg.error(f"Invalid AO correction method")
                 return
@@ -161,7 +162,7 @@ class DeformableMirror:
             a = np.zeros((self.n_zernike, 1))
             a[:, 0] = temp
             _, u = self.ctrl.compute_control(a, False)
-            self.correction.append(list(np.dot(self.control_matrix_modal, u)))
+            self.correction.append(list(np.dot(self.control_matrix_modal, u[:, 0])))
             _c = self.cmd_add(self.dm_cmd[self.current_cmd], self.correction[-1])
             self.dm_cmd.append(_c)
         else:

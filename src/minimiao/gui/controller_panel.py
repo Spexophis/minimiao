@@ -89,7 +89,7 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_galvo_offset_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.0)
         self.QSpinBox_galvo_step_response = cw.SpinBoxWidget(0, 2000, 1, 320)
         self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 800)
-        self.QComboBox_galvo_scan_presets = cw.ComboBoxWidget(list_items=[])
+        self.QComboBox_galvo_scan_presets = cw.ComboBoxWidget(list_items=[], length=200)
         self.QPushButton_save_galvo_scan_presets = cw.PushButtonWidget("Save Scan")
         self.QLineEdit_new_galvo_scan_preset = cw.LineEditWidget()
         self.QPushButton_save_new_galvo_scan_preset = cw.PushButtonWidget("New Scan")

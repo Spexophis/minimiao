@@ -22,6 +22,20 @@ def img_properties(img):
     return img.min(), img.max(), rms(img)
 
 
+def find_center_of_mass(image):
+    height, width = image.shape
+    # row_indices, col_indices = np.indices((height, width))
+    # total_mass = np.sum(image)
+    # row_mass = np.sum(row_indices * image) / total_mass
+    # col_mass = np.sum(col_indices * image) / total_mass
+    row_indices = np.arange(0, height)[:, np.newaxis]
+    col_indices = np.arange(0, width)
+    total_mass = np.sum(image)
+    row_mass = np.sum(image * row_indices) / total_mass
+    col_mass = np.sum(image * col_indices) / total_mass
+    return row_mass, col_mass
+
+
 def fourier_transform(data):
     return np.log(np.abs(fftshift(fft2(data))))
 

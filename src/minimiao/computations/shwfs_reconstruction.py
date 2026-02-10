@@ -11,7 +11,6 @@ import numpy as np
 import tifffile as tf
 from scipy.signal import fftconvolve as corr
 from skimage.filters import threshold_otsu
-
 from minimiao import logger
 from minimiao.utilities import image_processor as ipr
 from minimiao.utilities import zernike_generator as tz
@@ -26,14 +25,14 @@ class WavefrontSensing:
 
     def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
-        self.n_lenslets_x = 18
-        self.n_lenslets_y = 18
+        self.n_lenslets_x = 26
+        self.n_lenslets_y = 26
         self.n_lenslets = self.n_lenslets_x * self.n_lenslets_y
-        self.x_center_base = 1231
-        self.y_center_base = 926
-        self.x_center_offset = 1231
-        self.y_center_offset = 926
-        self.lenslet_spacing = 23  # spacing between each lenslet
+        self.x_center_base = 816
+        self.y_center_base = 827
+        self.x_center_offset = 816
+        self.y_center_offset = 825
+        self.lenslet_spacing = 43  # spacing between each lenslet
         self.hsp = 16  # size of subimage is 2 * hsp
         self.bg = 0.1
         self.pixel_size = .00345  # mm
@@ -47,6 +46,8 @@ class WavefrontSensing:
         self._meas = None
         self.gradx = None
         self.grady = None
+        self.snr_threshold: float = 3.0
+        self.sharpness_threshold: float = 0.16
         self.wf = None
         self.im = None
         self.zcs = None
@@ -120,6 +121,10 @@ class WavefrontSensing:
         self.im = np.zeros((2, 2 * self.hsp * ny, 2 * self.hsp * nx))
         gradx = np.zeros((ny, nx))
         grady = np.zeros((ny, nx))
+        contrast_map = np.zeros((ny, nx))
+        sharpness_map = np.zeros((ny, nx))
+        kurtosis_map = np.zeros((ny, nx))
+        pk2sum_map = np.zeros((ny, nx))
         for iy in range(ny):
             for ix in range(nx):
                 vert_base = int(bot_base + iy * self.lenslet_spacing)
@@ -140,7 +145,55 @@ class WavefrontSensing:
                     py, px = ipr.find_center_of_mass(sec)
                     gradx[iy, ix] = (px - sx) * self.calfactor
                     grady[iy, ix] = (py - sy) * self.calfactor
-        return gradx, grady
+                contrast_val, sharpness_val, kurtosis_val, pk2sum_val = self.detect_spots(sec)
+                contrast_map[iy, ix] = contrast_val
+                sharpness_map[iy, ix] = sharpness_val
+                kurtosis_map[iy, ix] = kurtosis_val
+                pk2sum_map[iy, ix] = pk2sum_val
+        contrast_thresh = self.otsu_threshold(contrast_map)
+        sharpness_thresh = self.otsu_threshold(sharpness_map)
+        kurtosis_thresh = self.otsu_threshold(kurtosis_map)
+        pk2sum_thresh = self.otsu_threshold(pk2sum_map)
+        contrast_mask = contrast_map > contrast_thresh
+        sharpness_mask = sharpness_map > sharpness_thresh
+        kurtosis_mask = kurtosis_map > kurtosis_thresh
+        pk2sum_mask = pk2sum_map > pk2sum_thresh
+        vote_map = contrast_mask.astype(int) + sharpness_mask.astype(int) + kurtosis_mask.astype(int) + pk2sum_mask.astype(int)
+        mask = vote_map == 4
+        return gradx * mask, grady * mask
+
+    @staticmethod
+    def detect_spots(subimage, sharpness_radius: int = 3):
+        sub_h, sub_w = subimage.shape
+        n_pixels = sub_h * sub_w
+        sub = subimage
+        vmin, vmax = sub.min(), sub.max()
+        total = sub.sum()
+        mean = sub.mean()
+
+        denom = vmax + vmin
+        contrast_val = (vmax - vmin) / denom if denom > 0 else 0.0
+
+        pk2sum_val = vmax / total if total > 0 else 0.0
+
+        if total > 0:
+            peak_pos = np.unravel_index(np.argmax(sub), sub.shape)
+            r0 = max(peak_pos[0] - sharpness_radius, 0)
+            r1 = min(peak_pos[0] + sharpness_radius + 1, sub_h)
+            c0 = max(peak_pos[1] - sharpness_radius, 0)
+            c1 = min(peak_pos[1] + sharpness_radius + 1, sub_w)
+            sharpness_val = sub[r0:r1, c0:c1].sum() / total
+        else:
+            sharpness_val = 0.0
+
+        std = sub.std()
+        if std > 0:
+            kurt = np.mean(((sub - mean) / std) ** 4) - 3.0
+            kurtosis_val = 1.0 - 1.0 / (1.0 + max(kurt, 0.0))
+        else:
+            kurtosis_val = 0.0
+
+        return contrast_val, sharpness_val, kurtosis_val, pk2sum_val
 
     def save_wfs_results(self, file_name, dm):
         try:
@@ -159,6 +212,41 @@ class WavefrontSensing:
             tf.imwrite(file_name + f'_{dm.dm_serial}_recon_wf.tif', self.wf)
         except Exception as e:
             self.logg.error(f"Error saving wfs wavefront: {e}")
+
+    @staticmethod
+    def otsu_threshold(values: np.ndarray) -> float:
+        vals = values.ravel()
+        sorted_vals = np.sort(vals)
+        n = len(sorted_vals)
+
+        if n < 2:
+            return sorted_vals[0]
+
+        best_thresh = sorted_vals[0]
+        best_variance = -1.0
+
+        # Test thresholds at each unique value boundary
+        unique_vals = np.unique(sorted_vals)
+        if len(unique_vals) < 2:
+            return unique_vals[0]
+
+        for t in unique_vals[:-1]:
+            class0 = vals[vals <= t]
+            class1 = vals[vals > t]
+
+            if len(class0) == 0 or len(class1) == 0:
+                continue
+
+            w0 = len(class0) / n
+            w1 = len(class1) / n
+            # Inter-class variance
+            var_between = w0 * w1 * (class0.mean() - class1.mean()) ** 2
+
+            if var_between > best_variance:
+                best_variance = var_between
+                best_thresh = t
+
+        return best_thresh
 
     @staticmethod
     def _hudgins_extend_mask(gradx, grady):
