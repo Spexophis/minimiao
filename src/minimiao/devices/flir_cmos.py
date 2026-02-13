@@ -505,6 +505,12 @@ class FLIRCamera:
         else:
             return None
 
+    def get_buffered_images(self):
+        if self.data is not None:
+            return self.data.get_elements()
+        else:
+            return None
+
     def prepare_data_acquisition(self):
         self.set_gain()
         self.buffer_size = self.acq_num

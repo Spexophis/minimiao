@@ -386,8 +386,6 @@ class ControlPanel(QWidget):
         if not set_name:
             return
         self.galvo_scan_presets[set_name] = {
-            "QDoubleSpinBox_galvo_x": self.QDoubleSpinBox_galvo_x.value(),
-            "QDoubleSpinBox_galvo_y": self.QDoubleSpinBox_galvo_y.value(),
             "QDoubleSpinBox_galvo_range_x": self.QDoubleSpinBox_galvo_range_x.value(),
             "QDoubleSpinBox_galvo_range_y": self.QDoubleSpinBox_galvo_range_y.value(),
             "QDoubleSpinBox_dot_range_x": self.QDoubleSpinBox_dot_range_x.value(),
@@ -403,8 +401,6 @@ class ControlPanel(QWidget):
     @pyqtSlot(str)
     def load_selected_preset(self, set_name: str):
         values = self.galvo_scan_presets.get(set_name, {})
-        self.QDoubleSpinBox_galvo_x.setValue(values.get("QDoubleSpinBox_galvo_x", 0))
-        self.QDoubleSpinBox_galvo_y.setValue(values.get("QDoubleSpinBox_galvo_y", 0))
         self.QDoubleSpinBox_galvo_range_x.setValue(values.get("QDoubleSpinBox_galvo_range_x", 0))
         self.QDoubleSpinBox_galvo_range_y.setValue(values.get("QDoubleSpinBox_galvo_range_y", 0))
         self.QDoubleSpinBox_dot_range_x.setValue(values.get("QDoubleSpinBox_dot_range_x", 0))
@@ -419,8 +415,6 @@ class ControlPanel(QWidget):
         new_preset_name = self.QLineEdit_new_galvo_scan_preset.text().strip()
         if new_preset_name and new_preset_name not in self.galvo_scan_presets:
             self.galvo_scan_presets[new_preset_name] = {
-                "QDoubleSpinBox_galvo_x": self.QDoubleSpinBox_galvo_x.value(),
-                "QDoubleSpinBox_galvo_y": self.QDoubleSpinBox_galvo_y.value(),
                 "QDoubleSpinBox_galvo_range_x": self.QDoubleSpinBox_galvo_range_x.value(),
                 "QDoubleSpinBox_galvo_range_y": self.QDoubleSpinBox_galvo_range_y.value(),
                 "QDoubleSpinBox_dot_range_x": self.QDoubleSpinBox_dot_range_x.value(),
@@ -440,8 +434,6 @@ class ControlPanel(QWidget):
     def load_selected_digital_timing_presets(self):
         text = self.QComboBox_live_modes.currentText()
         values = self.digital_timing_presets.get(text, {})
-        self.QDoubleSpinBox_step_z.setValue(values.get("QDoubleSpinBox_step_z", 0))
-        self.QDoubleSpinBox_range_z.setValue(values.get("QDoubleSpinBox_range_z", 0))
         self.QDoubleSpinBox_ttl_start_on_405.setValue(values.get("QDoubleSpinBox_ttl_start_on_405", 0))
         self.QDoubleSpinBox_ttl_stop_on_405.setValue(values.get("QDoubleSpinBox_ttl_stop_on_405", 0))
         self.QDoubleSpinBox_ttl_start_off_488.setValue(values.get("QDoubleSpinBox_ttl_start_off_488", 0))
@@ -465,8 +457,6 @@ class ControlPanel(QWidget):
             set_name = None
         if set_name:
             self.digital_timing_presets[set_name] = {
-                "QDoubleSpinBox_step_z": self.QDoubleSpinBox_step_z.value(),
-                "QDoubleSpinBox_range_z": self.QDoubleSpinBox_range_z.value(),
                 "QDoubleSpinBox_ttl_start_on_405": self.QDoubleSpinBox_ttl_start_on_405.value(),
                 "QDoubleSpinBox_ttl_stop_on_405": self.QDoubleSpinBox_ttl_stop_on_405.value(),
                 "QDoubleSpinBox_ttl_start_off_488": self.QDoubleSpinBox_ttl_start_off_488.value(),

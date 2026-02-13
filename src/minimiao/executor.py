@@ -455,9 +455,10 @@ class CommandExecutor(QObject):
                     self.devs.dfm.cmd_add([i * amp for i in self.devs.dfm.z2c[iz]],
                                           self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
             else:
-                self.devs.dfm.set_dm(
+                self.devs.dfm.temp_cmd.append(
                     self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(iz, amp, md),
                                           self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
+                self.devs.dfm.set_dm(self.devs.dfm.temp_cmd[-1])
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
@@ -660,7 +661,7 @@ class CommandExecutor(QObject):
                 images = []
                 for i in range(8):
                     self.one_scan()
-                    img = np.array(self.rec.live_rec[src]).astype(np.uint16)
+                    img = np.array(self.rec.live_rec[src])
                     images.append(img)
                 if mf == "Max(Intensity)":
                     mts = [img.max() for img in images]
@@ -676,7 +677,7 @@ class CommandExecutor(QObject):
             else:
                 self.one_scan()
                 fn = new_folder + r"\original.tiff"
-                img = np.array(self.rec.live_rec[src]).astype(np.uint16)
+                img = np.array(self.rec.live_rec[src])
                 tf.imwrite(str(fn), img)
             for mode in range(mode_start, mode_stop + 1):
                 self.vw.dialog_text.setText(f"Zernike mode #{mode}")
@@ -693,7 +694,7 @@ class CommandExecutor(QObject):
                 if mf == "GaussSum(Intensity)":
                     mts = [ipr.gauss_metric(img, s=True) for img in images]
                 self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
-                if any(not isinstance(x, (int, float)) for x in mts):
+                if any(not isinstance(x, (int, float, np.integer, np.floating)) for x in mts):
                     self.logg.error(f"Invalid metric computation: {mts}")
                     continue
                 self.sig_plt.emit(amprange, mts)
@@ -885,33 +886,30 @@ class CommandExecutor(QObject):
             self.logg.error(f'Error creating influence function directory: {er}')
             return
         try:
-            n, amp = self.ao_panel.get_actuator()
+            amps = np.arange(-0.2, 0.201, 0.01)
             self.devs.camera.start_live()
-            time.sleep(0.02)
+            time.sleep(0.032)
             for i in range(self.devs.dfm.n_actuator):
+
                 shimg = []
                 self.vw.dialog_text.setText(f"actuator {i}")
                 values = [0.] * self.devs.dfm.n_actuator
                 self.devs.dfm.set_dm(values)
-                time.sleep(0.1)
-                shimg.append(self.devs.camera.get_last_image())
+                time.sleep(0.4)
+                temp = self.devs.camera.get_buffered_images()
+                temp = np.average(temp, axis=0)
+                shimg.append(temp)
 
-                values[i] = amp
-                self.devs.dfm.set_dm(values)
-                time.sleep(0.1)
-                shimg.append(self.devs.camera.get_last_image())
+                for a in amps:
 
-                values = [0.] * self.devs.dfm.n_actuator
-                self.devs.dfm.set_dm(values)
-                time.sleep(0.1)
-                shimg.append(self.devs.camera.get_last_image())
+                    values[i] = a
+                    self.devs.dfm.set_dm(values)
+                    time.sleep(0.4)
+                    temp = self.devs.camera.get_buffered_images()
+                    temp = np.average(temp, axis=0)
+                    shimg.append(temp)
 
-                values[i] = - amp
-                self.devs.dfm.set_dm(values)
-                time.sleep(0.1)
-                shimg.append(self.devs.camera.get_last_image())
-
-                tf.imwrite(fd + r'/' + 'actuator_' + str(i) + '_push_' + str(amp) + '.tif', np.asarray(shimg))
+                tf.imwrite(fd + r'/' + 'actuator_' + str(i) + '_step_' + str(0.01) + '_range_' + str(2) + '.tif', np.asarray(shimg))
         except Exception as e:
             self.logg.error(f"Error running influence function: {e}")
             self.stop_wfs()
@@ -919,7 +917,7 @@ class CommandExecutor(QObject):
         try:
             self.vw.dialog_text.setText(f"computing influence function")
             dmn = self.ao_panel.QComboBox_dms.currentText()
-            self.wfr.generate_influence_matrices(data_folder=fd, dm=self.devs.dfm, sv=self.config, cfd=self.cfd)
+            self.wfr.generate_influence_matrices(amps, data_folder=fd, dm=self.devs.dfm, sv=self.config, cfd=self.cfd)
         except Exception as e:
             self.logg.error(f"Error computing influence function: {e}")
             self.stop_wfs()

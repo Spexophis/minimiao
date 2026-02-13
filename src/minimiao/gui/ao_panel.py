@@ -167,7 +167,7 @@ class AOPanel(QWidget):
         self.QPushButton_push_actuator = cw.PushButtonWidget('Push')
         self.QPushButton_influence_fuction_laser = cw.PushButtonWidget('InfluFunc')
         self.QSpinBox_zernike_mode = cw.SpinBoxWidget(0, 100, 1, 0)
-        self.QDoubleSpinBox_zernike_mode_amp = cw.DoubleSpinBoxWidget(-20, 20, 0.01, 2, 0)
+        self.QDoubleSpinBox_zernike_mode_amp = cw.DoubleSpinBoxWidget(-10, 10, 0.002, 3, 0)
         self.QPushButton_set_zernike_mode = cw.PushButtonWidget('Set Zernike')
         self.QComboBox_cmd = cw.ComboBoxWidget(list_items=[])
         self.QPushButton_setDM = cw.PushButtonWidget('Set DM')

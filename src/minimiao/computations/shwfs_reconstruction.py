@@ -354,7 +354,7 @@ class WavefrontSensing:
         y -= size[1] / 2.
         return (x * x / (radius[0] * radius[0])) + (y * y / (radius[1] * radius[1])) <= 1
 
-    def generate_influence_matrices(self, data_folder, dm, sv=None, cfd=None, verbose=False):
+    def generate_influence_matrices(self, amp_list, data_folder, dm, sv=None, cfd=None, verbose=False):
         n_actuators, amp = dm.n_actuator, dm.amp
         dm.nly, dm.nlx = self.n_lenslets_y, self.n_lenslets_x
         dm.nls = self.n_lenslets_y * self.n_lenslets_x
@@ -369,16 +369,17 @@ class WavefrontSensing:
                     self.logg.info(filename.split("_")[1])
                 data_stack = tf.imread(os.path.join(data_folder, filename))
                 n, x, y = data_stack.shape
-                if n != 4:
-                    raise "The image number has to be 4"
-                self.ref, self.meas = data_stack[0], data_stack[1]
-                gdxp, gdyp = self.get_gradient_xy()
-                wfp = self.gradient_to_wavefront(gdxp, gdyp)
-                self.ref, self.meas = data_stack[2], data_stack[3]
-                gdxn, gdyn = self.get_gradient_xy()
-                wfn = self.gradient_to_wavefront(gdxn, gdyn)
+                gdx = np.zeros((n - 1, self.n_lenslets_y, self.n_lenslets_x))
+                gdy = np.zeros((n - 1, self.n_lenslets_y, self.n_lenslets_x))
+                wf = np.zeros((n - 1, self.n_lenslets_y, self.n_lenslets_x))
+                self.ref = data_stack[0]
+                for i in range(1, n):
+                    self.meas = data_stack[i]
+                    gdx[i], gdy[i] = self.get_gradient_xy()
+                    wf[i] = self.gradient_to_wavefront(gdx[i], gdy[i])
+                # interaction_matrix =
                 if "msk" not in locals():
-                    image = gdxp + gdyp + gdxn + gdyn
+                    image = np.sum(gdx, axis=0)
                     msk = image != 0
                     Z, dZdx, dZdy = tz.zernike_basis(dm.nlx, dm.nly, dm.nls, mask=msk, normalize_to="circle")
                     dm.zernike, dZdx_orth, dZdy_orth, T = tz.gs_orthogonalize(Z, msk, dZdx, dZdy)
@@ -387,10 +388,8 @@ class WavefrontSensing:
                         dm.zslopes[:self.n_lenslets_x * self.n_lenslets_y, j] = dZdx_orth[j].flatten()
                         dm.zslopes[self.n_lenslets_x * self.n_lenslets_y:, j] = dZdy_orth[j].flatten()
                 # phase
-                msk = (wfp != 0.0).astype(np.float32)
                 mn = wfp.sum() / msk.sum()
                 wfp = msk * (wfp - mn)
-                msk = (wfn != 0.0).astype(np.float32)
                 mn = wfn.sum() / msk.sum()
                 wfn = msk * (wfn - mn)
                 wfg = (wfp - wfn) / (2 * amp)
