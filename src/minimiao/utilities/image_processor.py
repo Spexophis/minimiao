@@ -7,7 +7,12 @@ import numpy as np
 from numpy.fft import fft2, fftshift
 from scipy.optimize import curve_fit
 from skimage import filters
+from typing import Tuple, Optional
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  Image statistics
+# ══════════════════════════════════════════════════════════════════════
 
 def rms(data):
     _nx, _ny = data.shape
@@ -18,27 +23,25 @@ def rms(data):
     return r
 
 
-def img_properties(img):
+def img_statistics(img):
     return img.min(), img.max(), rms(img)
 
 
-def find_center_of_mass(image):
-    height, width = image.shape
-    # row_indices, col_indices = np.indices((height, width))
-    # total_mass = np.sum(image)
-    # row_mass = np.sum(row_indices * image) / total_mass
-    # col_mass = np.sum(col_indices * image) / total_mass
-    row_indices = np.arange(0, height)[:, np.newaxis]
-    col_indices = np.arange(0, width)
-    total_mass = np.sum(image)
-    row_mass = np.sum(image * row_indices) / total_mass
-    col_mass = np.sum(image * col_indices) / total_mass
-    return row_mass, col_mass
+def calculate_focus_measure_with_sobel(image):
+    edges = filters.sobel(image)
+    focus_measure = np.var(edges)
+    return focus_measure
 
 
-def fourier_transform(data):
-    return np.log(np.abs(fftshift(fft2(data))))
+def calculate_focus_measure_with_laplacian(image):
+    laplacian_image = filters.laplace(image)
+    focus_measure = np.var(laplacian_image)
+    return focus_measure
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  Extremum detection
+# ══════════════════════════════════════════════════════════════════════
 
 def binomial_model(x, a, b, c):
     return a * x ** 2 + b * x + c
@@ -80,14 +83,18 @@ def valley_find(x, y):
     x = np.asarray(x)
     y = np.asarray(y)
     a, b, c = np.polyfit(x, y, 2)
-    v = -1 * b / a / 2.0
+    v = -b / (2 * a)
     if a < 0:
-        raise ValueError("no minimum")
+        return "no minimum"
     elif (v >= x.max()) or (v <= x.min()):
-        raise ValueError("minimum exceeding range")
+        return "minimum exceeding range"
     else:
         return v
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  Matrix decomposition
+# ══════════════════════════════════════════════════════════════════════
 
 def pseudo_inverse(A, n=32):
     u, s, vt = np.linalg.svd(A)
@@ -104,16 +111,280 @@ def get_eigen_coefficients(mta, mtb, ng=32):
     return np.matmul(mp, mta)
 
 
-def calculate_focus_measure_with_sobel(image):
-    edges = filters.sobel(image)
-    focus_measure = np.var(edges)
-    return focus_measure
+# ══════════════════════════════════════════════════════════════════════
+#  Centroid detection
+# ══════════════════════════════════════════════════════════════════════
+
+def centroid_cog(img: np.ndarray) -> Tuple[float, float]:
+    """
+    Basic Center of Gravity - Sensitive to background noise.
+    """
+    img = img.astype(np.float64)
+    total = img.sum()
+    if total <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+    cx = (xx * img).sum() / total
+    cy = (yy * img).sum() / total
+    return cx, cy
 
 
-def calculate_focus_measure_with_laplacian(image):
-    laplacian_image = filters.laplace(image)
-    focus_measure = np.var(laplacian_image)
-    return focus_measure
+def centroid_thresholded(img: np.ndarray, threshold_fraction: float = 0.1) -> Tuple[float, float]:
+    """
+    Thresholded Center of Gravity.
+    Subtracts background and zeros out pixels below a fraction of the peak.
+    More robust to noise than basic CoG.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    threshold_fraction : float
+        Fraction of (peak - background) below which pixels are zeroed.
+        0.1 means keep only pixels above 10% of the spot's dynamic range.
+    """
+    img = img.astype(np.float64)
+    bg = np.median(img)
+    img_bg = img - bg
+    peak = img_bg.max()
+
+    if peak <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    threshold = threshold_fraction * peak
+    img_thresh = np.where(img_bg > threshold, img_bg, 0.0)
+
+    total = img_thresh.sum()
+    if total <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+    cx = (xx * img_thresh).sum() / total
+    cy = (yy * img_thresh).sum() / total
+    return cx, cy
+
+
+def centroid_iwcog(img: np.ndarray, n_iter: int = 5,
+                   initial_sigma: float = 3.0) -> Tuple[float, float]:
+    """
+    Iterative Weighted Center of Gravity.
+
+    Starts with thresholded CoG, then iteratively applies a Gaussian
+    weight centered on the current estimate. Converges to a stable,
+    noise-robust centroid.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    n_iter : int
+        Number of iterations (3-5 is usually enough).
+    initial_sigma : float
+        Initial Gaussian window width in pixels.
+    """
+    img = img.astype(np.float64)
+    bg = np.median(img)
+    img_bg = np.clip(img - bg, 0, None)
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+
+    # Initialize with thresholded CoG
+    cx, cy = centroid_thresholded(img)
+
+    sigma = initial_sigma
+    for _ in range(n_iter):
+        # Gaussian weight centered on current estimate
+        r2 = (xx - cx) ** 2 + (yy - cy) ** 2
+        weight = np.exp(-r2 / (2 * sigma ** 2))
+        weighted = img_bg * weight
+
+        total = weighted.sum()
+        if total <= 0:
+            break
+
+        cx = (xx * weighted).sum() / total
+        cy = (yy * weighted).sum() / total
+
+        # Optionally tighten the window
+        sigma = max(sigma * 0.9, 1.5)
+
+    return cx, cy
+
+
+def centroid_gaussian(img: np.ndarray, fit_radius: int = 4) -> Tuple[float, float]:
+    """
+    Gaussian fit centroiding — best for laser spots.
+
+    Fits a 2D Gaussian to the region around the peak using
+    linearized least-squares on log(intensity).
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    fit_radius : int
+        Half-width of the fitting window around the peak.
+
+    Returns
+    -------
+    cx, cy : float
+        img-pixel center of the fitted Gaussian.
+    """
+    img = img.astype(np.float64)
+    ny, nx = img.shape
+
+    # Find peak
+    peak_pos = np.unravel_index(np.argmax(img), img.shape)
+    py, px = peak_pos
+
+    # Extract fitting window
+    r = fit_radius
+    y0 = max(py - r, 0)
+    y1 = min(py + r + 1, ny)
+    x0 = max(px - r, 0)
+    x1 = min(px + r + 1, nx)
+
+    window = img[y0:y1, x0:x1]
+    wy, wx = window.shape
+    yy, xx = np.mgrid[:wy, :wx]
+
+    # Subtract background and clip
+    bg = np.percentile(img, 25)
+    window_bg = np.clip(window - bg, 1e-10, None)
+
+    # Linearize: ln(I) = ln(A) - (x-cx)²/(2σx²) - (y-cy)²/(2σy²)
+    # Rearrange as: ln(I) = c0 + c1*x + c2*x² + c3*y + c4*y²
+    log_I = np.log(window_bg)
+    valid = np.isfinite(log_I) & (window_bg > bg * 0.05)
+
+    if valid.sum() < 6:
+        # Not enough points, fall back to thresholded CoG
+        return centroid_thresholded(img)
+
+    x_flat = xx[valid].ravel()
+    y_flat = yy[valid].ravel()
+    z_flat = log_I[valid].ravel()
+
+    # Design matrix: [1, x, x², y, y²]
+    A = np.column_stack([
+        np.ones(len(x_flat)),
+        x_flat,
+        x_flat ** 2,
+        y_flat,
+        y_flat ** 2,
+    ])
+
+    try:
+        coeffs, _, _, _ = np.linalg.lstsq(A, z_flat, rcond=None)
+    except np.linalg.LinAlgError:
+        return centroid_thresholded(img)
+
+    # c2 = -1/(2σx²) → cx = -c1/(2*c2)
+    # c4 = -1/(2σy²) → cy = -c3/(2*c4)
+    c0, c1, c2, c3, c4 = coeffs
+
+    if c2 >= 0 or c4 >= 0:
+        # Not a peak (concave up), fall back
+        return centroid_thresholded(img)
+
+    cx_local = -c1 / (2 * c2)
+    cy_local = -c3 / (2 * c4)
+
+    # Convert back to full sub-image coordinates
+    cx = cx_local + x0
+    cy = cy_local + y0
+
+    # Sanity check: result should be within the sub-image
+    cx = np.clip(cx, 0, nx - 1)
+    cy = np.clip(cy, 0, ny - 1)
+
+    return cx, cy
+
+
+def centroid_crosscorr(img: np.ndarray, reference: np.ndarray,
+                       upsample: int = 10) -> Tuple[float, float]:
+    """
+    Cross-correlation centroiding.
+
+    Computes the shift between the image and a reference spot
+    using FFT-based cross-correlation with sub-pixel upsampling.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    reference : 2D array
+        Reference spot image (same size as img).
+        Typically, the image from a flat wavefront measurement.
+    upsample : int
+        Upsampling factor for sub-pixel precision.
+        10 gives 0.1 pixel accuracy, 100 gives 0.01.
+
+    Returns
+    -------
+    cx, cy : float
+        Position relative to the reference (shift_x, shift_y in pixels).
+        NOTE: unlike other methods, this returns SHIFTS directly,
+        not absolute positions.
+    """
+    from numpy.fft import fft2, ifft2, fftshift
+
+    img = img.astype(np.float64)
+    ref = reference.astype(np.float64)
+
+    # Subtract means
+    img = img - img.mean()
+    ref = ref - ref.mean()
+
+    ny, nx = img.shape
+
+    # Cross-correlation via FFT
+    F_img = fft2(img)
+    F_ref = fft2(ref)
+    cross = ifft2(F_img * np.conj(F_ref))
+    cross = np.abs(fftshift(cross))
+
+    # Coarse peak
+    peak_pos = np.unravel_index(np.argmax(cross), cross.shape)
+
+    # Sub-pixel refinement via parabolic interpolation around peak
+    py, px = peak_pos
+    cy_coarse = py - ny // 2  # shift relative to center
+    cx_coarse = px - nx // 2
+
+    # Parabolic refinement in x
+    if 0 < px < nx - 1:
+        left = cross[py, px - 1]
+        center = cross[py, px]
+        right = cross[py, px + 1]
+        denom = 2 * (2 * center - left - right)
+        dx = (left - right) / denom if abs(denom) > 1e-10 else 0.0
+    else:
+        dx = 0.0
+
+    # Parabolic refinement in y
+    if 0 < py < ny - 1:
+        top = cross[py - 1, px]
+        center = cross[py, px]
+        bottom = cross[py + 1, px]
+        denom = 2 * (2 * center - top - bottom)
+        dy = (top - bottom) / denom if abs(denom) > 1e-10 else 0.0
+    else:
+        dy = 0.0
+
+    shift_x = cx_coarse + dx
+    shift_y = cy_coarse + dy
+
+    return shift_x, shift_y
+
+
+# ══════════════════════════════════════════════════════════════════════
+#  Gaussian fit
+# ══════════════════════════════════════════════════════════════════════
 
 
 FWHM_FACTOR = np.sqrt(2 * np.log(2))
@@ -345,6 +616,43 @@ def _compute_2d_bounds(x_px, y_px, img_min, img_max, allow_rotation):
     return [lower, upper]
 
 
+def gaussian_integral_fwhm_2d(params, allow_rotation=False, bg=False):
+    """
+    Compute integral of 2D Gaussian within FWHM ellipse (analytical)
+
+    Args:
+        params: Fitted parameters from fit_gaussian_2d
+                [bg, I0, x0, y0, wx, wy] or [bg, I0, x0, y0, wx, wy, theta]
+        allow_rotation: Whether rotation parameter is included
+
+    Returns:
+        integral: Total intensity within FWHM ellipse
+    """
+    bg, I0, x0, y0, wx, wy = params[:6]
+    theta = params[6] if allow_rotation and len(params) > 6 else 0
+
+    # Total integral of 2D Gaussian (infinite extent): I0 * π * wx * wy / 2
+    total_gaussian_integral = I0 * np.pi * wx * wy / 2
+
+    # Fraction of power within FWHM ellipse (derived from error function)
+    # For 1/e^2 definition, FWHM corresponds to ~1.177 * w0
+    # Integral within FWHM ellipse is ~0.5 of total (50% power)
+    fwhm_fraction = 1 - np.exp(-2 * np.log(2))  # ≈ 0.75 or 75%
+
+    gaussian_within_fwhm = total_gaussian_integral * fwhm_fraction
+
+    if bg:
+        # Background contribution (area of FWHM ellipse)
+        fwhm_x = wx * np.sqrt(2 * np.log(2))
+        fwhm_y = wy * np.sqrt(2 * np.log(2))
+        fwhm_area = np.pi * fwhm_x * fwhm_y
+        background_contribution = bg * fwhm_area
+        total_integral = gaussian_within_fwhm + background_contribution
+        return total_integral
+    else:
+        return gaussian_within_fwhm
+
+
 def _print_2d_params(params, residual, allow_rotation):
     """Print fitted parameters"""
     bg, I0, x0, y0, wx, wy = params[:6]
@@ -474,43 +782,6 @@ def _plot_2d_fit(image, xx, yy, params, residual, allow_rotation):
 
     plt.tight_layout()
     plt.show()
-
-
-def gaussian_integral_fwhm_2d(params, allow_rotation=False, bg=False):
-    """
-    Compute integral of 2D Gaussian within FWHM ellipse (analytical)
-
-    Args:
-        params: Fitted parameters from fit_gaussian_2d
-                [bg, I0, x0, y0, wx, wy] or [bg, I0, x0, y0, wx, wy, theta]
-        allow_rotation: Whether rotation parameter is included
-
-    Returns:
-        integral: Total intensity within FWHM ellipse
-    """
-    bg, I0, x0, y0, wx, wy = params[:6]
-    theta = params[6] if allow_rotation and len(params) > 6 else 0
-
-    # Total integral of 2D Gaussian (infinite extent): I0 * π * wx * wy / 2
-    total_gaussian_integral = I0 * np.pi * wx * wy / 2
-
-    # Fraction of power within FWHM ellipse (derived from error function)
-    # For 1/e^2 definition, FWHM corresponds to ~1.177 * w0
-    # Integral within FWHM ellipse is ~0.5 of total (50% power)
-    fwhm_fraction = 1 - np.exp(-2 * np.log(2))  # ≈ 0.75 or 75%
-
-    gaussian_within_fwhm = total_gaussian_integral * fwhm_fraction
-
-    if bg:
-        # Background contribution (area of FWHM ellipse)
-        fwhm_x = wx * np.sqrt(2 * np.log(2))
-        fwhm_y = wy * np.sqrt(2 * np.log(2))
-        fwhm_area = np.pi * fwhm_x * fwhm_y
-        background_contribution = bg * fwhm_area
-        total_integral = gaussian_within_fwhm + background_contribution
-        return total_integral
-    else:
-        return gaussian_within_fwhm
 
 
 def gauss_metric(img, s=True):

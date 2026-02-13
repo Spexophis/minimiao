@@ -29,6 +29,7 @@ class AOPanel(QWidget):
     Signal_load_dm = pyqtSignal()
     Signal_save_dm = pyqtSignal()
     Signal_sensorlessAO_run = pyqtSignal()
+    Signal_sensorAO_run = pyqtSignal()
 
     def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -62,7 +63,7 @@ class AOPanel(QWidget):
         confocal_shwfs_parameters_scroll_area, confocal_shwfs_parameters_scroll_layout = cw.create_scroll_area()
 
         self.QLabel_wfrmd_foc = cw.LabelWidget(str('Method'))
-        self.QComboBox_wfrmd_foc = cw.ComboBoxWidget(list_items=['correlation', 'centerofmass'], length=100)
+        self.QComboBox_wfrmd_foc = cw.ComboBoxWidget(list_items=['correlation', 'iterative', 'gaussianfit'], length=100)
         self.QSpinBox_base_xcenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
         self.QSpinBox_base_ycenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
         self.QSpinBox_offset_xcenter_foc = cw.SpinBoxWidget(0, 2048, 1, 1024)
@@ -246,10 +247,12 @@ class AOPanel(QWidget):
 
         self.QSpinBox_close_loop_number = cw.SpinBoxWidget(0, 100, 1, 1)
         self.QPushButton_dwfs_cl_correction = cw.PushButtonWidget('Close Loop Correction')
+        self.QPushButton_dwfs_it_correction = cw.PushButtonWidget('Iterative Correction')
 
-        dwfs_scroll_layout.addWidget(cw.LabelWidget(str('Loop #   (0 - infinite)')), 0, 0, 1, 1)
+        dwfs_scroll_layout.addWidget(cw.LabelWidget(str('Loop # (0 - infinite)')), 0, 0, 1, 1)
         dwfs_scroll_layout.addWidget(self.QSpinBox_close_loop_number, 0, 1, 1, 1)
         dwfs_scroll_layout.addWidget(self.QPushButton_dwfs_cl_correction, 0, 2, 1, 1)
+        dwfs_scroll_layout.addWidget(self.QPushButton_dwfs_it_correction, 0, 3, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(dwfs_scroll_area)
@@ -274,6 +277,7 @@ class AOPanel(QWidget):
         self.QPushButton_change_dm_flat.clicked.connect(self.change_dm_flat)
         self.QPushButton_dwfs_cl_correction.clicked.connect(self.run_close_loop_correction)
         self.QPushButton_sensorless_run.clicked.connect(self.run_sensorless_correction)
+        self.QPushButton_dwfs_it_correction.clicked.connect(self.run_sensor_correction)
 
     def get_cmos_roi(self):
         return [self.QSpinBox_cmos_coordinate_x.value(), self.QSpinBox_cmos_coordinate_y.value(),
@@ -407,6 +411,10 @@ class AOPanel(QWidget):
     @pyqtSlot()
     def run_sensorless_correction(self):
         self.Signal_sensorlessAO_run.emit()
+
+    @pyqtSlot()
+    def run_sensor_correction(self):
+        self.Signal_sensorAO_run.emit()
 
     def get_sensorless_iteration(self):
         return (self.QSpinBox_zernike_mode_start.value(), self.QSpinBox_zernike_mode_stop.value(),

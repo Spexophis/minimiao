@@ -79,6 +79,7 @@ class CommandExecutor(QObject):
         # AO
         self.ao_panel.Signal_sensorlessAO_run.connect(self.run_sensorless_iteration)
         self.ao_panel.Signal_img_shwfs_correct_wf.connect(self.run_close_loop_iteration)
+        self.ao_panel.Signal_sensorAO_run.connect(self.run_wfs_iteration)
         self.sig_plt.connect(self.plot_curve)
 
     def _initial_setup(self):
@@ -560,7 +561,7 @@ class CommandExecutor(QObject):
 
     def show_wf_metric(self, wf_img):
         try:
-            self.ao_panel.display_img_wf_properties(ipr.img_properties(wf_img))
+            self.ao_panel.display_img_wf_properties(ipr.img_statistics(wf_img))
         except Exception as e:
             self.logg.error(f"SHWFS Wavefront Show Error: {e}")
 
@@ -777,6 +778,98 @@ class CommandExecutor(QObject):
     def run_close_loop_iteration(self):
         self.vw.get_dialog(txt="Close Loop Iteration")
         self.run_task(self.close_loop_iteration)
+
+    def sensor_iteration(self, zn, dms):
+        ims = []
+        zns = []
+        for dmsp in dms:
+            self.devs.dfm.set_dm(dmsp)
+            time.sleep(0.064)
+            img = self.devs.camera.get_last_image()
+            ims.append(img)
+            self.wfr.meas = img
+            gdx, gdy = self.wfr.get_gradient_xy()
+            temp = ipr.get_eigen_coefficients(np.concatenate((gdx.flatten(), gdy.flatten())), self.devs.dfm.zslopes, 14)
+            zns.append(np.abs(temp[zn]))
+        return ims, zns
+
+    def wfs_iteration(self):
+        try:
+            self.prepare_wfs()
+        except Exception as e:
+            self.logg.error(f"Error preparing wfs iteration: {e}")
+            return
+        try:
+            md = self.ao_panel.get_img_wfs_method()
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_wfs_iterations_' + md + r".tif"
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
+        except Exception as e:
+            self.logg.error(f'Error creating directory for wfs iteration: {e}')
+            return
+        try:
+            self.devs.camera.start_live()
+            time.sleep(2)
+            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
+            self.devs.dfm.set_dm(cmd)
+            mode_start, mode_stop, _, amp_step, amp_step_number = self.ao_panel.get_sensorless_iteration()
+            md = self.ao_panel.get_img_wfs_method()
+            self.wfr.meas = self.devs.camera.get_last_image()
+            data = [self.wfr.ref, self.wfr.meas]
+            gdx, gdy = self.wfr.get_gradient_xy()
+            zcs = ipr.get_eigen_coefficients(np.concatenate((gdx.flatten(), gdy.flatten())), self.devs.dfm.zslopes, 14)
+            self.sig_plt.emit(np.arange(zcs.size), zcs)
+            amp_starts = [- zc - amp_step * int(amp_step_number / 2) for zc in zcs]
+            results = [('Mode', 'Amp', 'Metric')]
+            za = []
+            mv = []
+            zp = [0] * self.devs.dfm.n_zernike
+            for mode in range(mode_start, mode_stop + 1):
+                self.vw.dialog_text.setText(f"Zernike mode #{mode}")
+                amp_range = [amp_starts[mode] + step_number * amp_step for step_number in range(amp_step_number)]
+                labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amp_range]
+                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in amp_range]
+                images, zma = self.sensor_iteration(mode, cmds)
+                self.sig_plt.emit(amp_range, zma)
+                pm = ipr.valley_find(amp_range, zma)
+                if isinstance(pm, str):
+                    self.logg.error(f"zernike mode #{mode} " + pm)
+                else:
+                    zp[mode] = pm
+                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
+                    self.devs.dfm.set_dm(cmd)
+                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
+                for amp, mt in zip(amp_range, zma):
+                    results.append((mode, amp, mt))
+                za.extend(amp_range)
+                mv.extend(zma)
+                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
+                with tf.TiffWriter(fn) as tif:
+                    for img, label in zip(images, labels):
+                        tif.write(img, description=label)
+            self.devs.dfm.set_dm(cmd)
+            time.sleep(0.064)
+            fmg = self.devs.camera.get_last_image()
+            data.append(fmg)
+            fn = new_folder + r"\shwfs.tiff"
+            tf.imwrite(str(fn), np.array(data))
+            self.devs.dfm.dm_cmd.append(cmd)
+            self.ao_panel.update_cmd_index()
+            i = int(self.ao_panel.get_cmd_index())
+            self.devs.dfm.current_cmd = i
+            self.devs.dfm.write_cmd(new_folder, '_')
+            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
+        except Exception as e:
+            self.logg.error(f"Error running close loop iteration: {e}")
+            self.stop_wfs()
+            return
+        self.stop_wfs()
+
+    @pyqtSlot()
+    def run_wfs_iteration(self):
+        self.vw.get_dialog(txt="WFS Iteration")
+        self.run_task(self.wfs_iteration)
 
     def influence_function(self):
         try:

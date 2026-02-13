@@ -35,7 +35,7 @@ class WavefrontSensing:
         self.lenslet_spacing = 43  # spacing between each lenslet
         self.hsp = 16  # size of subimage is 2 * hsp
         self.bg = 0.1
-        self.pixel_size = .00345  # mm
+        self.pixel_size = 3.45e-3  # mm
         self.calfactor = (self.pixel_size / 5.2) * 150  # pixel size * focalLength * pitch
         self.method = 'correlation'
         self.mag = 1
@@ -140,11 +140,21 @@ class WavefrontSensing:
                     py, px = self._parabolic_fit(seccorr)
                     gradx[iy, ix] = (self.CorrCenter[1] - px) * self.calfactor
                     grady[iy, ix] = (self.CorrCenter[0] - py) * self.calfactor
-                elif mtd == 'centerofmass':
-                    sy, sx = ipr.find_center_of_mass(secbase)
-                    py, px = ipr.find_center_of_mass(sec)
+                elif mtd == 'iterative':
+                    sy, sx = ipr.centroid_iwcog(secbase)
+                    py, px = ipr.centroid_iwcog(sec)
                     gradx[iy, ix] = (px - sx) * self.calfactor
                     grady[iy, ix] = (py - sy) * self.calfactor
+                elif mtd == 'gaussianfit':
+                    try:
+                        params, _, _ = ipr.fit_gaussian_2d(secbase, verbose=False, allow_rotation=True, plot=False)
+                        sy, sx = params[3], params[2]
+                        params, _, _ = ipr.fit_gaussian_2d(sec, verbose=False, allow_rotation=True, plot=False)
+                        py, px = params[3], params[2]
+                        gradx[iy, ix] = (px - sx) * self.calfactor
+                        grady[iy, ix] = (py - sy) * self.calfactor
+                    except Exception as e:
+                        return f"Gaussian Fitting Error: {e}"
                 contrast_val, sharpness_val, kurtosis_val, pk2sum_val = self.detect_spots(sec)
                 contrast_map[iy, ix] = contrast_val
                 sharpness_map[iy, ix] = sharpness_val
@@ -348,8 +358,6 @@ class WavefrontSensing:
         n_actuators, amp = dm.n_actuator, dm.amp
         dm.nly, dm.nlx = self.n_lenslets_y, self.n_lenslets_x
         dm.nls = self.n_lenslets_y * self.n_lenslets_x
-        dm.zernike = tz.zernike_polynomials(size=[self.n_lenslets_y, self.n_lenslets_x])
-        dm.zslopes = tz.zernike_derivatives(size=[self.n_lenslets_y, self.n_lenslets_x])
         influence_matrix_phase = np.zeros((self.n_lenslets, n_actuators))
         wfs_phase = np.zeros((n_actuators, self.n_lenslets_y, self.n_lenslets_x))
         influence_matrix_zonal = np.zeros((2 * self.n_lenslets, n_actuators))
@@ -369,6 +377,15 @@ class WavefrontSensing:
                 self.ref, self.meas = data_stack[2], data_stack[3]
                 gdxn, gdyn = self.get_gradient_xy()
                 wfn = self.gradient_to_wavefront(gdxn, gdyn)
+                if "msk" not in locals():
+                    image = gdxp + gdyp + gdxn + gdyn
+                    msk = image != 0
+                    Z, dZdx, dZdy = tz.zernike_basis(dm.nlx, dm.nly, dm.nls, mask=msk, normalize_to="circle")
+                    dm.zernike, dZdx_orth, dZdy_orth, T = tz.gs_orthogonalize(Z, msk, dZdx, dZdy)
+                    dm.zslopes = np.zeros((2 * dm.nls, dm.n_zernike))
+                    for j in range(dm.n_zernike):
+                        dm.zslopes[:self.n_lenslets_x * self.n_lenslets_y, j] = dZdx_orth[j].flatten()
+                        dm.zslopes[self.n_lenslets_x * self.n_lenslets_y:, j] = dZdy_orth[j].flatten()
                 # phase
                 msk = (wfp != 0.0).astype(np.float32)
                 mn = wfp.sum() / msk.sum()
@@ -383,12 +400,12 @@ class WavefrontSensing:
                 influence_matrix_zonal[:self.n_lenslets, ind] = ((gdxp - gdxn) / (2 * amp)).reshape(self.n_lenslets)
                 influence_matrix_zonal[self.n_lenslets:, ind] = ((gdyp - gdyn) / (2 * amp)).reshape(self.n_lenslets)
                 # modal
-                a1 = ipr.get_eigen_coefficients(np.concatenate((gdxp.flatten(), gdyp.flatten())), dm.zslopes, 14)
-                a2 = ipr.get_eigen_coefficients(np.concatenate((gdxn.flatten(), gdyn.flatten())), dm.zslopes, 14)
+                a1 = ipr.get_eigen_coefficients(np.concatenate((gdxp.flatten(), gdyp.flatten())), dm.zslopes, 32)
+                a2 = ipr.get_eigen_coefficients(np.concatenate((gdxn.flatten(), gdyn.flatten())), dm.zslopes, 32)
                 influence_matrix_modal[:, ind] = ((a1 - a2) / (2 * amp)).flatten()
-        control_matrix_phase = ipr.pseudo_inverse(influence_matrix_phase, n=14)
-        control_matrix_zonal = ipr.pseudo_inverse(influence_matrix_zonal, n=14)
-        control_matrix_modal = ipr.pseudo_inverse(influence_matrix_modal, n=14)
+        control_matrix_phase = ipr.pseudo_inverse(influence_matrix_phase, n=32)
+        control_matrix_zonal = ipr.pseudo_inverse(influence_matrix_zonal, n=32)
+        control_matrix_modal = ipr.pseudo_inverse(influence_matrix_modal, n=32)
         if sv is not None:
             fd = sv["Adaptive Optics"]["Deformable Mirror"][dm.dm_name]["Calibration File Folder"]
             t = time.strftime("%Y_%m_%d_%H_%M")
