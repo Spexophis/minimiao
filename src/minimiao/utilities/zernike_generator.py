@@ -13,6 +13,9 @@ from math import factorial
 from typing import Optional, Tuple, List
 
 
+num_znk = 64
+
+
 def zernike_names(nz: int) -> List[str]:
     """
     Return standard optical names for the Zernike modes up to j=36 (5th radial order).
@@ -647,11 +650,6 @@ if __name__ == "__main__":
 
     nx, ny, nz = 28, 28, 36
 
-    Z, dZdx, dZdy = zernike_basis(nx=nx, ny=ny, nz=nz)
-    print(f"  Z    shape: {Z.shape}")
-    print(f"  dZdx shape: {dZdx.shape}")
-    print(f"  dZdy shape: {dZdy.shape}")
-
     # Noll table
     print(f"\nNoll index table:")
     names = zernike_names(nz)
@@ -660,6 +658,11 @@ if __name__ == "__main__":
     for j in range(1, nz + 1):
         n, m = noll_to_nm(j)
         print(f"{j:>4}  {n:>3}  {m:>+4d}  {names[j - 1]}")
+
+    Z, dZdx, dZdy = zernike_basis(nx=nx, ny=ny, nz=nz)
+    print(f"  Z    shape: {Z.shape}")
+    print(f"  dZdx shape: {dZdx.shape}")
+    print(f"  dZdy shape: {dZdy.shape}")
 
     # Build mask
     yy, xx = np.mgrid[:ny, :nx]
