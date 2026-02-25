@@ -134,35 +134,153 @@ Create a JSON configuration file with your hardware settings. Example:
 
 ```json
 {
-  "metadata": {
-    "created": "2026-01-22",
-    "description": "MiniMiao Configuration"
-  },
-
-  "camera": {
-    "type": "andor_emccd",
-    "roi": [512, 512, 1024, 1024],
-    "binning": 1,
-    "gain": 100,
-    "target_temperature": -70
-  },
-
-  "laser": {
-    "type": "cobolt",
-    "wavelengths": [488, 561, 640],
-    "max_power": 100
-  },
-
-  "daq": {
-    "type": "ni_daq",
-    "device_name": "Dev1",
-    "sample_rate": 250000
-  },
-
-  "acquisition": {
-    "data_directory": "~/Documents/data",
-    "default_mode": "wide_field"
-  }
+    "Data Path": "C:\\Users\\Public\\Documents\\data",
+    "ConWidget Path": "C:\\Users\\Public\\Documents\\data\\config_files\\conwidget_values_slm_parallel_scan.json",
+    "AOWidget Path": "C:\\Users\\Public\\Documents\\data\\config_files\\aowidget_values_slm_parallel_scan.json",
+    "Digital Timing Presets": "C:\\Users\\Public\\Documents\\data\\config_files\\digital_timing_presets_slm_parallel_scan.json",
+    "Cameras": {
+        "Andor EMCCD": {
+            "Model": "iXon Life 888",
+            "Serial": "X-13693",
+            "Pixel Size": 13,
+            "Unit": "um",
+            "Pixel Number Horizontal": 1024,
+            "Pixel Number Vertical": 1024
+        },
+        "Hamamatsu sCMOS": {
+            "Model": "ORCA Flash 4.0 C11440-22CU",
+            "Serial": "100511",
+            "Pixel Size": 6.5,
+            "Unit": "um",
+            "Pixel Number Horizontal": 2048,
+            "Pixel Number Vertical": 2048
+        },
+        "TIS CMOS": {
+            "Model": "DMK 33UX250",
+            "Serial": "10811087",
+            "Pixel Size": 3.45,
+            "Unit": "um",
+            "Pixel Number Horizontal": 2448,
+            "Pixel Number Vertical": 2048
+        }
+    },
+    "Triggers": {
+        "NIDAQ": {
+            "Dev1": {
+                "Model": "PCIe-6353",
+                "Serial": "",
+                "Sampling Rate": 2500000,
+                "Unit": "Hz"
+            },
+            "Dev2": {
+                "Model": "PCIe-6353",
+                "Serial": "",
+                "Sampling Rate": 2500000,
+                "Unit": "Hz"
+            },
+            "Channels": {
+                "analog_output_channels": {
+                    "piezo_x": "Dev1/ao0",
+                    "piezo_y": "Dev1/ao1",
+                    "piezo_z": "Dev1/ao2",
+                    "galvo_swx": "Dev2/ao0",
+                    "galvo_swy": "Dev2/ao1"
+                },
+                "digital_output_channels": {
+                    "laser_405": "Dev1/port0/line0",
+                    "laser_488_w": "Dev1/port0/line1",
+                    "laser_488": "Dev1/port0/line3",
+                    "andor ccd": "Dev1/port0/line4",
+                    "hamamatsu scmos": "Dev1/port0/line5",
+                    "tis cmos": "Dev1/port0/line7"
+                },
+                "analog_input_channels": {
+                    "piezo_x": "Dev1/ai0",
+                    "piezo_y": "Dev1/ai1",
+                    "piezo_z": "Dev1/ai2",
+                    "galvo_swx": "Dev2/ai0",
+                    "galvo_swy": "Dev2/ai1"
+                }
+            }
+        }
+    },
+    "Light Sources": {
+        "Lasers": {
+            "Cobolt": {
+                "405": {
+                    "Model": "0405-06-01-0250-100",
+                    "Serial": "11735",
+                    "Wavelength": "405 nm"
+                },
+                "488_w": {
+                    "Model": "0488-06-01-0200-100",
+                    "Serial": "12077",
+                    "Wavelength": "488 nm"
+                },
+                "488": {
+                    "Model": "0488-06-01-0200-100",
+                    "Serial": "24292",
+                    "Wavelength": "488 nm"
+                }
+            }
+        }
+    },
+    "Sample Stages": {
+        "MCL Piezo Stage": {
+            "Model": "Nano-LP100",
+            "Serial": "",
+            "Translation XY": 100,
+            "Translation Z": 100,
+            "Unit": "um"
+        },
+        "MCL Mad-Deck": {
+            "Model": "Mad-Deck",
+            "Serial": "",
+            "Translation XY": 0,
+            "Translation Z": 23,
+            "Translation Unit": "mm",
+            "Step Precision": 95.25,
+            "Precision Unit": "nm"
+        }
+    },
+    "Beam Steerers": {
+        "Galvo Mirrors": {
+            "ScannerMax": {
+                "Model": "Saturn 9B XY System",
+                "Serial": "PS904561"
+            }
+        }
+    },
+    "Spatial Light Modulator": {
+        "Forth Dimension Displays": {
+            "Model": "M150 QXGA",
+            "Serial": "175000787",
+            "ControlLibrary": "C:\\Program Files\\MetroCon-4.2\\lib\\NativeLibs\\R11CommLib-x64.dll",
+            "Pixel Pitch": 8.3,
+            "Unit": "um",
+            "Pixel Number Horizontal": 2048,
+            "Pixel Number Vertical": 1536
+        }
+    },
+    "Adaptive Optics": {
+        "Deformable Mirrors": {
+            "ALPAO DM97": {
+                "Model": "DM97-15",
+                "Serial": "BAX513",
+                "Actuator Number": 97,
+                "Pitch Size": 1.5,
+                "Pupil Diameter": 13.5,
+                "Unit": "mm",
+                "Calibration File Folder": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513",
+                "Initial Flat": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\flat_file_BAX513_2025_08_29_11_24.xlsx",
+                "Phase Control Matrix": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\control_matrix_phase_2025_09_08_17_31.tif",
+                "Zonal Control Matrix": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\control_matrix_zonal_2025_09_08_17_31.tif",
+                "Modal Control Matrix": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\control_matrix_modal_2025_09_08_17_31.tif",
+                "Influence Function Images": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\influence_function_images_2025_09_08_17_31.tif",
+                "Control Calibration": "C:\\Users\\Public\\Documents\\data\\dm_files\\bax513\\control_calibration_20240628.npz"
+            }
+        }
+    }
 }
 ```
 
