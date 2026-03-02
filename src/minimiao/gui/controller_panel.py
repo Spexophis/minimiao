@@ -256,7 +256,8 @@ class ControlPanel(QWidget):
         self.QComboBox_live_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
         self.QComboBox_acquisition_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
         self.QPushButton_save_live_timing_presets.clicked.connect(lambda: self.save_digital_timing_preset("live"))
-        self.QPushButton_save_acquisition_timing_presets.clicked.connect(lambda: self.save_digital_timing_preset("acquisition"))
+        self.QPushButton_save_acquisition_timing_presets.clicked.connect(
+            lambda: self.save_digital_timing_preset("acquisition"))
 
     @pyqtSlot(float)
     def set_galvo_x(self, value: float):

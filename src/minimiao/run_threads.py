@@ -4,7 +4,6 @@
 
 
 import threading
-import time
 import traceback
 from collections import deque
 
@@ -175,6 +174,7 @@ class MPDCountList:
     def on_update(self, callback):
         self.callback = callback
 
+
 class PMTAmpThread(threading.Thread):
 
     def __init__(self, daq, interval=0.004):
@@ -291,58 +291,6 @@ class PSLiveWorker(QThread):
             logging.error(f"PSLiveWorker error: {e}")
         finally:
             self.clear_data()
-
-
-class WFRWorker(QThread):
-    wfr_ready = pyqtSignal(object)
-
-    def __init__(self, fps=10, op=None, parent=None):
-        super().__init__(parent)
-        self.fps = float(fps)
-        self.op = op
-        self._running = True
-        self._lock = threading.Lock()
-
-    def stop(self):
-        """Stop worker thread gracefully"""
-        self._running = False
-
-        if not self.wait(2000):  # 2 second timeout
-            self.terminate()  # Force terminate if hung
-            self.wait(1000)
-
-    def push_frame(self, frame_u16: np.ndarray):
-        if not self._running or frame_u16 is None or frame_u16.ndim != 2:
-            return
-
-        with self._lock:
-            self.op.meas = np.array(frame_u16, copy=True)
-
-    def run(self):
-        period = 1.0 / max(self.fps, 0.1)
-        next_t = time.perf_counter()
-
-        try:
-            while self._running:
-                now = time.perf_counter()
-                if now < next_t:
-                    self.msleep(int((next_t - now) * 1000))
-                    continue
-                next_t = now + period
-
-                with self._lock:
-                    if self.op.meas is None:
-                        continue
-
-                # Process without holding lock
-                self.op.wavefront_reconstruction()
-
-                if self._running:
-                    self.wfr_ready.emit(self.op.wf)
-
-        except Exception as e:
-            import logging
-            logging.error(f"WFRWorker error: {e}")
 
 
 class TaskWorker(QThread):

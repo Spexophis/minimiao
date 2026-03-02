@@ -5,7 +5,6 @@
 from minimiao import logger
 from . import alpao_dm
 from . import cobolt_laser
-from . import flir_cmos
 from . import ni_daq
 
 
@@ -15,12 +14,6 @@ class DeviceManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.cf = cf
-        try:
-            self.camera = flir_cmos.FLIRCamera(logg=self.logg)
-        except Exception as e:
-            from . import mock_cam
-            self.camera = mock_cam.MockCamera()
-            self.logg.error(f"{e}")
         try:
             self.laser = cobolt_laser.CoboltLaser(logg=self.logg, config=self.config)
         except Exception as e:
@@ -36,11 +29,6 @@ class DeviceManager:
         self.logg.info("Finish initiating devices")
 
     def close(self):
-        pass
-        try:
-            self.camera.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
         try:
             self.laser.close()
         except Exception as e:

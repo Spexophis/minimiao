@@ -4,7 +4,7 @@
 
 
 from minimiao import logger
-from . import image_reconstructions, shwfs_reconstruction, trigger_generator
+from . import image_reconstructions, trigger_generator
 
 
 class ComputationManager:
@@ -13,7 +13,6 @@ class ComputationManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.rec = image_reconstructions.ImgRecon(logg=self.logg)
-        self.wfp = shwfs_reconstruction.WavefrontSensing(logg=self.logg)
         self.trg = trigger_generator.TriggerSequence(logg=self.logg)
 
     @staticmethod

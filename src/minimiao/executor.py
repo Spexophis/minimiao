@@ -9,7 +9,7 @@ import time
 import numpy as np
 import pandas as pd
 import tifffile as tf
-from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer, Qt
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 
 from . import run_threads, logger
 from .utilities import image_processor as ipr
@@ -18,7 +18,6 @@ from .utilities import image_processor as ipr
 class CommandExecutor(QObject):
     sig_plt = pyqtSignal(list, list)
     psv = pyqtSignal(str)
-    zsv = pyqtSignal(list, object)
 
     def __init__(self, dev, cwd, cmp, path, config, logg=None, cf=None):
         super().__init__()
@@ -29,7 +28,6 @@ class CommandExecutor(QObject):
         self.ao_panel = self.vw.ao_panel
         self.rec = cmp.rec
         self.trg = cmp.trg
-        self.wfr = cmp.wfp
         self.path = path
         self.config = config
         self.cfd = cf
@@ -61,26 +59,15 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_data_acquire.connect(self.data_acquisition)
         self.psv.connect(self.save_scan)
+        self.sig_plt.connect(self.plot_curve)
         # Deformable Mirror
-        self.ao_panel.Signal_push_actuator.connect(self.push_actuator)
         self.ao_panel.Signal_set_zernike.connect(self.set_zernike)
         self.ao_panel.Signal_set_dm.connect(self.set_dm_current)
         self.ao_panel.Signal_set_dm_flat.connect(self.set_dm_flat)
         self.ao_panel.Signal_update_cmd.connect(self.update_dm)
         self.ao_panel.Signal_save_dm.connect(self.save_dm)
-        self.ao_panel.Signal_influence_function.connect(self.run_influence_function)
-        # WFS
-        self.ao_panel.Signal_img_shwfs_base.connect(self.set_reference_wf)
-        self.ao_panel.Signal_img_wfs.connect(self.wfs)
-        self.ao_panel.Signal_img_shwfr_run.connect(self.run_img_wfr)
-        self.ao_panel.Signal_img_shwfs_compute_wf.connect(self.run_wf_decomposition)
-        self.zsv.connect(self.save_zernike_coeffs)
-        self.ao_panel.Signal_img_shwfs_save_wf.connect(self.save_img_wf)
         # AO
         self.ao_panel.Signal_sensorlessAO_run.connect(self.run_sensorless_iteration)
-        self.ao_panel.Signal_img_shwfs_correct_wf.connect(self.run_close_loop_iteration)
-        self.ao_panel.Signal_sensorAO_run.connect(self.run_wfs_iteration)
-        self.sig_plt.connect(self.plot_curve)
 
     def _initial_setup(self):
         try:
@@ -91,7 +78,6 @@ class CommandExecutor(QObject):
             for i in range(len(self.devs.dfm.dm_cmd)):
                 self.ao_panel.QComboBox_cmd.addItem(f"{i}")
             self.ao_panel.QComboBox_cmd.setCurrentIndex(self.devs.dfm.current_cmd)
-            # self.dm_cmd_ind = self.devs.dfm.current_cmd
             self.logg.info("Finish setting up controllers")
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
@@ -179,22 +165,6 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
 
-    def set_camera_roi(self):
-        try:
-            expo = self.ao_panel.get_cmos_exposure()
-            self.devs.camera.t_exposure = expo * 1000
-            gain = self.ao_panel.get_cmos_gain()
-            self.devs.camera.gain = gain
-            x, y, nx, ny, bn = self.ao_panel.get_cmos_roi()
-            self.devs.camera.pixels_x = nx
-            self.devs.camera.start_h = x
-            self.devs.camera.pixels_y = ny
-            self.devs.camera.start_v = y
-            self.devs.camera.bin_h = bn
-            self.devs.camera.bin_v = bn
-        except Exception as e:
-            self.logg.error(f"Camera Error  : {e}")
-
     @pyqtSlot(int)
     def update_daq_sample_rate(self, sr: int):
         self.trg.update_sampling_rate(sr * 1000)
@@ -209,13 +179,10 @@ class CommandExecutor(QObject):
         self.trg.update_digital_parameters(digital_starts, digital_ends)
 
     def update_trigger_parameters(self):
-        """Ensure that the camera acquisition is fully set up before executing this function."""
         try:
             self.update_digital_timings()
             self.update_galvo_scanner()
             self.update_piezo_scanner()
-            self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
-                                              standby_time=self.devs.camera.t_readout)
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
@@ -438,15 +405,6 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="Point Scanning Acquisition")
         self.run_task(task=self.point_scan, iteration=n)
 
-    @pyqtSlot(int, float)
-    def push_actuator(self, n: int, a: float):
-        try:
-            values = [0.] * self.devs.dfm.n_actuator
-            values[n] = a
-            self.devs.dfm.set_dm(self.devs.dfm.cmd_add(values, self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
-        except Exception as e:
-            self.logg.error(f"DM Error: {e}")
-
     @pyqtSlot(str, int, float)
     def set_zernike(self, md: str, iz: int, amp: float, factory=False):
         try:
@@ -494,104 +452,6 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
-    def set_img_wfs(self):
-        parameters = self.ao_panel.get_parameters_foc()
-        self.wfr.pixel_size = 3.45 / 1000
-        self.wfr.update_parameters(parameters)
-        self.logg.info('SHWFS parameter updated')
-
-    def prepare_wfs(self):
-        self.set_img_wfs()
-        self.set_camera_roi()
-        self.devs.camera.prepare_live()
-        self.viewer.switch_camera(self.devs.camera.pixels_y, self.devs.camera.pixels_x)
-
-    @pyqtSlot(bool)
-    def wfs(self, sw: bool):
-        if sw:
-            try:
-                self.prepare_wfs()
-                self.logg.info(f"Finish preparing wfs")
-            except Exception as e:
-                self.logg.error(f"Error preparing wfs: {e}")
-                return
-            self.start_wfs()
-        else:
-            self.stop_wfs()
-
-    def start_wfs(self):
-        try:
-            self.devs.camera.start_live()
-            self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
-            self.logg.info("WFS Started")
-        except Exception as e:
-            self.logg.error(f"Error starting wfs: {e}")
-            self.stop_video()
-            return
-
-    def stop_wfs(self):
-        try:
-            self.devs.camera.stop_live()
-            self.logg.info(r"WFS Stopped")
-        except Exception as e:
-            self.logg.error(f"Error stopping wfs: {e}")
-
-    @pyqtSlot()
-    def set_reference_wf(self):
-        try:
-            self.wfr.ref = self.devs.camera.get_last_image()
-            self.logg.info('shwfs base set')
-        except Exception as e:
-            self.logg.error(f"Error setting shwfs base: {e}")
-
-    @pyqtSlot(bool)
-    def run_img_wfr(self, on: bool):
-        self.wfr.method = self.ao_panel.get_gradient_method_img()
-        if on:
-            if getattr(self.viewer, "wfr_worker", None) is None:
-                self.viewer.wfr_worker = run_threads.WFRWorker(fps=8, op=self.wfr, parent=self.viewer)
-                self.viewer.wfr_worker.wfr_ready.connect(self.viewer.on_wfr_frame, Qt.ConnectionType.QueuedConnection)
-                self.viewer.wfr_worker.wfr_ready.connect(self.show_wf_metric)
-                self.viewer.wfr_worker.start()
-            self.viewer.wfr_mode = True
-        else:
-            self.viewer.wfr_mode = False
-            if getattr(self.viewer, "wfr_worker", None) is not None:
-                self.viewer.wfr_worker.stop()
-                self.viewer.wfr_worker = None
-
-    def show_wf_metric(self, wf_img):
-        try:
-            self.ao_panel.display_img_wf_properties(ipr.img_statistics(wf_img))
-        except Exception as e:
-            self.logg.error(f"SHWFS Wavefront Show Error: {e}")
-
-    @pyqtSlot(bool)
-    def run_wf_decomposition(self, on: bool):
-        if on:
-            self.viewer.wfr_decomp = True
-        else:
-            self.viewer.wfr_decomp = False
-
-    @pyqtSlot(list, object)
-    def save_zernike_coeffs(self, zdx: list, za: object):
-        df = pd.DataFrame({'mods': zdx, 'amps': za})
-        fn = self.vw.get_file_dialog()
-        if fn is not None:
-            file_path = fn + '_' + time.strftime("%Y%m%d%H%M%S")
-        else:
-            file_path = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S"))
-        df.to_excel(file_path + '_zernike_coefficients.xlsx', index=False)
-
-    @pyqtSlot()
-    def save_img_wf(self):
-        fn = self.vw.get_file_dialog()
-        if fn is not None:
-            file_name = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + "_" + fn)
-        else:
-            file_name = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S"))
-        self.wfr.save_wfs_results(file_name, self.devs.dfm)
-
     def prepare_sensorless_iteration(self):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
@@ -607,13 +467,13 @@ class CommandExecutor(QObject):
         self.devs.daq.photon_counter_length = dtr.shape[1]
         self.devs.daq.prepare_photon_counter()
 
-    def sensorless_iteration(self, dms):
+    def sensorless_iteration(self, dms, src):
         ims = []
         for dmsp in dms:
             self.devs.dfm.set_dm(dmsp)
             time.sleep(0.016)
             self.one_scan()
-            img = np.array(self.rec.live_rec[0]).astype(np.uint16)
+            img = np.array(self.rec.live_rec[src]).astype(np.uint16)
             ims.append(img)
         return ims
 
@@ -684,7 +544,7 @@ class CommandExecutor(QObject):
                 labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
                 cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in
                         amprange]
-                images = self.sensorless_iteration(cmds)
+                images = self.sensorless_iteration(cmds, src)
                 if mf == "Max(Intensity)":
                     mts = [img.max() for img in images]
                 if mf == "Sum(Intensity)":
@@ -740,191 +600,3 @@ class CommandExecutor(QObject):
     def run_sensorless_iteration(self):
         self.vw.get_dialog(txt="Sensorless Iteration")
         self.run_task(task=self.sensorless_iterations)
-
-    def close_loop_correction(self, n, md, fnd):
-        data = [self.wfr.ref]
-        for i in range(n):
-            self.wfr.meas = self.devs.camera.get_last_image()
-            data.append(self.wfr.meas)
-            gdx, gdy = self.wfr.get_gradient_xy()
-            self.devs.dfm.get_correction((gdx, gdy), md)
-            self.devs.dfm.set_dm(self.devs.dfm.dm_cmd[-1])
-            self.ao_panel.update_cmd_index()
-            i = int(self.ao_panel.get_cmd_index())
-            self.devs.dfm.current_cmd = i
-            self.logg.info(f"Successful close loop correction")
-        tf.imwrite(str(fnd), np.array(data))
-
-    def close_loop_iteration(self):
-        try:
-            self.prepare_wfs()
-        except Exception as e:
-            self.logg.error(f"Error preparing close loop iteration: {e}")
-            return
-        try:
-            md = self.ao_panel.get_img_wfs_method()
-            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_close_loop_iterations_' + md + r".tif"
-            fnd = os.path.join(self.path, name)
-            self.devs.camera.start_live()
-            n = self.ao_panel.QSpinBox_close_loop_number.value()
-            time.sleep(2)
-            self.close_loop_correction(n, md, fnd)
-        except Exception as e:
-            self.logg.error(f"Error running close loop iteration: {e}")
-            self.stop_wfs()
-            return
-        self.stop_wfs()
-
-    @pyqtSlot()
-    def run_close_loop_iteration(self):
-        self.vw.get_dialog(txt="Close Loop Iteration")
-        self.run_task(self.close_loop_iteration)
-
-    def sensor_iteration(self, zn, dms):
-        ims = []
-        zns = []
-        for dmsp in dms:
-            self.devs.dfm.set_dm(dmsp)
-            time.sleep(0.064)
-            img = self.devs.camera.get_last_image()
-            ims.append(img)
-            self.wfr.meas = img
-            gdx, gdy = self.wfr.get_gradient_xy()
-            temp = ipr.get_eigen_coefficients(np.concatenate((gdx.flatten(), gdy.flatten())), self.devs.dfm.zslopes, 14)
-            zns.append(np.abs(temp[zn]))
-        return ims, zns
-
-    def wfs_iteration(self):
-        try:
-            self.prepare_wfs()
-        except Exception as e:
-            self.logg.error(f"Error preparing wfs iteration: {e}")
-            return
-        try:
-            md = self.ao_panel.get_img_wfs_method()
-            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_wfs_iterations_' + md + r".tif"
-            new_folder = os.path.join(self.path, name)
-            os.makedirs(new_folder, exist_ok=True)
-            self.logg.info(f'Directory {new_folder} has been created successfully.')
-        except Exception as e:
-            self.logg.error(f'Error creating directory for wfs iteration: {e}')
-            return
-        try:
-            self.devs.camera.start_live()
-            time.sleep(2)
-            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
-            self.devs.dfm.set_dm(cmd)
-            mode_start, mode_stop, _, amp_step, amp_step_number = self.ao_panel.get_sensorless_iteration()
-            md = self.ao_panel.get_img_wfs_method()
-            self.wfr.meas = self.devs.camera.get_last_image()
-            data = [self.wfr.ref, self.wfr.meas]
-            gdx, gdy = self.wfr.get_gradient_xy()
-            zcs = ipr.get_eigen_coefficients(np.concatenate((gdx.flatten(), gdy.flatten())), self.devs.dfm.zslopes, 14)
-            self.sig_plt.emit(np.arange(zcs.size), zcs)
-            amp_starts = [- zc - amp_step * int(amp_step_number / 2) for zc in zcs]
-            results = [('Mode', 'Amp', 'Metric')]
-            za = []
-            mv = []
-            zp = [0] * self.devs.dfm.n_zernike
-            for mode in range(mode_start, mode_stop + 1):
-                self.vw.dialog_text.setText(f"Zernike mode #{mode}")
-                amp_range = [amp_starts[mode] + step_number * amp_step for step_number in range(amp_step_number)]
-                labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amp_range]
-                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in amp_range]
-                images, zma = self.sensor_iteration(mode, cmds)
-                self.sig_plt.emit(amp_range, zma)
-                pm = ipr.valley_find(amp_range, zma)
-                if isinstance(pm, str):
-                    self.logg.error(f"zernike mode #{mode} " + pm)
-                else:
-                    zp[mode] = pm
-                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
-                    self.devs.dfm.set_dm(cmd)
-                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
-                for amp, mt in zip(amp_range, zma):
-                    results.append((mode, amp, mt))
-                za.extend(amp_range)
-                mv.extend(zma)
-                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
-                with tf.TiffWriter(fn) as tif:
-                    for img, label in zip(images, labels):
-                        tif.write(img, description=label)
-            self.devs.dfm.set_dm(cmd)
-            time.sleep(0.064)
-            fmg = self.devs.camera.get_last_image()
-            data.append(fmg)
-            fn = new_folder + r"\shwfs.tiff"
-            tf.imwrite(str(fn), np.array(data))
-            self.devs.dfm.dm_cmd.append(cmd)
-            self.ao_panel.update_cmd_index()
-            i = int(self.ao_panel.get_cmd_index())
-            self.devs.dfm.current_cmd = i
-            self.devs.dfm.write_cmd(new_folder, '_')
-            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
-        except Exception as e:
-            self.logg.error(f"Error running close loop iteration: {e}")
-            self.stop_wfs()
-            return
-        self.stop_wfs()
-
-    @pyqtSlot()
-    def run_wfs_iteration(self):
-        self.vw.get_dialog(txt="WFS Iteration")
-        self.run_task(self.wfs_iteration)
-
-    def influence_function(self):
-        try:
-            self.prepare_wfs()
-        except Exception as e:
-            self.logg.error(f"Error preparing influence function: {e}")
-            return
-        try:
-            fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M") + '_influence_function')
-            os.makedirs(fd, exist_ok=True)
-            self.logg.info(f'Directory {fd} has been created successfully.')
-        except Exception as er:
-            self.logg.error(f'Error creating influence function directory: {er}')
-            return
-        try:
-            amps = np.arange(-0.2, 0.201, 0.01)
-            self.devs.camera.start_live()
-            time.sleep(0.032)
-            for i in range(self.devs.dfm.n_actuator):
-
-                shimg = []
-                self.vw.dialog_text.setText(f"actuator {i}")
-                values = [0.] * self.devs.dfm.n_actuator
-                self.devs.dfm.set_dm(values)
-                time.sleep(0.4)
-                temp = self.devs.camera.get_buffered_images()
-                temp = np.average(temp, axis=0)
-                shimg.append(temp)
-
-                for a in amps:
-
-                    values[i] = a
-                    self.devs.dfm.set_dm(values)
-                    time.sleep(0.4)
-                    temp = self.devs.camera.get_buffered_images()
-                    temp = np.average(temp, axis=0)
-                    shimg.append(temp)
-
-                tf.imwrite(fd + r'/' + 'actuator_' + str(i) + '_step_' + str(0.01) + '_range_' + str(2) + '.tif', np.asarray(shimg))
-        except Exception as e:
-            self.logg.error(f"Error running influence function: {e}")
-            self.stop_wfs()
-            return
-        try:
-            self.vw.dialog_text.setText(f"computing influence function")
-            dmn = self.ao_panel.QComboBox_dms.currentText()
-            self.wfr.generate_influence_matrices(amps, data_folder=fd, dm=self.devs.dfm, sv=self.config, cfd=self.cfd)
-        except Exception as e:
-            self.logg.error(f"Error computing influence function: {e}")
-            self.stop_wfs()
-            return
-        self.stop_wfs()
-
-    @pyqtSlot()
-    def run_influence_function(self):
-        self.vw.get_dialog(txt="Influence Function")
-        self.run_task(self.influence_function)

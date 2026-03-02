@@ -3,7 +3,6 @@
 # Licensed under the MIT License.
 
 
-import csv
 import json
 import os
 import struct
@@ -15,8 +14,6 @@ import pandas as pd
 import tifffile as tf
 
 from minimiao import logger
-from minimiao.computations import dynamic_controller as dc
-from minimiao.utilities import image_processor as ipr
 from minimiao.utilities import zernike_generator as tz
 
 sys.path.append(r'C:\Program Files\Alpao\SDK\Samples\Python3')
@@ -42,8 +39,6 @@ class DeformableMirror:
             self._get_zernike()
         else:
             raise RuntimeError(f"Error Initializing DM {self.dm_name}")
-        # self.ctrl = dc.DynamicControl(n_states=self.n_zernike, n_inputs=self.n_zernike, n_outputs=self.n_zernike,
-        #                               calib=self.ctrl_calib)
         self.g = 0.5
         try:
             self.set_dm(self.dm_cmd[self.current_cmd])
@@ -78,23 +73,31 @@ class DeformableMirror:
             return None, None
 
     def _configure_dm(self):
-        self.dm_cmd = [[0.] * self.n_actuator]
+        self.dm_cmd = []
         try:
-            self.control_matrix_phase = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Phase Control Matrix"])
+            self.control_matrix_phase = tf.imread(
+                self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Phase Control Matrix"])
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
         try:
-            self.control_matrix_zonal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Zonal Control Matrix"])
+            self.control_matrix_zonal = tf.imread(
+                self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Zonal Control Matrix"])
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
         try:
-            self.control_matrix_modal = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Modal Control Matrix"])
+            self.control_matrix_modal = tf.imread(
+                self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Modal Control Matrix"])
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
         try:
             self.ctrl_calib = self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Control Calibration"]
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
+        try:
+            self.read_cmd(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Mirror Flat"])
+        except Exception as e:
+            self.dm_cmd = [[0.] * self.n_actuator]
+            self.logg.error(f"Error Loading DM {self.dm_name} Mirror Flat: {e}\n")
         try:
             self.read_cmd(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Initial Flat"])
             self.current_cmd = 1
@@ -107,7 +110,8 @@ class DeformableMirror:
 
     def _get_zernike(self):
         try:
-            influence_function_images = tf.imread(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Influence Function Images"])
+            influence_function_images = tf.imread(
+                self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Influence Function Images"])
             nct, self.nly, self.nlx = influence_function_images.shape
             image = np.sum(influence_function_images, axis=0)
             msk = image != 0
@@ -118,34 +122,14 @@ class DeformableMirror:
             self.zernike, dZdx_orth, dZdy_orth, T = tz.gs_orthogonalize(Z, msk, dZdx, dZdy)
             self.zslopes = np.zeros((2 * self.nlx * self.nly, self.n_zernike))
             for j in range(self.n_zernike):
-                self.zslopes[:self.nlx * self.nly, j] = dZdx_orth[j].flatten()
-                self.zslopes[self.nlx * self.nly:, j] = dZdy_orth[j].flatten()
-            # self.z2c = self._zernike_modes()
+                if j == 0:
+                    self.zslopes[:self.nls, j] = dZdx_orth[j].flatten()
+                    self.zslopes[self.nls:, j] = dZdy_orth[j].flatten()
+                else:
+                    self.zslopes[:self.nls, j] = (dZdx_orth[j] / np.std(dZdx_orth[j])).flatten()
+                    self.zslopes[self.nls:, j] = (dZdy_orth[j] / np.std(dZdy_orth[j])).flatten()
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
-
-    def _zernike_modes(self):
-        """
-        z2c index:
-        0, 1 - tip / tilt
-        2 - defocus
-        3, 4 - astigmatism
-        5, 6 - coma
-        7, 8 - trefoil
-        9 - spherical
-        """
-        pth = r"C:\Program Files\Alpao\SDK\Config"
-        fn = f"{self.dm_serial}-Z2C.csv"
-        Z2C = []
-        with open(os.path.join(pth, fn), newline='') as csvfile:
-            csvrows = csv.reader(csvfile, delimiter=' ')
-            for row in csvrows:
-                x = row[0].split(",")
-                Z2C.append(x)
-        for i in range(len(Z2C)):
-            for j in range(len(Z2C[i])):
-                Z2C[i][j] = float(Z2C[i][j])
-        return Z2C
 
     def close(self):
         self.write_cmd(path=self.dtp, t=time.strftime("%Y%m%d%H%M%S") + '_')
@@ -167,50 +151,15 @@ class DeformableMirror:
         self.dm.Send([0.] * self.n_actuator)
         self.logg.info(f"DM {self.dm_name} set to null")
 
-    def get_correction(self, measurements, method="phase"):
-        if method == 'phase':
-            self.correction.append(list(self.g * self.amp * np.dot(self.control_matrix_phase, -measurements.reshape(self.nls))))
-        else:
-            gradx, grady = measurements
-            measurement = np.concatenate((gradx.reshape(self.nls), grady.reshape(self.nls)))
-            if method == 'zonal':
-                self.correction.append(list(self.g * np.dot(self.control_matrix_zonal, -measurement)))
-            elif method == 'modal':
-                temp = self.get_zernike_coffs(gradx, grady)
-                # a = np.zeros((self.n_zernike, 1))
-                # a[:, 0] = -self.g * temp
-                # _, u = self.ctrl.compute_control(a, False)
-                self.correction.append(list(self.g * np.dot(self.control_matrix_modal, -temp)))
-            else:
-                self.logg.error(f"Invalid AO correction method")
-                return
-        _c = self.cmd_add(self.dm_cmd[self.current_cmd], self.correction[-1])
-        self.dm_cmd.append(_c)
-
-    def get_iterative_correction(self, measurements, method="modal"):
-        if method == 'modal':
-            gradx, grady = measurements
-            temp = self.get_zernike_coffs(gradx, grady)
-            a = np.zeros((self.n_zernike, 1))
-            a[:, 0] = temp
-            # _, u = self.ctrl.compute_control(a, False)
-            self.correction.append(list(np.dot(self.control_matrix_modal, u[:, 0])))
-            _c = self.cmd_add(self.dm_cmd[self.current_cmd], self.correction[-1])
-            self.dm_cmd.append(_c)
-        else:
-            self.logg.error(f"Invalid AO correction method")
-            return
-
     def get_zernike_cmd(self, j, a, method="modal"):
         if method == 'modal':
-            a_s = a * ipr.get_eigen_coefficients(self.zslopes[:, j], self.zslopes, 14)
-            return list(np.dot(self.control_matrix_modal, a_s))
-        else:
-            zerphs = a * self.zernike[j].reshape(self.nls)
-            return list(np.dot(self.control_matrix_phase, zerphs))
-
-    def get_zernike_coffs(self, gdx, gdy):
-        return ipr.get_eigen_coefficients(np.concatenate((gdx.flatten(), gdy.flatten())), self.zslopes, 14)
+            voltages = self.control_matrix_modal[:, j] * a
+            return voltages.tolist()
+        if method == 'zonal':
+            target = self.zslopes[:, j] * a
+            voltages = self.control_matrix_zonal @ target
+            return voltages.tolist()
+        return None
 
     @staticmethod
     def cmd_add(cmd_0, cmd_1):
@@ -252,26 +201,3 @@ class DeformableMirror:
         with pd.ExcelWriter(fd, engine='xlsxwriter') as writer:
             df1.to_excel(writer, sheet_name='Metric Values')
             df2.to_excel(writer, sheet_name='Peaks')
-
-    def wavefront_zernike_reconstruct(self, wf, size=None, exclusive=True):
-        return self.wavefront_recomposition(self.wavefront_decomposition(wf), size=size, exclusive=exclusive)
-
-    def wavefront_decomposition(self, wf):
-        za = np.zeros(self.n_zernike)
-        for i in range(self.n_zernike):
-            wz = self.zernike[i]
-            za[i] = (wf * wz.conj()).sum() / (wz * wz.conj()).sum()
-        return za
-
-    def wavefront_recomposition(self, za, size=None, exclusive=True):
-        if size is None:
-            ny = self.nly
-            nx = self.nlx
-        else:
-            ny, nx = size
-        wf = np.zeros((ny, nx))
-        if exclusive:
-            za[:4] = 0
-        for i in range(self.n_zernike):
-            wf += za[i] * self.zernike[i]
-        return wf
