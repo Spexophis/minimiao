@@ -114,18 +114,16 @@ class CommandExecutor(QObject):
     def set_piezo_position_z(self, pos_z):
         try:
             self.devs.daq.set_piezo_position([pos_z / 10.], [0])
-            QTimer.singleShot(100, lambda: self._update_piezo_display_z())
+            QTimer.singleShot(100, lambda: self.update_piezo_display_z())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
 
-    def _update_piezo_display_z(self):
-        """Update display after piezo has settled"""
-        pass
-        # try:
-        #     position = self.devs.daq.read_piezo_position(2)
-        #     self.ctrl_panel.display_piezo_position_x(position)
-        # except Exception as e:
-        #     self.logg.error(f"MCL Piezo Read Error: {e}")
+    def update_piezo_display_z(self):
+        try:
+            position = self.devs.daq.get_piezo_position(0)
+            self.ctrl_panel.display_piezo_position(position, 0)
+        except Exception as e:
+            self.logg.error(f"MCL Piezo Read Error: {e}")
 
     def update_piezo_scanner(self):
         axis_origins, axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
@@ -200,6 +198,7 @@ class CommandExecutor(QObject):
             self.devs.daq.photon_counter_mode = 1
             self.devs.daq.psr = self.rec
             self.viewer.psr_mode = True
+            self.viewer.psr_fn = 1
         elif vd_mod == "Static Point":
             dtr, dch, pdw = self.trg.generate_digital_triggers(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=finite)

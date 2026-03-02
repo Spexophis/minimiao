@@ -11,6 +11,7 @@ from PyQt6.QtCore import QObject, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QGridLayout
 
 from . import custom_widgets as cw
+from minimiao.utilities import image_processor as ipr
 
 
 class PhotonPool(QObject):
@@ -60,6 +61,7 @@ class LiveViewer(QWidget):
         self.data_curve_0 = None
         self.data_curve_1 = None
         self.psr_mode = False
+        self.psr_fn = 1
         self.x_min, self.x_max = None, None
         self.y_min, self.y_max = None, None
         self._setup_signal_connections()
@@ -68,10 +70,14 @@ class LiveViewer(QWidget):
         layout = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Vertical)
 
-        plot_widget = QWidget()
-        plot_layout = self._create_plot_widgets()
-        plot_widget.setLayout(plot_layout)
-        splitter.addWidget(plot_widget)
+        plot_0_widget = self._create_plot_0_widget()
+        splitter.addWidget(plot_0_widget)
+
+        metric_widget = self._create_metric_widget()
+        splitter.addWidget(metric_widget)
+
+        plot_1_widget = self._create_plot_1_widget()
+        splitter.addWidget(plot_1_widget)
 
         layout.addWidget(splitter)
         self.setLayout(layout)
@@ -79,8 +85,8 @@ class LiveViewer(QWidget):
     def _setup_signal_connections(self):
         pass
 
-    def _create_plot_widgets(self):
-        layout_plot = QGridLayout()
+    def _create_plot_0_widget(self):
+        layout_plot_0 = QGridLayout()
 
         self.graph_plot_0 = pg.PlotWidget()
         self.graph_plot_0.setAspectLocked(True)
@@ -92,17 +98,6 @@ class LiveViewer(QWidget):
         self.graph_img_item_0 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
         self.graph_plot_0.addItem(self.graph_img_item_0)
         self.graph_plot_0.invertY(True)
-
-        self.graph_plot_1 = pg.PlotWidget()
-        self.graph_plot_1.setAspectLocked(True)
-        self.graph_plot_1.setLabel('left', 'Y Position', units='v')
-        self.graph_plot_1.setLabel('bottom', 'X Position', units='v')
-        self.graph_plot_1.getAxis('left').enableAutoSIPrefix(False)
-        self.graph_plot_1.getAxis('bottom').enableAutoSIPrefix(False)
-
-        self.graph_img_item_1 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
-        self.graph_plot_1.addItem(self.graph_img_item_1)
-        self.graph_plot_1.invertY(True)
 
         self.data_plot_0 = pg.PlotWidget()
         self.data_plot_0.showGrid(x=True, y=True)
@@ -116,7 +111,30 @@ class LiveViewer(QWidget):
         pi_0.setClipToView(True)
         pi_0.enableAutoRange(x=False)
 
+        layout_plot_0.addWidget(cw.LabelWidget(str('MPD #0')), 0, 0)
+        layout_plot_0.addWidget(self.graph_plot_0, 1, 0)
+        layout_plot_0.addWidget(self.data_plot_0, 1, 1)
+
+        plot_0_widget = QWidget()
+        plot_0_widget.setLayout(layout_plot_0)
+
+        return plot_0_widget
+
+    def _create_plot_1_widget(self):
+        layout_plot_1 = QGridLayout()
+
         self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT"], length=80)
+
+        self.graph_plot_1 = pg.PlotWidget()
+        self.graph_plot_1.setAspectLocked(True)
+        self.graph_plot_1.setLabel('left', 'Y Position', units='v')
+        self.graph_plot_1.setLabel('bottom', 'X Position', units='v')
+        self.graph_plot_1.getAxis('left').enableAutoSIPrefix(False)
+        self.graph_plot_1.getAxis('bottom').enableAutoSIPrefix(False)
+
+        self.graph_img_item_1 = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
+        self.graph_plot_1.addItem(self.graph_img_item_1)
+        self.graph_plot_1.invertY(True)
 
         self.data_plot_1 = pg.PlotWidget()
         self.data_plot_1.showGrid(x=True, y=True)
@@ -130,18 +148,57 @@ class LiveViewer(QWidget):
         pi_1.setClipToView(True)
         pi_1.enableAutoRange(x=False)
 
-        layout_plot.addWidget(cw.LabelWidget(str('MPD #0')), 0, 0)
-        layout_plot.addWidget(self.graph_plot_0, 2, 0)
-        layout_plot.addWidget(self.data_plot_0, 2, 1)
-        layout_plot.addWidget(self.QComboBox_plot_selection, 3, 0)
-        layout_plot.addWidget(self.graph_plot_1, 5, 0)
-        layout_plot.addWidget(self.data_plot_1, 5, 1)
-        return layout_plot
+        layout_plot_1.addWidget(self.QComboBox_plot_selection, 0, 0)
+        layout_plot_1.addWidget(self.graph_plot_1, 1, 0)
+        layout_plot_1.addWidget(self.data_plot_1, 1, 1)
+
+        plot_1_widget = QWidget()
+        plot_1_widget.setLayout(layout_plot_1)
+
+        return plot_1_widget
+
+    def _create_metric_widget(self):
+        layout_metric = QGridLayout()
+
+        self.lcdNumber_img_0_max = cw.LCDNumberWidget()
+        self.lcdNumber_img_0_min = cw.LCDNumberWidget()
+        self.lcdNumber_img_0_avg = cw.LCDNumberWidget()
+        self.lcdNumber_img_0_sobel = cw.LCDNumberWidget()
+        self.lcdNumber_img_0_laplacian = cw.LCDNumberWidget()
+        self.lcdNumber_img_1_max = cw.LCDNumberWidget()
+        self.lcdNumber_img_1_min = cw.LCDNumberWidget()
+        self.lcdNumber_img_1_avg = cw.LCDNumberWidget()
+        self.lcdNumber_img_1_sobel = cw.LCDNumberWidget()
+        self.lcdNumber_img_1_laplacian = cw.LCDNumberWidget()
+
+        layout_metric.addWidget(cw.LabelWidget(str('Max')), 0, 0)
+        layout_metric.addWidget(self.lcdNumber_img_0_max, 0, 1)
+        layout_metric.addWidget(self.lcdNumber_img_1_max, 1, 1)
+        layout_metric.addWidget(cw.LabelWidget(str('Min')), 0, 2)
+        layout_metric.addWidget(self.lcdNumber_img_0_min, 0, 3)
+        layout_metric.addWidget(self.lcdNumber_img_1_min, 1, 3)
+        layout_metric.addWidget(cw.LabelWidget(str('Avg')), 0, 4)
+        layout_metric.addWidget(self.lcdNumber_img_0_avg, 0, 5)
+        layout_metric.addWidget(self.lcdNumber_img_1_avg, 1, 5)
+        layout_metric.addWidget(cw.LabelWidget(str('Sobel')), 0, 6)
+        layout_metric.addWidget(self.lcdNumber_img_0_sobel, 0, 7)
+        layout_metric.addWidget(self.lcdNumber_img_1_sobel, 1, 7)
+        layout_metric.addWidget(cw.LabelWidget(str('Laplacian')), 0, 8)
+        layout_metric.addWidget(self.lcdNumber_img_0_laplacian, 0, 9)
+        layout_metric.addWidget(self.lcdNumber_img_1_laplacian, 1, 9)
+
+        metric_widget = QWidget()
+        metric_widget.setLayout(layout_metric)
+
+        return metric_widget
 
     def set_plot_1(self, n):
         self.QComboBox_plot_selection.setCurrentIndex(n)
 
-    def plot_trace(self, y, x=None, overlay=False):
+    def plot_trace(self,
+                   y,
+                   x=None,
+                   overlay=False):
         y = np.asarray(y)
         if y.size == 0:
             return
@@ -156,7 +213,9 @@ class LiveViewer(QWidget):
         self._overlay_n += 1
         self.data_plot_0.plot(x, y, pen=pen)
 
-    def stream_trace(self, x: np.ndarray, y_0: np.ndarray, y_1: np.ndarray):
+    def stream_trace(self,
+                     x: np.ndarray,
+                     y_0: np.ndarray, y_1: np.ndarray):
         """
         Update the 1D trace plot lively.
         """
@@ -175,12 +234,19 @@ class LiveViewer(QWidget):
             self.data_plot_1.enableAutoRange(x=True)
             self.data_curve_1.setData(x, y_1)
 
-    def stream_trace_update(self, xt: np.ndarray, counts_0: np.ndarray, counts_1: np.ndarray):
+    def stream_trace_update(self,
+                            xt: np.ndarray,
+                            counts_0: np.ndarray, counts_1: np.ndarray):
         self.data_curve_0.setData(xt, counts_0)
         self.data_curve_1.setData(xt, counts_1)
 
-    def set_graph_with_axes(self, img_0: np.ndarray, img_1: np.ndarray, x_axis=None, y_axis=None, levels=None):
+    def set_graph_with_axes(self,
+                            img_0: np.ndarray, img_1: np.ndarray,
+                            x_axis=None, y_axis=None,
+                            levels=None):
         self.set_graph_image(img_0, img_1, levels)
+        if self.psr_fn % 8 == 0:
+            self.image_metrics(img_0, img_1)
 
         if x_axis is not None and y_axis is not None:
             self.x_min, self.x_max = x_axis[0], x_axis[-1]
@@ -214,7 +280,9 @@ class LiveViewer(QWidget):
         #     self.graph_plot_1.setRange(xRange=[self.x_min, self.x_max],
         #                                yRange=[self.y_min, self.y_max], padding=0)
 
-    def set_graph_image(self, img_0: np.ndarray, img_1: np.ndarray, levels=None):
+    def set_graph_image(self,
+                        img_0: np.ndarray, img_1: np.ndarray,
+                        levels=None):
         self.graph_img_item_0.setImage(img_0, autoLevels=(levels is None))
         if levels is not None:
             self.graph_img_item_0.setLevels(levels)
@@ -226,4 +294,41 @@ class LiveViewer(QWidget):
         self.stream_trace_update(self.photon_pool.xt, np.array(self.photon_pool.buf_0),
                                  np.array(self.photon_pool.buf_1))
         if self.psr_mode:
+            self.psr_fn += 1
             self.set_graph_with_axes(self.photon_pool.img_0, self.photon_pool.img_1)
+
+    def image_metrics(self, img_0, img_1):
+        img_0_max, img_0_min, img_0_avg = ipr.img_statistics(img_0)
+        img_1_max, img_1_min, img_1_avg = ipr.img_statistics(img_1)
+        img_0_sobel = ipr.calculate_focus_measure_with_sobel(img_0)
+        img_0_lap = ipr.calculate_focus_measure_with_laplacian(img_0)
+        img_1_sobel = ipr.calculate_focus_measure_with_sobel(img_1)
+        img_1_lap = ipr.calculate_focus_measure_with_laplacian(img_1)
+        self.display_metrics(img_0_max, img_0_min, img_0_avg, img_0_sobel, img_0_lap, img_1_max, img_1_min, img_1_avg,
+                             img_1_sobel, img_1_lap)
+
+    def display_metrics(self,
+                        img_0_max: int | None, img_0_min: int | None, img_0_avg: float | None,
+                        img_0_sobel: float | None, img_0_lap: float | None,
+                        img_1_max: int | None, img_1_min: int | None, img_1_avg: float | None,
+                        img_1_sobel: float | None, img_1_lap: float | None):
+        if img_0_max is not None:
+            self.lcdNumber_img_0_max.display(img_0_max)
+        if img_0_min is not None:
+            self.lcdNumber_img_0_min.display(img_0_min)
+        if img_0_avg is not None:
+            self.lcdNumber_img_0_avg.display(img_0_avg)
+        if img_0_sobel is not None:
+            self.lcdNumber_img_0_sobel.display(img_0_sobel)
+        if img_0_lap is not None:
+            self.lcdNumber_img_0_laplacian.display(img_0_lap)
+        if img_1_max is not None:
+            self.lcdNumber_img_1_max.display(img_1_max)
+        if img_1_min is not None:
+            self.lcdNumber_img_1_min.display(img_1_min)
+        if img_1_avg is not None:
+            self.lcdNumber_img_1_avg.display(img_1_avg)
+        if img_1_sobel is not None:
+            self.lcdNumber_img_1_sobel.display(img_1_sobel)
+        if img_1_lap is not None:
+            self.lcdNumber_img_1_laplacian.display(img_1_lap)

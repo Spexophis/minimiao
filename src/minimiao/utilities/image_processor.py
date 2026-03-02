@@ -24,7 +24,7 @@ def rms(data):
 
 
 def img_statistics(img):
-    return img.min(), img.max(), rms(img)
+    return img.max(), img.min(), img.mean()
 
 
 def calculate_focus_measure_with_sobel(image):

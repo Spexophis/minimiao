@@ -54,7 +54,8 @@ class ControlPanel(QWidget):
         piezo_scroll_area, piezo_scroll_layout = cw.create_scroll_area("G")
         galvo_scroll_area, galvo_scroll_layout = cw.create_scroll_area("G")
 
-        self.QDoubleSpinBox_stage_z = cw.DoubleSpinBoxWidget(0, 100, 0.04, 2, 30.00)
+        self.QDoubleSpinBox_stage_z = cw.DoubleSpinBoxWidget(0, 100, 0.04, 2, 20.00)
+        self.QLCDNumber_stage_z = cw.LCDNumberWidget(20.00, 4)
         self.QDoubleSpinBox_step_z = cw.DoubleSpinBoxWidget(0, 50, 0.001, 4, 0.160)
         self.QDoubleSpinBox_range_z = cw.DoubleSpinBoxWidget(0, 50, 0.001, 4, 4.80)
         self.QDoubleSpinBox_piezo_return_time = cw.DoubleSpinBoxWidget(0, 50, 0.01, 2, 0.05)
@@ -63,6 +64,7 @@ class ControlPanel(QWidget):
         piezo_scroll_layout.addWidget(cw.LabelWidget(str('Piezo')), 0, 0)
         piezo_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 2)
         piezo_scroll_layout.addWidget(cw.LabelWidget(str('Z (um)')), 2, 0)
+        piezo_scroll_layout.addWidget(self.QLCDNumber_stage_z, 2, 1)
         piezo_scroll_layout.addWidget(cw.LabelWidget(str('Origin / um')), 3, 0)
         piezo_scroll_layout.addWidget(cw.LabelWidget(str('Step / um')), 3, 1)
         piezo_scroll_layout.addWidget(cw.LabelWidget(str('Range / um')), 3, 2)
@@ -290,6 +292,9 @@ class ControlPanel(QWidget):
 
     def get_piezo_scan_time(self):
         return self.QDoubleSpinBox_piezo_return_time.value()
+
+    def display_piezo_position(self, pos, ind):
+        self.QLCDNumber_stage_z.display(pos)
 
     def get_piezo_scan_parameters(self):
         axis_origins = self.QDoubleSpinBox_stage_z.value()

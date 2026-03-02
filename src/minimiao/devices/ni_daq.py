@@ -153,14 +153,14 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def get_piezo_position(self):
+    def get_piezo_position(self, ind, timeout=10.0):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev1/ai2", min_val=-10.0, max_val=10.0)
+                task.ai_channels.add_ai_voltage_chan("Dev1/ai0", min_val=-10.0, max_val=10.0)
                 task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
-                                                samps_per_chan=16, active_edge=Edge.RISING)
-                pos = task.read(number_of_samples_per_channel=16)
-            return [sum(p) / len(p) for p in pos]
+                                                samps_per_chan=8, active_edge=Edge.RISING)
+                pos = task.read(number_of_samples_per_channel=8)
+            return sum(pos) / len(pos)
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
