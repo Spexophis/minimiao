@@ -191,7 +191,7 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plot_1(dn)
-        if vd_mod == "Point Scan":
+        if vd_mod == "Point Scan" or "Beads Scan":
             dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_scan(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=finite)
