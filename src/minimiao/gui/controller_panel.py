@@ -283,6 +283,9 @@ class ControlPanel(QWidget):
         returns = [self.QSpinBox_galvo_return_time.value(), self.QSpinBox_galvo_step_response.value()]
         return galvo_positions, galvo_ranges, dot_pos, offsets, returns
 
+    def get_galvo_scan_set(self):
+        return self.QComboBox_galvo_scan_presets.currentText()
+
     @pyqtSlot(float)
     def set_piezo_z(self, pos_z: float):
         self.Signal_piezo_move.emit("z", pos_z)

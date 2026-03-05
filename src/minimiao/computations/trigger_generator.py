@@ -10,7 +10,7 @@ from minimiao import logger
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=80e3, logg=None):
+    def __init__(self, sample_rate=100e3, logg=None):
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz

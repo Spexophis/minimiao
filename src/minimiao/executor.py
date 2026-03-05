@@ -331,12 +331,13 @@ class CommandExecutor(QObject):
     @pyqtSlot(str)
     def save_scan(self, tm: str):
         fn = self.vw.get_file_dialog()
+        scan = self.ctrl_panel.get_galvo_scan_set()
         if fn is not None:
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
         img_res = np.array(self.rec.live_rec).astype(np.float16)
-        tf.imwrite(str(fd + r"_recon_image.tif"), data=img_res, compression='zlib')
+        tf.imwrite(str(fd + r"_" + scan + r"_recon_image.tif"), data=img_res, compression='zlib')
         try:
             res = np.zeros((4, self.rec.gate_len))
             res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate

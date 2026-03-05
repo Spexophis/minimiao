@@ -4,6 +4,7 @@
 
 
 from PyQt6 import QtWidgets, QtGui, QtCore
+from PyQt6.QtCore import Qt
 
 
 class ToolBarWidget(QtWidgets.QToolBar):
@@ -122,12 +123,17 @@ class FrameWidget(QtWidgets.QFrame):
 
 
 class LabelWidget(QtWidgets.QLabel):
-    def __init__(self, name=''):
+    def __init__(self, name='', align=0):
         super().__init__(name)
         self.setFont(QtGui.QFont("Arial", 9, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('background-color: #232629; color: #ECECEC; padding: 2px; border-radius: 2px;')
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
-
+        if align==0:
+            self.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        if align==1:
+            self.setAlignment(Qt.AlignmentFlag.AlignCenter | Qt.AlignmentFlag.AlignVCenter)
+        if align == 2:
+            self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
 
 class LCDNumberWidget(QtWidgets.QLCDNumber):
     def __init__(self, num=None, n=None):
