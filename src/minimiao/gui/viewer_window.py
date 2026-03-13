@@ -25,12 +25,9 @@ class PhotonPool(QObject):
         self.img_0 = np.zeros(px, dtype=np.float64)
         self.img_1 = np.zeros(px, dtype=np.float64)
 
-    def new_acquire(self, recon_img, counts, amps=None):
+    def new_acquire(self, recon_img, counts):
         self.buf_0.extend(counts[0])
-        if amps is not None:
-            self.buf_1.extend(amps)
-        else:
-            self.buf_1.extend(counts[1])
+        self.buf_1.extend(counts[1])
         self.img_0 = recon_img[0]
         self.img_1 = recon_img[1]
 

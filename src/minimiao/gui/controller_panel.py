@@ -83,14 +83,13 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_galvo_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0)
         self.QDoubleSpinBox_galvo_range_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.4)
         self.QDoubleSpinBox_galvo_range_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.4)
-        self.QDoubleSpinBox_dot_range_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.2)
-        self.QDoubleSpinBox_dot_range_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.2)
         self.QDoubleSpinBox_dot_step_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.01720)
         self.QDoubleSpinBox_dot_step_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.01720)
         self.QDoubleSpinBox_galvo_offset_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.0)
         self.QDoubleSpinBox_galvo_offset_y = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0.0)
+        self.QSpinBox_galvo_ramp_time = cw.SpinBoxWidget(0, 2000, 1, 240)
         self.QSpinBox_galvo_step_response = cw.SpinBoxWidget(0, 2000, 1, 320)
-        self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 800)
+        self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 320)
         self.QComboBox_galvo_scan_presets = cw.ComboBoxWidget(list_items=[], length=200)
         self.QPushButton_save_galvo_scan_presets = cw.PushButtonWidget("Save Scan")
         self.QLineEdit_new_galvo_scan_preset = cw.LineEditWidget()
@@ -105,15 +104,14 @@ class ControlPanel(QWidget):
         galvo_scroll_layout.addWidget(cw.LabelWidget(str('Scan Range / V')), 2, 0)
         galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_x, 2, 1)
         galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_range_y, 2, 2)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Range / V')), 3, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_x, 3, 1)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_range_y, 3, 2)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Dot Step / V')), 4, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_x, 4, 1)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_y, 4, 2)
-        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset / V')), 5, 0)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_x, 5, 1)
-        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_y, 5, 2)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Focal Step / V')), 3, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_x, 3, 1)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_dot_step_y, 3, 2)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Offset / V')), 4, 0)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_x, 4, 1)
+        galvo_scroll_layout.addWidget(self.QDoubleSpinBox_galvo_offset_y, 4, 2)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo Ramp / us')), 5, 0)
+        galvo_scroll_layout.addWidget(self.QSpinBox_galvo_ramp_time, 5, 1)
         galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo Return / us')), 6, 0)
         galvo_scroll_layout.addWidget(self.QSpinBox_galvo_return_time, 6, 1)
         galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo StpResp / us')), 7, 0)
@@ -214,10 +212,10 @@ class ControlPanel(QWidget):
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPD_0 + MPD_1", "MPD_0 + PMT"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Point Scan", "Beads Scan", "Static Point"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan", "Point Scan"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Point Scan 2D", "Static Point 2D"])
+        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan 2D", "Point Scan 2D"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
@@ -276,12 +274,13 @@ class ControlPanel(QWidget):
 
     def get_galvo_scan_parameters(self):
         galvo_positions = [self.QDoubleSpinBox_galvo_x.value(), self.QDoubleSpinBox_galvo_y.value()]
-        galvo_ranges = [[self.QDoubleSpinBox_galvo_range_x.value(), self.QDoubleSpinBox_galvo_range_y.value()],
-                        [self.QDoubleSpinBox_dot_range_x.value(), self.QDoubleSpinBox_dot_range_y.value()]]
-        dot_pos = [self.QDoubleSpinBox_dot_step_x.value(), self.QDoubleSpinBox_dot_step_y.value()]
+        galvo_ranges = [self.QDoubleSpinBox_galvo_range_x.value(), self.QDoubleSpinBox_galvo_range_y.value()]
+        dot_steps = [self.QDoubleSpinBox_dot_step_x.value(), self.QDoubleSpinBox_dot_step_y.value()]
         offsets = [self.QDoubleSpinBox_galvo_offset_x.value(), self.QDoubleSpinBox_galvo_offset_y.value()]
-        returns = [self.QSpinBox_galvo_return_time.value(), self.QSpinBox_galvo_step_response.value()]
-        return galvo_positions, galvo_ranges, dot_pos, offsets, returns
+        returns = [self.QSpinBox_galvo_ramp_time.value(),
+                   self.QSpinBox_galvo_return_time.value(),
+                   self.QSpinBox_galvo_step_response.value()]
+        return galvo_positions, galvo_ranges, dot_steps, offsets, returns
 
     def get_galvo_scan_set(self):
         return self.QComboBox_galvo_scan_presets.currentText()
@@ -397,12 +396,13 @@ class ControlPanel(QWidget):
         self.galvo_scan_presets[set_name] = {
             "QDoubleSpinBox_galvo_range_x": self.QDoubleSpinBox_galvo_range_x.value(),
             "QDoubleSpinBox_galvo_range_y": self.QDoubleSpinBox_galvo_range_y.value(),
-            "QDoubleSpinBox_dot_range_x": self.QDoubleSpinBox_dot_range_x.value(),
-            "QDoubleSpinBox_dot_range_y": self.QDoubleSpinBox_dot_range_y.value(),
             "QDoubleSpinBox_dot_step_x": self.QDoubleSpinBox_dot_step_x.value(),
             "QDoubleSpinBox_dot_step_y": self.QDoubleSpinBox_dot_step_y.value(),
             "QDoubleSpinBox_galvo_offset_x": self.QDoubleSpinBox_galvo_offset_x.value(),
-            "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value()
+            "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value(),
+            "QSpinBox_galvo_ramp_time": self.QSpinBox_galvo_ramp_time.value(),
+            "QSpinBox_galvo_return_time": self.QSpinBox_galvo_return_time.value(),
+            "QSpinBox_galvo_step_response": self.QSpinBox_galvo_step_response.value()
         }
         with open(self.config["Galvo Scan Presets"], 'w') as f:
             json.dump(self.galvo_scan_presets, f, indent=4)
@@ -412,12 +412,13 @@ class ControlPanel(QWidget):
         values = self.galvo_scan_presets.get(set_name, {})
         self.QDoubleSpinBox_galvo_range_x.setValue(values.get("QDoubleSpinBox_galvo_range_x", 0))
         self.QDoubleSpinBox_galvo_range_y.setValue(values.get("QDoubleSpinBox_galvo_range_y", 0))
-        self.QDoubleSpinBox_dot_range_x.setValue(values.get("QDoubleSpinBox_dot_range_x", 0))
-        self.QDoubleSpinBox_dot_range_y.setValue(values.get("QDoubleSpinBox_dot_range_y", 0))
         self.QDoubleSpinBox_dot_step_x.setValue(values.get("QDoubleSpinBox_dot_step_x", 0))
         self.QDoubleSpinBox_dot_step_y.setValue(values.get("QDoubleSpinBox_dot_step_y", 0))
         self.QDoubleSpinBox_galvo_offset_x.setValue(values.get("QDoubleSpinBox_galvo_offset_x", 0))
         self.QDoubleSpinBox_galvo_offset_y.setValue(values.get("QDoubleSpinBox_galvo_offset_y", 0))
+        self.QSpinBox_galvo_ramp_time.setValue(values.get("QSpinBox_galvo_ramp_time", 0))
+        self.QSpinBox_galvo_return_time.setValue(values.get("QSpinBox_galvo_return_time", 0))
+        self.QSpinBox_galvo_step_response.setValue(values.get("QSpinBox_galvo_step_response", 0))
 
     @pyqtSlot()
     def create_new_galvo_preset(self):
@@ -426,12 +427,13 @@ class ControlPanel(QWidget):
             self.galvo_scan_presets[new_preset_name] = {
                 "QDoubleSpinBox_galvo_range_x": self.QDoubleSpinBox_galvo_range_x.value(),
                 "QDoubleSpinBox_galvo_range_y": self.QDoubleSpinBox_galvo_range_y.value(),
-                "QDoubleSpinBox_dot_range_x": self.QDoubleSpinBox_dot_range_x.value(),
-                "QDoubleSpinBox_dot_range_y": self.QDoubleSpinBox_dot_range_y.value(),
                 "QDoubleSpinBox_dot_step_x": self.QDoubleSpinBox_dot_step_x.value(),
                 "QDoubleSpinBox_dot_step_y": self.QDoubleSpinBox_dot_step_y.value(),
                 "QDoubleSpinBox_galvo_offset_x": self.QDoubleSpinBox_galvo_offset_x.value(),
-                "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value()
+                "QDoubleSpinBox_galvo_offset_y": self.QDoubleSpinBox_galvo_offset_y.value(),
+                "QSpinBox_galvo_ramp_time": self.QSpinBox_galvo_ramp_time.value(),
+                "QSpinBox_galvo_return_time": self.QSpinBox_galvo_return_time.value(),
+                "QSpinBox_galvo_step_response": self.QSpinBox_galvo_step_response.value()
             }
             with open(self.config["Galvo Scan Presets"], 'w') as f:
                 json.dump(self.galvo_scan_presets, f, indent=4)

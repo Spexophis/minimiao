@@ -13,6 +13,9 @@ class ImgRecon:
 
     def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
+
+        self.mode = 1  # 0 - confocal; 1 - resolft
+
         self._gate_len = 256
         self._point_scan_gate_mask = np.zeros(self._gate_len, dtype=bool)
 
@@ -60,28 +63,6 @@ class ImgRecon:
     def _rebuild_expected(self) -> None:
         self._expected = int(self.point_scan_n_lines) * int(self.point_scan_n_pixels) * int(
             self.point_scan_dwell_samples)
-
-    def point_scan_img_recon(self, photon_counts, bi_direction: bool = False):
-        if self._expected <= 0:
-            raise ValueError("Scan params not set. Call set_point_scan_params(n_lines, n_pixels, dwell_samples).")
-
-        photon_counts = np.array(photon_counts)
-        gate = self._point_scan_gate_mask
-        per_on = photon_counts[gate]
-
-        if per_on.size != self._expected:
-            raise ValueError(f"Gate-on samples = {per_on.size}, expected {self._expected}. ")
-
-        img = per_on.reshape(
-            self.point_scan_n_lines,
-            self.point_scan_n_pixels,
-            self.point_scan_dwell_samples,
-        ).sum(axis=2)
-
-        if bi_direction:
-            img[1::2] = img[1::2, ::-1]
-
-        return img
 
     def prepare_point_scan_live_recon(self):
         self.live_counts = [np.zeros(self._gate_len, dtype=np.uint32),

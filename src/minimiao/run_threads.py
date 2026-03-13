@@ -75,7 +75,7 @@ class CameraDataList:
         self.callback = callback
 
 
-class MPDCountThread(threading.Thread):
+class PhotonCountThread(threading.Thread):
 
     def __init__(self, daq, ind, interval=0.004):
         threading.Thread.__init__(self)
@@ -130,7 +130,7 @@ class MPDCountThread(threading.Thread):
             self.condition.notify()
 
 
-class MPDCountList:
+class PhotonCountList:
 
     def __init__(self, max_length):
         self.data_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
@@ -175,80 +175,13 @@ class MPDCountList:
         self.callback = callback
 
 
-class PMTAmpThread(threading.Thread):
-
-    def __init__(self, daq, interval=0.004):
-        threading.Thread.__init__(self)
-        self.daq = daq
-        self.interval = interval
-        self.running = False
-        self.lock = threading.Lock()
-        self.condition = threading.Condition(self.lock)
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.condition:
-                self.condition.wait(timeout=self.interval)
-
-                if not self.running:
-                    break
-
-                self.daq.get_pmt_amps()
-
-    def stop(self):
-        with self.condition:
-            self.running = False
-            self.condition.notify()  # Wake up immediately
-        self.join()
-
-    def trigger(self):
-        """Manually trigger an immediate count"""
-        with self.condition:
-            self.condition.notify()
-
-
-class PMTAmpList:
-
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
-        self.count_len = max_length
-        self.count_starts = 1
-        self.count_ends = 1
-        self.callback = None
-        self.request = None
-        self.lock = threading.Lock()
-
-    def add_element(self, elements: list, num: int):
-        with self.lock:
-            self.count_starts = self.count_ends % self.count_len
-            self.count_ends = (self.count_ends + num) % self.count_len
-            self.data_list.extend(elements)
-            if self.count_starts <= self.count_ends:
-                indices = list(range(self.count_starts, self.count_ends))
-            else:
-                indices = list(range(self.count_starts, self.count_len))
-                indices.extend(list(range(self.count_ends)))
-            self.ind_list.extend(indices)
-            if self.callback is not None:
-                self.callback(np.array(elements), indices, 1)
-
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def on_update(self, callback):
-        self.callback = callback
-
-
 class PSLiveWorker(QThread):
-    psr_ready = pyqtSignal(object, object, object)
+    psr_ready = pyqtSignal(object, object)
     psr_new = pyqtSignal()
 
-    def __init__(self, reco, mpd_dat=None, pmt_dat=None, fps=10, parent=None):
+    def __init__(self, reco, mpd_dat=None, fps=10, parent=None):
         super().__init__(parent)
         self.mpd_dat = mpd_dat
-        self.pmt_dat = pmt_dat
         self.reco = reco
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
@@ -268,7 +201,6 @@ class PSLiveWorker(QThread):
         """Release references to large data objects"""
         with self._lock:
             self.mpd_dat = None
-            self.pmt_dat = None
             self.reco = None
 
     def run(self):
@@ -280,11 +212,7 @@ class PSLiveWorker(QThread):
                         break
                     img_copy = self.reco.live_rec
                     counts_copy = self.mpd_dat.count_lists
-                    if self.pmt_dat is not None:
-                        amp_copy = self.pmt_dat.data_list
-                    else:
-                        amp_copy = None
-                self.psr_ready.emit(img_copy, counts_copy, amp_copy)
+                self.psr_ready.emit(img_copy, counts_copy)
                 self.psr_new.emit()
         except Exception as e:
             import logging

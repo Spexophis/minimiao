@@ -6,6 +6,7 @@ from minimiao import logger
 from . import alpao_dm
 from . import cobolt_laser
 from . import ni_daq
+from . import galvo_mirror
 
 
 class DeviceManager:
@@ -26,6 +27,10 @@ class DeviceManager:
             self.dfm = alpao_dm.DeformableMirror(logg=self.logg, config=self.config, path=self.data_folder, cfn=self.cf)
         except Exception as e:
             self.logg.error(f"{e}")
+        try:
+            self.gvs = galvo_mirror.GalvoWaveform(logg=self.logg)
+        except Exception as e:
+            self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
 
     def close(self):
@@ -39,5 +44,9 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.dfm.close()
+        except Exception as e:
+            self.logg.error(f"{e}")
+        try:
+            del self.gvs
         except Exception as e:
             self.logg.error(f"{e}")

@@ -71,7 +71,8 @@ class AppWrapper:
         self.configs = load_config(selected_file)
         self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder,
                                             cf=selected_file)
-        self.cmp = computator.ComputationManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.cmp = computator.ComputationManager(dev=self.devices,
+                                                 config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
         self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp,
                                                 self.data_folder, self.configs, self.error_logger, selected_file)
