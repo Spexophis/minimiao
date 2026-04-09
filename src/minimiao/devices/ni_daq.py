@@ -13,7 +13,7 @@ from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannel
 from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
 from nidaqmx.system import System
 
-from minimiao import run_threads
+from minimiao import run_threads, logger
 
 warnings.filterwarnings("error", category=nidaqmx.DaqWarning)
 
@@ -21,7 +21,7 @@ warnings.filterwarnings("error", category=nidaqmx.DaqWarning)
 class NIDAQ:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.setup_logging()
         self.devices = self._initialize()
         self.tasks = {}

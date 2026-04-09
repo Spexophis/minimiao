@@ -17,7 +17,6 @@ from .utilities import image_processor as ipr
 
 class CommandExecutor(QObject):
     svd = pyqtSignal(str)
-    psv = pyqtSignal(str)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
@@ -36,7 +35,7 @@ class CommandExecutor(QObject):
         self._initial_setup()
         self.lasers = []
         self.slm_seq = ""
-        self.cameras = {"imaging": 0, "wfs": 1, "focus_lock": 2}
+        self.cameras = {"imaging": 0, "focus_lock": 1}
         self.task_worker = None
 
     @staticmethod
@@ -537,31 +536,6 @@ class CommandExecutor(QObject):
                 df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
         self.devs.cam_set[self.cameras["imaging"]].data = None
 
-    @pyqtSlot(str)
-    def save_scan(self, tm: str):
-        fn = self.vw.get_file_dialog()
-        if fn is not None:
-            fd = os.path.join(self.path, tm + '_' + fn)
-        else:
-            fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r"_recon_image.tif"), self.rec.live_rec.astype(np.float16))
-        try:
-            res = np.zeros((3, self.rec.gate_len))
-            res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
-            res[1] = self.rec.point_scan_gate_mask * 1
-            res[2] = np.array(self.devs.daq.data.count_list)
-            np.save(str(fd + r"_photon_counts.npy"), res)
-        except Exception as e:
-            self.logg.error(f"Error writing photon counting data: {e}")
-        try:
-            with pd.ExcelWriter(str(fd + r"_scan_positions.xlsx"), engine="openpyxl") as writer:
-                for i, arr in enumerate(self.trg.piezo_scan_positions):
-                    df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
-                    df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
-        except Exception as e:
-            self.logg.error(f"Error writing piezo scanning data: {e}")
-        self.devs.daq.data = None
-
     def prepare_focus_finding(self):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
@@ -716,63 +690,6 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="Widefield Acquisition")
         self.run_task(task=self.widefield, iteration=n)
 
-    def prepare_point_scan(self, tim):
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq != "None":
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.update_trigger_parameters("imaging")
-        ptr, pch, dtr, dch, dwl = self.trg.generate_piezo_point_scan_2d(self.lasers)
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                     digital_sequences=dtr, digital_channels=dch, finite=True)
-        self.devs.daq.photon_counter_mode = 1
-        self.devs.daq.psr = self.rec
-        self.rec.point_scan_gate_mask = dtr[-1]
-        self.rec.set_point_scan_params(n_lines=self.trg.piezo_scan_pos[1],
-                                       n_pixels=self.trg.piezo_scan_pos[0],
-                                       dwell_samples=dwl)
-        self.rec.prepare_point_scan_live_recon()
-        self.devs.daq.photon_counter_length = self.rec.gate_len
-        self.devs.daq.prepare_photon_counter()
-        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
-        np.save(str(fd), np.vstack((ptr, dtr)))
-
-    def point_scan(self):
-        tim = time.strftime("%Y%m%d%H%M%S")
-        try:
-            self.prepare_point_scan(tim)
-        except Exception as e:
-            self.logg.error(f"Error preparing point scanning: {e}")
-            return
-        try:
-            self.devs.slm.activate()
-            self.devs.daq.start_triggers()
-            self.devs.daq.start_photon_count()
-            self.devs.daq.run_triggers()
-            time.sleep(0.2)
-            self.psv.emit(tim + r"_point_scanning")
-        except Exception as e:
-            self.finish_point_scan()
-            self.logg.error(f"Error running point scanning: {e}")
-            return
-        self.finish_point_scan()
-
-    def finish_point_scan(self):
-        try:
-            self.devs.daq.stop_photon_count()
-            self.devs.daq.stop_triggers()
-            self.devs.slm.deactivate()
-            self.lasers_off()
-            self.reset_piezo_positions()
-            self.logg.info("Point scanning image acquired")
-        except Exception as e:
-            self.logg.error(f"Error stopping point scanning: {e}")
-
-    def run_point_scan(self, n: int):
-        self.vw.get_dialog(txt="Point scanning Acquisition")
-        self.run_task(task=self.point_scan, iteration=n)
-
     def prepare_sim_2d(self):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
@@ -886,58 +803,177 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="3D SIM Acquisition")
         self.run_task(task=self.sim_3d, iteration=n)
 
-    def prepare_parallel_scan_2d(self):
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
-        self.update_trigger_parameters("imaging")
-        dtr, ptr, dch, pch, pos = self.trg.generate_piezo_scan(self.lasers, self.cameras["imaging"],
-                                                                   self.slm_seq)
-        self.devs.daq.set_piezo_position(pos=list(np.swapaxes(ptr, 0, 1)[0]), indices=pch)
-        self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                     digital_sequences=dtr, digital_channels=dch)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-
-    def parallel_scan_2d(self):
+    @pyqtSlot(str, int, float)
+    def set_zernike(self, md: str, iz: int, amp: float, factory=False):
         try:
-            self.prepare_parallel_scan_2d()
+            if factory:
+                self.devs.dfm.set_dm(
+                    self.devs.dfm.cmd_add([i * amp for i in self.devs.dfm.z2c[iz]],
+                                          self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
+            else:
+                self.devs.dfm.set_dm(
+                    self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(iz, amp, md),
+                                          self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]))
         except Exception as e:
-            self.logg.error(f"Error preparing monalisa scanning: {e}")
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            return
+            self.logg.error(f"DM Error: {e}")
+
+    @pyqtSlot(int)
+    def set_dm_current(self, i: int):
         try:
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
-            time.sleep(0.02)
+            self.devs.dfm.set_dm(self.devs.dfm.dm_cmd[i])
+            self.devs.dfm.current_cmd = i
+        except Exception as e:
+            self.logg.error(f"DM Error: {e}")
+
+    @pyqtSlot()
+    def set_dm_flat(self):
+        if int(self.ao_panel.get_cmd_index()) == self.devs.dfm.current_cmd:
+            self.devs.dfm.write_flat_cmd(t=time.strftime("%Y_%m_%d_%H_%M"),
+                                         cmd=self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd])
+
+    @pyqtSlot()
+    def update_dm(self):
+        try:
+            self.devs.dfm.dm_cmd.append(self.devs.dfm.temp_cmd[-1])
+            self.ao_panel.update_cmd_index()
+            self.devs.dfm.set_dm(self.devs.dfm.dm_cmd[-1])
+        except Exception as e:
+            self.logg.error(f"DM Error: {e}")
+
+    @pyqtSlot()
+    def save_dm(self):
+        try:
+            t = time.strftime("%Y%m%d_%H%M%S_")
+            self.devs.dfm.write_cmd(self.path, t, flatfile=False)
+            self.logg.info('DM cmd saved')
+        except Exception as e:
+            self.logg.error(f"DM Error: {e}")
+
+    def sensorless_iteration(self, dms):
+        ims = []
+        for dmsp in dms:
+            self.devs.dfm.set_dm(dmsp)
+            time.sleep(0.016)
             self.devs.daq.run_triggers()
-            time.sleep(1.)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_parallel_scanning',
-                          self.devs.cam_set[self.cameras["imaging"]].get_data(),
-                          list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
-                          self.trg.piezo_scan_positions)
-        except Exception as e:
-            self.finish_parallel_scan()
-            self.logg.error(f"Error running monalisa scanning: {e}")
-            return
-        self.finish_parallel_scan()
+            time.sleep(0.032)
+            self.devs.daq.stop_triggers(_close=False)
+            ims.append(self.devs.camera.get_last_image())
+        return ims
 
-    def finish_parallel_scan(self):
+    def sensorless_iterations(self):
         try:
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            self.reset_piezo_positions()
-            self.logg.info("Monalisa scanning image acquired")
+            lpr, hpr, slf, mf, err = self.ao_panel.get_ao_parameters()
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + mf
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
         except Exception as e:
-            self.logg.error(f"Error stopping monalisa scanning: {e}")
+            self.logg.error(f'Error creating directory for sensorless iteration: {e}')
+            return
+        try:
+            vd_mod = self.ctrl_panel.get_live_mode()
+            self.prepare_video(vd_mod, True)
+        except Exception as e:
+            self.logg.error(f"Prepare sensorless iteration Error: {e}")
+            return
+        try:
+            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_ao_iteration()
+            md = self.ao_panel.get_img_wfs_method()
+            amprange = [amp_start + step_number * amp_step for step_number in range(amp_step_number)]
+            results = [('Mode', 'Amp', 'Metric')]
+            za = []
+            mv = []
+            zp = [0] * self.devs.dfm.n_zernike
+            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
+            self.devs.camera.start_live()
+            time.sleep(0.1)
+            self.logg.info("Sensorless AO iterations start")
+            self.devs.dfm.set_dm(cmd)
+            time.sleep(0.016)
+            if err:
+                images = []
+                for i in range(8):
+                    self.devs.daq.run_triggers()
+                    time.sleep(0.032)
+                    self.devs.daq.stop_triggers(_close=False)
+                    images.append(self.devs.camera.get_last_image())
+                if mf == "Max(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "Sum(Intensity)":
+                    mts = [img.sum() for img in images]
+                if mf == "SNR(FFT)":
+                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
+                if mf == "HighPass(FFT)":
+                    mts = [ipr.hpf(img, hpr) for img in images]
+                if mf == "Selected(FFT)":
+                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
+                std = np.std(mts)
+                fn = new_folder + r"\original.tiff"
+                tf.imwrite(str(fn), np.asarray(images))
+            else:
+                self.devs.daq.run_triggers()
+                time.sleep(0.032)
+                self.devs.daq.stop_triggers(_close=False)
+                fn = new_folder + r"\original.tiff"
+                tf.imwrite(str(fn), self.devs.camera.get_last_image())
+            for mode in range(mode_start, mode_stop + 1):
+                self.v.dialog_text.setText(f"Zernike mode #{mode}")
+                labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
+                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in
+                        amprange]
+                images = self.sensorless_iteration(cmds)
+                if mf == "Max(Intensity)":
+                    mts = [img.max() for img in images]
+                if mf == "Sum(Intensity)":
+                    mts = [img.sum() for img in images]
+                if mf == "SNR(FFT)":
+                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
+                if mf == "HighPass(FFT)":
+                    mts = [ipr.hpf(img, hpr) for img in images]
+                if mf == "Selected(FFT)":
+                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
+                self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
+                self.sig_plt.emit(amprange, mts)
+                if err:
+                    mts_err = [std] * len(mts)
+                    pm = ipr.peak_find(amprange, mts, mts_err)
+                else:
+                    pm = ipr.peak_find(amprange, mts)
+                if isinstance(pm, str):
+                    self.logg.error(f"zernike mode #{mode} " + pm)
+                else:
+                    zp[mode] = pm
+                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
+                    self.devs.dfm.set_dm(cmd)
+                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
+                for amp, mt in zip(amprange, mts):
+                    results.append((mode, amp, mt))
+                za.extend(amprange)
+                mv.extend(mts)
+                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
+                with tf.TiffWriter(fn) as tif:
+                    for img, label in zip(images, labels):
+                        tif.write(img, description=label)
+            self.devs.dfm.set_dm(cmd)
+            time.sleep(0.016)
+            self.devs.daq.run_triggers()
+            time.sleep(0.032)
+            self.devs.daq.stop_triggers(_close=False)
+            fn = new_folder + r"\final.tiff"
+            tf.imwrite(str(fn), self.devs.camera.get_last_image())
+            self.devs.dfm.dm_cmd.append(cmd)
+            self.ao_panel.update_cmd_index()
+            i = int(self.ao_panel.get_cmd_index())
+            self.devs.dfm.current_cmd = i
+            self.devs.dfm.write_cmd(new_folder, '_')
+            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
+        except Exception as e:
+            self.stop_video()
+            self.logg.error(f"Sensorless AO Error: {e}")
+            return
+        self.stop_video()
 
-    def run_parallel_scan(self, n: int):
-        self.vw.get_dialog(txt="ParallelScan Acquisition")
-        self.run_task(task=self.parallel_scan_2d, iteration=n)
+    @pyqtSlot()
+    def run_sensorless_iteration(self):
+        self.vw.get_dialog(txt="Sensorless Iteration")
+        self.run_task(task=self.sensorless_iterations)

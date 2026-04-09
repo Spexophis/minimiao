@@ -10,6 +10,8 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from . import custom_widgets as cw
 from . import controller_panel, ao_panel, viewer_window
 
+from minimiao import logger
+
 
 class MainWindow(QMainWindow):
     aboutToClose = pyqtSignal()
@@ -17,7 +19,7 @@ class MainWindow(QMainWindow):
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self._set_dark_theme()
         self._setup_ui()

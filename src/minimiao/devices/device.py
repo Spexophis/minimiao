@@ -3,18 +3,20 @@
 # Licensed under the MIT License.
 
 
+from minimiao import logger
 from . import andor_emccd
 from . import cobolt_laser
 from . import fdd_slm
 from . import mcl_deck
 from . import mcl_piezo
 from . import ni_daq
+from . import phaseform_dpp
 
 
 class DeviceManager:
     def __init__(self, config=None, logg=None, path=None):
         self.config = config
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.cam_set = {}
         try:
@@ -26,6 +28,10 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.slm = fdd_slm.QXGA(logg=self.logg, config=self.config)
+        except Exception as e:
+            self.logg.error(f"{e}")
+        try:
+            self.dm = phaseform_dpp.DPP(logg=self.logg, config=self.config, path=self.data_folder)
         except Exception as e:
             self.logg.error(f"{e}")
         try:
@@ -47,7 +53,6 @@ class DeviceManager:
         self.logg.info("Finish initiating devices")
 
     def close(self):
-        pass
         try:
             for key in self.cam_set.keys():
                 self.cam_set[key].close()
@@ -59,6 +64,10 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.slm.close()
+        except Exception as e:
+            self.logg.error(f"{e}")
+        try:
+            self.dm.close()
         except Exception as e:
             self.logg.error(f"{e}")
         try:

@@ -10,6 +10,8 @@ import numpy as np
 import pandas as pd
 from dpp_ctrl import api_dpp
 
+from minimiao import logger
+
 zms = [(-1, 1), (1, 1),
        (0, 2), (-2, 2), (2, 2),
        (-1, 3), (1, 3), (-3, 3), (3, 3),
@@ -18,14 +20,16 @@ zms = [(-1, 1), (1, 1),
        (0, 6), (-2, 6), (2, 6), (-4, 6), (4, 6), (-4, 6), (4, 6),
        (-1, 7), (1, 7), (-3, 7), (3, 7), (-5, 7), (5, 7), (-7, 7), (7, 7)]
 nz = len(zms)
+vm = 300
 
 
 class DPP:
 
     def __init__(self, logg=None, config=None, path=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.config = config or self.load_configs()
         self.dtp = path
+        self.opm = 'v'
         self.dpp, self.opened_flag = self._initialize()
         if self.dpp is not None:
             self.dpp_model = self.config["Adaptive Optics"]["Deformable Phase Plate"]["PhaseForm"]["Model"]
@@ -35,6 +39,7 @@ class DPP:
         pass
 
     def close(self):
+        self.dpp.zero_outputs()
         self.dpp.close()
 
     @staticmethod
@@ -57,7 +62,8 @@ class DPP:
         cal_file = Path(cal_file_dir).expanduser()
         port = self.config["Adaptive Optics"]["Deformable Phase Plate"]["PhaseForm"]["COM"]
         if dpp.connect_device(port_name=port):
-            if dpp.load_infl_matrix(str(cal_file), operation_mode='v'):
+            if dpp.load_infl_matrix(str(cal_file), operation_mode=self.opm):
+                dpp.set_max_voltage(vm)
                 return dpp, True
             else:
                 self.logg.error("Cannot connect DPP!")
@@ -71,8 +77,18 @@ class DPP:
         self.dpp_cmd = [[0.] * nz]
         self.read_cmd(self.initial_flat)
         self.current_cmd = 1
+        self.set_dpp(self.dpp_cmd[self.current_cmd])
         self.correction = []
         self.temp_cmd = []
+
+    def set_dpp(self, amps):
+        phases = {key: amp for key, amp in zip(zms, amps)}
+        self.dpp.apply_phases(phases)
+
+    def set_zernike(self, zm, amp):
+        phase_temp = self.dpp_cmd[self.current_cmd].copy()
+        phase_temp[zm] += amp
+        self.set_dpp(phase_temp)
 
     def read_cmd(self, fnd):
         df = pd.read_excel(fnd, sheet_name=None)
@@ -109,16 +125,3 @@ class DPP:
         with pd.ExcelWriter(fd, engine='xlsxwriter') as writer:
             df1.to_excel(writer, sheet_name='Metric Values')
             df2.to_excel(writer, sheet_name='Peaks')
-
-    def set_zernike(self, zm, amp):
-        phase_temp = self.dpp_cmd[self.current_cmd].copy()
-        phase_temp[zm] = amp
-        self.dpp.apply_phases(phase_temp)
-
-# from dpp_ctrl import gui_dpp
-# from multiprocessing import Queue
-# mpQueue = Queue() # define Queue
-# ctrl_dpp_prc = gui_dpp.IndPrcLauncher(mpQueue)
-# ctrl_dpp_prc.start() # start GUI process
-#
-# mpQueue.put_nowait("EXIT")

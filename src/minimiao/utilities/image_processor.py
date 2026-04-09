@@ -7,13 +7,12 @@ import numpy as np
 from numpy.fft import fft2, fftshift
 from scipy.optimize import curve_fit
 from skimage import filters
-import matplotlib.pyplot as plt
+from typing import Tuple, Optional
 
-wl = 0.5  # wavelength in microns
-na = 1.3  # numerical aperture
-dx = 0.06  # pixel size in microns
-fs = 1 / dx  # Spatial sampling frequency, inverse microns
 
+# ══════════════════════════════════════════════════════════════════════
+#  Image statistics
+# ══════════════════════════════════════════════════════════════════════
 
 def rms(data):
     _nx, _ny = data.shape
@@ -24,201 +23,28 @@ def rms(data):
     return r
 
 
-def img_properties(img):
+def img_statistics(img):
     return img.min(), img.max(), rms(img)
 
 
-def fourier_transform(data):
-    return np.log(np.abs(fftshift(fft2(data))))
+def calculate_focus_measure_with_sobel(image):
+    edges = filters.sobel(image)
+    focus_measure = np.var(edges)
+    return focus_measure
 
 
-def find_center_of_mass(image):
-    height, width = image.shape
-    # row_indices, col_indices = np.indices((height, width))
-    # total_mass = np.sum(image)
-    # row_mass = np.sum(row_indices * image) / total_mass
-    # col_mass = np.sum(col_indices * image) / total_mass
-    row_indices = np.arange(0, height)[:, np.newaxis]
-    col_indices = np.arange(0, width)
-    total_mass = np.sum(image)
-    row_mass = np.sum(image * row_indices) / total_mass
-    col_mass = np.sum(image * col_indices) / total_mass
-    return row_mass, col_mass
+def calculate_focus_measure_with_laplacian(image):
+    laplacian_image = filters.laplace(image)
+    focus_measure = np.var(laplacian_image)
+    return focus_measure
 
 
-def find_valley_2d(image, coordinates=None):
-    data = image - image.min()
-    data = data / data.max()
-    mx = np.average(data, axis=0)
-    my = np.average(data, axis=1)
-    if coordinates is not None:
-        cdx, cdy = coordinates
-        l_ = valley_find(cdy, my)
-        k_ = valley_find(cdx, mx)
-        return k_, l_
-    else:
-        l_ = np.where(my == my.min())
-        k_ = np.where(mx == mx.min())
-        return k_[0][0], l_[0][0]
-
-
-def find_peak_2d(image, coordinates=None):
-    data = image - image.min()
-    data = data / data.max()
-    mx = np.average(data, axis=0)
-    my = np.average(data, axis=1)
-    if coordinates is not None:
-        cdx, cdy = coordinates
-        l_ = peak_find(cdy, my)
-        k_ = peak_find(cdx, mx)
-        return k_, l_
-    else:
-        l_ = np.where(my == my.max())
-        k_ = np.where(mx == mx.max())
-        return k_[0][0], l_[0][0]
-
-
-def gaussian_beam(r, bg, I0, r0, w0):
-    return bg + I0 * np.exp(-2 * ((r - r0) / w0) ** 2)
-
-
-def fit_gaussian(image, verbose=False, plot=False, bounds=None):
-    y_px, x_px = image.shape
-    x, y = range(x_px), range(y_px)
-    x_max = np.max(image, axis=0)
-    y_max = np.max(image, axis=1)
-    if bounds is None:
-        bg_min, bg_max = 0, 10 * np.min(image)  # background
-        I0_min, I0_max = np.min(image), 2 * np.max(image)  # peak intensity
-        mean_min, mean_max = 0, max(x_px, y_px)  # mean
-        w0_min, w0_max = 0, max(x_px, y_px)  # beam 1/e^2 radius
-        bounds = ((bg_min, I0_min, mean_min, w0_min),
-                  (bg_max, I0_max, mean_max, w0_max))
-    xp = curve_fit(gaussian_beam, x, x_max, bounds=bounds)[0]  # x parameters
-    yp = curve_fit(gaussian_beam, y, y_max, bounds=bounds)[0]  # y parameters
-    xp = np.append(xp, (2 * np.log(2)) ** 0.5 * xp[3])  # add x FWHM
-    yp = np.append(yp, (2 * np.log(2)) ** 0.5 * yp[3])  # add y FWHM
-    if verbose:
-        print('x: bg=%0.2f, I0=%0.2f, r0=%0.2f, w0=%0.2f, FWHM=%0.2f' % tuple(xp))
-        print('y: bg=%0.2f, I0=%0.2f, r0=%0.2f, w0=%0.2f, FWHM=%0.2f' % tuple(yp))
-    if plot:
-        x_crv = gaussian_beam(x, *xp[:-1])
-        y_crv = gaussian_beam(y, *yp[:-1])
-        fig, ax = plt.subplots()
-        ax.set_title('Gaussian fit')
-        ax.set_ylabel('intensity')
-        ax.set_xlabel('pixels')
-        ax.plot(x, x_max, color='g', label='x_max', linestyle='--')
-        ax.plot(x, x_crv, color='g', label='x_curve: (FWHM=%0.1f)' % xp[4])
-        ax.plot(y, y_max, color='b', label='y_max', linestyle='--')
-        ax.plot(y, y_crv, color='b', label='y_curve: (FWHM=%0.1f)' % yp[4])
-        ax.legend(loc="upper right")
-        fig.savefig('guassian_fit', dpi=150)
-        fig.show()
-    return xp, yp
-
-
-def disc_array(shape=(128, 128), radi=64.0, origin=None, dtp=np.float64):
-    _nx = shape[0]
-    _ny = shape[1]
-    ox = _nx / 2
-    oy = _ny / 2
-    x = np.linspace(-ox, ox - 1, _nx)
-    y = np.linspace(-oy, oy - 1, _ny)
-    xv, yv = np.meshgrid(x, y)
-    rho = np.sqrt(xv ** 2 + yv ** 2)
-    disc = (rho < radi).astype(dtp)
-    if origin is not None:
-        s0 = origin[0] - int(_nx / 2)
-        s1 = origin[1] - int(_ny / 2)
-        disc = np.roll(np.roll(disc, int(s0), 0), int(s1), 1)
-    return disc
-
-
-def gaussian_filter(shape, sigma, pv, orig=None):
-    _nx, _ny = shape
-    if orig is None:
-        ux = _nx / 2.
-        uy = _ny / 2.
-    else:
-        ux, uy = orig
-    g = np.fromfunction(lambda i, j: np.exp(-((i - ux) ** 2. + (j - uy) ** 2.) / (2. * sigma ** 2.)), (_nx, _ny))
-    return pv * g
-
-
-def fft_frequency_2dmap(rows, cols, psy, psx):
-    freq_x = np.fft.fftfreq(cols, psx)
-    freq_y = np.fft.fftfreq(rows, psy)
-    fx, fy = np.meshgrid(freq_x, freq_y)
-    fxy = np.sqrt(fx ** 2 + fy ** 2)
-    frequency_map = np.divide(1.0, fxy, where=fxy != 0, out=np.zeros_like(fxy))
-    return fftshift(frequency_map)
-
-
-def selected_frequency(img, freqs, relative=True):
-    _ny, _nx = img.shape
-    df = fs / _nx
-    radius = (na / wl) / df
-    freq_x = fftshift(np.fft.fftfreq(_nx, dx))
-    freq_y = fftshift(np.fft.fftfreq(_ny, dx))
-    freq_x = np.divide(1.0, freq_x, where=freq_x != 0, out=np.zeros_like(freq_x))
-    freq_y = np.divide(1.0, freq_y, where=freq_y != 0, out=np.zeros_like(freq_y))
-    freq_coords = []
-    for freq in freqs:
-        horizontal_indices = np.argsort(np.abs(freq_x - freq))[:2]
-        horizontal_coords = [(x, _ny // 2) for x in horizontal_indices]
-        vertical_indices = np.argsort(np.abs(freq_y - freq))[:2]
-        vertical_coords = [(_nx // 2, y) for y in vertical_indices]
-        freq_coords += horizontal_coords + vertical_coords
-    msk = disc_array(shape=(_ny, _nx), radi=0.9 * radius)
-    g = np.zeros((_ny, _nx))
-    for freq_coord in freq_coords:
-        g += disc_array(shape=(_ny, _nx), radi=9, origin=freq_coord)
-    wft = np.fft.fftshift(np.fft.fft2(img))
-    if relative:
-        return (np.abs(wft * g)).sum() / (np.abs(wft * msk)).sum()
-    else:
-        return (np.abs(wft * g)).sum()
-
-
-def snr(img, lpr, hpr, relative=True, gau=True):
-    _ny, _nx = img.shape
-    df = fs / _nx
-    radius = (na / wl) / df
-    msk = disc_array(shape=(_nx, _ny), radi=0.9 * radius)
-    if gau:
-        lp = msk * gaussian_filter(shape=(_nx, _ny), sigma=lpr * radius, pv=1, orig=None)
-        hp = (1 - gaussian_filter(shape=(_nx, _ny), sigma=hpr * radius, pv=1, orig=None)) * msk
-    else:
-        lp = disc_array(shape=(_nx, _ny), radi=lpr * radius)
-        hp = msk - disc_array(shape=(_nx, _ny), radi=hpr * radius)
-    wft = np.fft.fftshift(np.fft.fft2(img))
-    if relative:
-        num = (np.abs(hp * wft)).sum() / (np.abs(wft * msk)).sum()
-        den = (np.abs(lp * wft)).sum() / (np.abs(wft * msk)).sum()
-        return num / den
-    else:
-        return (np.abs(hp * wft)).sum() / (np.abs(lp * wft)).sum()
-
-
-def hpf(img, hpr, relative=True, gau=True):
-    _nx, _ny = img.shape
-    df = fs / _nx
-    radius = (na / wl) / df
-    msk = disc_array(shape=(_nx, _ny), radi=0.9 * radius)
-    if gau:
-        hp = (1 - gaussian_filter(shape=(_nx, _ny), sigma=hpr * radius, pv=1, orig=None)) * msk
-    else:
-        hp = msk - disc_array(shape=(_nx, _ny), radi=hpr * radius)
-    wft = np.fft.fftshift(np.fft.fft2(img))
-    if relative:
-        return (np.abs(wft * hp)).sum() / (np.abs(wft * msk)).sum()
-    else:
-        return (np.abs(wft * hp)).sum()
-
+# ══════════════════════════════════════════════════════════════════════
+#  Extremum detection
+# ══════════════════════════════════════════════════════════════════════
 
 def binomial_model(x, a, b, c):
-    return a * x**2 + b * x + c
+    return a * x ** 2 + b * x + c
 
 
 def peak_find(x_data, y_data, y_std=None):
@@ -257,137 +83,722 @@ def valley_find(x, y):
     x = np.asarray(x)
     y = np.asarray(y)
     a, b, c = np.polyfit(x, y, 2)
-    v = -1 * b / a / 2.0
+    v = -b / (2 * a)
     if a < 0:
-        raise ValueError("no minimum")
+        return "no minimum"
     elif (v >= x.max()) or (v <= x.min()):
-        raise ValueError("minimum exceeding range")
+        return "minimum exceeding range"
     else:
         return v
 
 
-def get_profile(data, ax, norm=False):
-    data = data - data.min()
-    data = data / data.max()
-    if ax == 'Y':
-        m = data.mean(0)
-    elif ax == 'X':
-        m = data.mean(1)
-    else:
-        raise ValueError("invalid axis")
-    if norm:
-        return m / m.max()
-    else:
-        return m
+# ══════════════════════════════════════════════════════════════════════
+#  Matrix decomposition
+# ══════════════════════════════════════════════════════════════════════
 
-
-def pseudo_inverse(A, n=32):
-    u, s, vt = np.linalg.svd(A)
-    s_inv = np.zeros_like(A.T)
-    if n is None:
-        s_inv[:min(A.shape), :min(A.shape)] = np.diag(1 / s[:min(A.shape)])
-    else:
-        s_inv[:n, :n] = np.diag(1 / s[:n])
-    return vt.T @ s_inv @ u.T
+def pseudo_inverse(in_matrix, n_modes_kept=None, condition_limit=None):
+    if n_modes_kept is None and condition_limit is None:
+        raise ValueError("Either n_modes_kept or condition_limit must be provided.")
+    if n_modes_kept is not None and condition_limit is not None:
+        raise ValueError("Only one of n_modes_kept or condition_limit can be provided, not both.")
+    if n_modes_kept is not None:
+        U, sv, Vt = np.linalg.svd(in_matrix, full_matrices=False)
+        sv_inv = np.zeros_like(sv)
+        sv_inv[:n_modes_kept] = 1.0 / sv[:n_modes_kept]
+        C_inv = (Vt[:n_modes_kept].T * sv_inv[:n_modes_kept]) @ U[:, :n_modes_kept].T
+    if condition_limit is not None:
+        U, s, Vt = np.linalg.svd(in_matrix, full_matrices=False)
+        s_inv = np.where(s / s[0] > 1 / condition_limit, 1 / s, 0.0)
+        C_inv = Vt.T @ np.diag(s_inv) @ U.T
+    return C_inv
 
 
 def get_eigen_coefficients(mta, mtb, ng=32):
-    mp = pseudo_inverse(mtb, n=ng)
+    mp = pseudo_inverse(mtb, condition_limit=50)
     return np.matmul(mp, mta)
 
 
-def calculate_focus_measure_with_sobel(image):
-    edges = filters.sobel(image)
-    focus_measure = np.var(edges)
-    return focus_measure
+# ══════════════════════════════════════════════════════════════════════
+#  Centroid detection
+# ══════════════════════════════════════════════════════════════════════
+
+def centroid_cog(img: np.ndarray) -> Tuple[float, float]:
+    """
+    Basic Center of Gravity - Sensitive to background noise.
+    """
+    img = img.astype(np.float64)
+    total = img.sum()
+    if total <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+    cx = (xx * img).sum() / total
+    cy = (yy * img).sum() / total
+    return cx, cy
 
 
-def calculate_focus_measure_with_laplacian(image):
-    laplacian_image = filters.laplace(image)
-    focus_measure = np.var(laplacian_image)
-    return focus_measure
+def centroid_thresholded(img: np.ndarray, threshold_fraction: float = 0.1) -> Tuple[float, float]:
+    """
+    Thresholded Center of Gravity.
+    Subtracts background and zeros out pixels below a fraction of the peak.
+    More robust to noise than basic CoG.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    threshold_fraction : float
+        Fraction of (peak - background) below which pixels are zeroed.
+        0.1 means keep only pixels above 10% of the spot's dynamic range.
+    """
+    img = img.astype(np.float64)
+    bg = np.median(img)
+    img_bg = img - bg
+    peak = img_bg.max()
+
+    if peak <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    threshold = threshold_fraction * peak
+    img_thresh = np.where(img_bg > threshold, img_bg, 0.0)
+
+    total = img_thresh.sum()
+    if total <= 0:
+        return img.shape[1] / 2.0, img.shape[0] / 2.0
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+    cx = (xx * img_thresh).sum() / total
+    cy = (yy * img_thresh).sum() / total
+    return cx, cy
 
 
-def meshgrid(nx_, ny_):
-    x_ = np.arange(-nx_ / 2, nx_ / 2)
-    y_ = np.arange(-ny_ / 2, ny_ / 2)
-    xv_, yv_ = np.meshgrid(x_, y_, indexing='ij', sparse=True)
-    return np.roll(xv_, int(nx_ / 2)), np.roll(yv_, int(ny_ / 2))
+def centroid_iwcog(img: np.ndarray, n_iter: int = 5,
+                   initial_sigma: float = 3.0) -> Tuple[float, float]:
+    """
+    Iterative Weighted Center of Gravity.
+
+    Starts with thresholded CoG, then iteratively applies a Gaussian
+    weight centered on the current estimate. Converges to a stable,
+    noise-robust centroid.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    n_iter : int
+        Number of iterations (3-5 is usually enough).
+    initial_sigma : float
+        Initial Gaussian window width in pixels.
+    """
+    img = img.astype(np.float64)
+    bg = np.median(img)
+    img_bg = np.clip(img - bg, 0, None)
+
+    ny, nx = img.shape
+    yy, xx = np.mgrid[:ny, :nx]
+
+    # Initialize with thresholded CoG
+    cx, cy = centroid_thresholded(img)
+
+    sigma = initial_sigma
+    for _ in range(n_iter):
+        # Gaussian weight centered on current estimate
+        r2 = (xx - cx) ** 2 + (yy - cy) ** 2
+        weight = np.exp(-r2 / (2 * sigma ** 2))
+        weighted = img_bg * weight
+
+        total = weighted.sum()
+        if total <= 0:
+            break
+
+        cx = (xx * weighted).sum() / total
+        cy = (yy * weighted).sum() / total
+
+        # Optionally tighten the window
+        sigma = max(sigma * 0.9, 1.5)
+
+    return cx, cy
 
 
-def shift(arr, shifts=None):
-    if shifts is None:
-        shifts = np.array(arr.shape) / 2
-    if len(arr.shape) == len(shifts):
-        for m, p in enumerate(shifts):
-            arr = np.roll(arr, int(p), m)
-    return arr
+def centroid_gaussian(img: np.ndarray, fit_radius: int = 4) -> Tuple[float, float]:
+    """
+    Gaussian fit centroiding — best for laser spots.
+
+    Fits a 2D Gaussian to the region around the peak using
+    linearized least-squares on log(intensity).
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    fit_radius : int
+        Half-width of the fitting window around the peak.
+
+    Returns
+    -------
+    cx, cy : float
+        img-pixel center of the fitted Gaussian.
+    """
+    img = img.astype(np.float64)
+    ny, nx = img.shape
+
+    # Find peak
+    peak_pos = np.unravel_index(np.argmax(img), img.shape)
+    py, px = peak_pos
+
+    # Extract fitting window
+    r = fit_radius
+    y0 = max(py - r, 0)
+    y1 = min(py + r + 1, ny)
+    x0 = max(px - r, 0)
+    x1 = min(px + r + 1, nx)
+
+    window = img[y0:y1, x0:x1]
+    wy, wx = window.shape
+    yy, xx = np.mgrid[:wy, :wx]
+
+    # Subtract background and clip
+    bg = np.percentile(img, 25)
+    window_bg = np.clip(window - bg, 1e-10, None)
+
+    # Linearize: ln(I) = ln(A) - (x-cx)²/(2σx²) - (y-cy)²/(2σy²)
+    # Rearrange as: ln(I) = c0 + c1*x + c2*x² + c3*y + c4*y²
+    log_I = np.log(window_bg)
+    valid = np.isfinite(log_I) & (window_bg > bg * 0.05)
+
+    if valid.sum() < 6:
+        # Not enough points, fall back to thresholded CoG
+        return centroid_thresholded(img)
+
+    x_flat = xx[valid].ravel()
+    y_flat = yy[valid].ravel()
+    z_flat = log_I[valid].ravel()
+
+    # Design matrix: [1, x, x², y, y²]
+    A = np.column_stack([
+        np.ones(len(x_flat)),
+        x_flat,
+        x_flat ** 2,
+        y_flat,
+        y_flat ** 2,
+    ])
+
+    try:
+        coeffs, _, _, _ = np.linalg.lstsq(A, z_flat, rcond=None)
+    except np.linalg.LinAlgError:
+        return centroid_thresholded(img)
+
+    # c2 = -1/(2σx²) → cx = -c1/(2*c2)
+    # c4 = -1/(2σy²) → cy = -c3/(2*c4)
+    c0, c1, c2, c3, c4 = coeffs
+
+    if c2 >= 0 or c4 >= 0:
+        # Not a peak (concave up), fall back
+        return centroid_thresholded(img)
+
+    cx_local = -c1 / (2 * c2)
+    cy_local = -c3 / (2 * c4)
+
+    # Convert back to full sub-image coordinates
+    cx = cx_local + x0
+    cy = cy_local + y0
+
+    # Sanity check: result should be within the sub-image
+    cx = np.clip(cx, 0, nx - 1)
+    cy = np.clip(cy, 0, ny - 1)
+
+    return cx, cy
 
 
-def get_pupil(nx_, rd_):
-    msk = shift(disc_array(shape=(nx_, nx_), radi=rd_)) / np.sqrt(np.pi * rd_ ** 2) / nx_
-    phi = np.zeros((nx_, nx_))
-    return msk * np.exp(1j * phi)
+def centroid_crosscorr(img: np.ndarray, reference: np.ndarray,
+                       upsample: int = 10) -> Tuple[float, float]:
+    """
+    Cross-correlation centroiding.
+
+    Computes the shift between the image and a reference spot
+    using FFT-based cross-correlation with sub-pixel upsampling.
+
+    Parameters
+    ----------
+    img : 2D array
+        Image data to be processed.
+    reference : 2D array
+        Reference spot image (same size as img).
+        Typically, the image from a flat wavefront measurement.
+    upsample : int
+        Upsampling factor for sub-pixel precision.
+        10 gives 0.1 pixel accuracy, 100 gives 0.01.
+
+    Returns
+    -------
+    cx, cy : float
+        Position relative to the reference (shift_x, shift_y in pixels).
+        NOTE: unlike other methods, this returns SHIFTS directly,
+        not absolute positions.
+    """
+    from numpy.fft import fft2, ifft2, fftshift
+
+    img = img.astype(np.float64)
+    ref = reference.astype(np.float64)
+
+    # Subtract means
+    img = img - img.mean()
+    ref = ref - ref.mean()
+
+    ny, nx = img.shape
+
+    # Cross-correlation via FFT
+    F_img = fft2(img)
+    F_ref = fft2(ref)
+    cross = ifft2(F_img * np.conj(F_ref))
+    cross = np.abs(fftshift(cross))
+
+    # Coarse peak
+    peak_pos = np.unravel_index(np.argmax(cross), cross.shape)
+
+    # Sub-pixel refinement via parabolic interpolation around peak
+    py, px = peak_pos
+    cy_coarse = py - ny // 2  # shift relative to center
+    cx_coarse = px - nx // 2
+
+    # Parabolic refinement in x
+    if 0 < px < nx - 1:
+        left = cross[py, px - 1]
+        center = cross[py, px]
+        right = cross[py, px + 1]
+        denom = 2 * (2 * center - left - right)
+        dx = (left - right) / denom if abs(denom) > 1e-10 else 0.0
+    else:
+        dx = 0.0
+
+    # Parabolic refinement in y
+    if 0 < py < ny - 1:
+        top = cross[py - 1, px]
+        center = cross[py, px]
+        bottom = cross[py + 1, px]
+        denom = 2 * (2 * center - top - bottom)
+        dy = (top - bottom) / denom if abs(denom) > 1e-10 else 0.0
+    else:
+        dy = 0.0
+
+    shift_x = cx_coarse + dx
+    shift_y = cy_coarse + dy
+
+    return shift_x, shift_y
 
 
-def get_psf(nx_, rd_):
-    bpp = get_pupil(nx_, rd_)
-    psf_ = np.abs((fft2(fftshift(bpp)))) ** 2
-    return psf_ / psf_.sum()
+# ══════════════════════════════════════════════════════════════════════
+#  Gaussian fit
+# ══════════════════════════════════════════════════════════════════════
 
 
-def get_correlation(image_to_be_computed, shift_orientation, shift_spacing, xv, yv, psf):
-    kx = dx * np.cos(shift_orientation) / shift_spacing
-    ky = dx * np.sin(shift_orientation) / shift_spacing
-    ysh = np.exp(2j * np.pi * (kx * xv + ky * yv))
-    otf0 = fft2(psf)
-    imgf0 = fft2(image_to_be_computed)
-    otf = fft2(psf * ysh)
-    imgf = fft2(image_to_be_computed * ysh)
-    a = np.sum(imgf0 * np.conj(otf0) * np.conj(imgf * np.conj(otf)))
-    return np.abs(a), np.angle(a)
+FWHM_FACTOR = np.sqrt(2 * np.log(2))
 
 
-def find_pattern(data, angle=0., spacing=0.268, nps=10, r_ang=0.005, r_sp=0.005, verbose=False):
-    nx, ny = data.shape
-    df = fs / nx
-    radius = (na / wl) / df
-    xv_, yv_ = meshgrid(nx, nx)
-    psf_ = get_psf(nx, radius)
-    d_ang = 2 * r_ang / nps
-    d_sp = 2 * r_sp / nps
-    ang_iter = np.arange(-r_ang, r_ang + d_ang / 2, d_ang) + angle
-    sp_iter = np.arange(-r_sp, r_sp + d_sp / 2, d_sp) + spacing
-    mags = np.zeros((nps + 1, nps + 1))
-    phs = np.zeros((nps + 1, nps + 1))
-    for m, ang in enumerate(ang_iter):
-        for n, sp in enumerate(sp_iter):
-            mag, phase = get_correlation(data, ang, sp, xv_, yv_, psf_)
-            if np.isnan(mag):
-                mags[m, n] = 0.0
-            else:
-                mags[m, n] = mag
-                phs[m, n] = phase
+def fit_gaussian_2d(image, verbose=False, plot=False, allow_rotation=True,
+                    bounds=None, p0=None):
+    """
+    Fit 2D Gaussian directly to image (more accurate than 1D projections)
+
+    Args:
+        image: 2D numpy array
+        verbose: Print fit parameters
+        plot: Show fit visualization
+        allow_rotation: Allow ellipse rotation (slower but more accurate)
+        bounds: Custom bounds for curve_fit
+        p0: Initial guess (auto-computed if None)
+
+    Returns:
+        params: Fitted parameters
+            If allow_rotation=False: [bg, I0, x0, y0, wx, wy]
+            If allow_rotation=True:  [bg, I0, x0, y0, wx, wy, theta]
+        residual: RMS fitting residual
+    """
+    # Input validation
+    if image.ndim != 2:
+        raise ValueError(f"Image must be 2D, got shape {image.shape}")
+
+    y_px, x_px = image.shape
+
+    # Create coordinate arrays
+    x = np.arange(x_px, dtype=np.float64)
+    y = np.arange(y_px, dtype=np.float64)
+    xx, yy = np.meshgrid(x, y)
+
+    # Flatten for fitting
+    coords = np.vstack((xx.ravel(), yy.ravel()))
+    data = image.ravel()
+
+    # Compute statistics for bounds and initial guess
+    img_min = np.min(image)
+    img_max = np.max(image)
+
+    #  Compute smart initial guess from image moments
+    if p0 is None:
+        p0 = _compute_2d_initial_guess(image, allow_rotation)
+
+    #  Set bounds
+    if bounds is None:
+        bounds = _compute_2d_bounds(x_px, y_px, img_min, img_max, allow_rotation)
+
+    #  Choose fitting function
+    if allow_rotation:
+        fit_func = lambda coords, bg, I0, x0, y0, wx, wy, theta: \
+            gaussian_2d_rotated(coords, bg, I0, x0, y0, wx, wy, theta)
+    else:
+        fit_func = lambda coords, bg, I0, x0, y0, wx, wy: \
+            gaussian_2d_simple(coords, bg, I0, x0, y0, wx, wy)
+
+    #  Fit with error handling
+    try:
+        popt, pcov = curve_fit(fit_func, coords, data, p0=p0, bounds=bounds, maxfev=10000)
+    except ValueError as e:
+        raise ValueError(f"2D Gaussian fit failed: {e}") from e
+
+    # Calculate residual
+    fitted_data = fit_func(coords, *popt)
+    residual = np.sqrt(np.mean((data - fitted_data) ** 2))
+
     if verbose:
-        plt.figure()  # Set the figure size for better visualization
-        plt.subplot(211)  # First subplot for magnitudes
-        plt.imshow(mags, vmin=mags.min(), vmax=mags.max(),
-                   extent=(sp_iter.min(), sp_iter.max(), ang_iter.max(), ang_iter.min()),
-                   interpolation='none', cmap='viridis')
-        plt.colorbar()
-        plt.title('Magnitude')
-        plt.xlabel('Spatial Iteration')
-        plt.ylabel('Angular Iteration')
-        plt.subplot(212)
-        plt.imshow(phs, extent=(sp_iter.min(), sp_iter.max(), ang_iter.max(), ang_iter.min()),
-                   interpolation='none', cmap='twilight')
-        plt.colorbar()
-        plt.title('Phase')
-        plt.xlabel('Spatial Iteration')
-        plt.ylabel('Angular Iteration')
-        plt.tight_layout()
-        plt.show()
-    m, n = np.where(mags == mags.max())
-    ang_max = m[0] * d_ang - r_ang + angle
-    sp_max = n[0] * d_sp - r_sp + spacing
-    return ang_max, sp_max, mags[m, n]
+        _print_2d_params(popt, residual, allow_rotation)
+
+    if plot:
+        _plot_2d_fit(image, xx, yy, popt, residual, allow_rotation)
+
+    return popt, residual, fitted_data
+
+
+def gaussian_2d_simple(coords, bg, I0, x0, y0, wx, wy):
+    """
+    2D Gaussian without rotation (axis-aligned ellipse)
+
+    Args:
+        coords: (2, N) array of [x, y] coordinates
+        bg: Background intensity
+        I0: Peak intensity
+        x0, y0: Center position
+        wx, wy: Width in x and y (1/e^2 radius)
+
+    Returns:
+        Intensity values at each coordinate
+    """
+    x, y = coords
+    return bg + I0 * np.exp(-2 * ((x - x0) / wx) ** 2 - 2 * ((y - y0) / wy) ** 2)
+
+
+def gaussian_2d_rotated(coords, bg, I0, x0, y0, wx, wy, theta):
+    """
+    2D Gaussian with rotation (full ellipse)
+
+    Args:
+        coords: (2, N) array of [x, y] coordinates
+        bg: Background intensity
+        I0: Peak intensity
+        x0, y0: Center position
+        wx, wy: Width in x and y (1/e^2 radius)
+        theta: Rotation angle in radians
+
+    Returns:
+        Intensity values at each coordinate
+    """
+    x, y = coords
+
+    # Rotation coefficients
+    cos_t = np.cos(theta)
+    sin_t = np.sin(theta)
+    cos_t_sq = cos_t ** 2
+    sin_t_sq = sin_t ** 2
+
+    # Rotated Gaussian formula
+    a = cos_t_sq / (2 * wx ** 2) + sin_t_sq / (2 * wy ** 2)
+    b = -np.sin(2 * theta) / (4 * wx ** 2) + np.sin(2 * theta) / (4 * wy ** 2)
+    c = sin_t_sq / (2 * wx ** 2) + cos_t_sq / (2 * wy ** 2)
+
+    dx = x - x0
+    dy = y - y0
+
+    return bg + I0 * np.exp(-(a * dx ** 2 + 2 * b * dx * dy + c * dy ** 2))
+
+
+def _compute_2d_initial_guess(image, allow_rotation):
+    """
+    Compute smart initial guess from image moments
+
+    Args:
+        image: 2D numpy array
+        allow_rotation: Include rotation parameter
+
+    Returns:
+        p0: Initial guess array
+    """
+    y_px, x_px = image.shape
+
+    # Background: percentile of lowest values
+    bg = np.percentile(image, 10)
+
+    # Peak intensity
+    I0 = np.max(image) - bg
+    I0 = max(I0, 1.0)
+
+    # Center of mass
+    img_shifted = image - bg
+    img_shifted = np.maximum(img_shifted, 0)
+
+    total = np.sum(img_shifted)
+    if total > 0:
+        x = np.arange(x_px)
+        y = np.arange(y_px)
+        xx, yy = np.meshgrid(x, y)
+
+        x0 = np.sum(xx * img_shifted) / total
+        y0 = np.sum(yy * img_shifted) / total
+
+        # Second moments for width estimation
+        var_x = np.sum((xx - x0) ** 2 * img_shifted) / total
+        var_y = np.sum((yy - y0) ** 2 * img_shifted) / total
+
+        wx = max(1.0, np.sqrt(var_x))
+        wy = max(1.0, np.sqrt(var_y))
+
+        # Estimate rotation from covariance
+        if allow_rotation:
+            cov_xy = np.sum((xx - x0) * (yy - y0) * img_shifted) / total
+            theta = 0.5 * np.arctan2(2 * cov_xy, var_x - var_y)
+        else:
+            theta = None
+    else:
+        # Fallback for empty/uniform image
+        x0 = x_px / 2
+        y0 = y_px / 2
+        wx = x_px / 4
+        wy = y_px / 4
+        theta = 0.0 if allow_rotation else None
+
+    if allow_rotation:
+        return [bg, I0, x0, y0, wx, wy, theta]
+    else:
+        return [bg, I0, x0, y0, wx, wy]
+
+
+def _compute_2d_bounds(x_px, y_px, img_min, img_max, allow_rotation):
+    """
+    Compute bounds for 2D Gaussian fit
+
+    Args:
+        x_px, y_px: Image dimensions
+        img_min, img_max: Image intensity range
+        allow_rotation: Include rotation bounds
+
+    Returns:
+        bounds: ((lower_bounds), (upper_bounds))
+    """
+    # Background
+    bg_min = min(0, 1.5 * img_min)
+    bg_max = max(10, img_min * 10) if img_min > 0 else 10
+
+    # Peak intensity
+    I0_min = max(0, img_min)
+    I0_max = max(I0_min + 1, img_max * 2)
+
+    # Position
+    x0_min, x0_max = -x_px * 0.2, x_px * 1.2  # Allow slightly outside
+    y0_min, y0_max = -y_px * 0.2, y_px * 1.2
+
+    # Width
+    wx_min, wy_min = 0.5, 0.5
+    wx_max, wy_max = x_px * 2, y_px * 2
+
+    if allow_rotation:
+        # Rotation angle: -π/2 to π/2 (sufficient due to symmetry)
+        theta_min, theta_max = -np.pi / 2, np.pi / 2
+
+        lower = [bg_min, I0_min, x0_min, y0_min, wx_min, wy_min, theta_min]
+        upper = [bg_max, I0_max, x0_max, y0_max, wx_max, wy_max, theta_max]
+    else:
+        lower = [bg_min, I0_min, x0_min, y0_min, wx_min, wy_min]
+        upper = [bg_max, I0_max, x0_max, y0_max, wx_max, wy_max]
+
+    return [lower, upper]
+
+
+def gaussian_integral_fwhm_2d(params, allow_rotation=False, bg=False):
+    """
+    Compute integral of 2D Gaussian within FWHM ellipse (analytical)
+
+    Args:
+        params: Fitted parameters from fit_gaussian_2d
+                [bg, I0, x0, y0, wx, wy] or [bg, I0, x0, y0, wx, wy, theta]
+        allow_rotation: Whether rotation parameter is included
+
+    Returns:
+        integral: Total intensity within FWHM ellipse
+    """
+    bg, I0, x0, y0, wx, wy = params[:6]
+    theta = params[6] if allow_rotation and len(params) > 6 else 0
+
+    # Total integral of 2D Gaussian (infinite extent): I0 * π * wx * wy / 2
+    total_gaussian_integral = I0 * np.pi * wx * wy / 2
+
+    # Fraction of power within FWHM ellipse (derived from error function)
+    # For 1/e^2 definition, FWHM corresponds to ~1.177 * w0
+    # Integral within FWHM ellipse is ~0.5 of total (50% power)
+    fwhm_fraction = 1 - np.exp(-2 * np.log(2))  # ≈ 0.75 or 75%
+
+    gaussian_within_fwhm = total_gaussian_integral * fwhm_fraction
+
+    if bg:
+        # Background contribution (area of FWHM ellipse)
+        fwhm_x = wx * np.sqrt(2 * np.log(2))
+        fwhm_y = wy * np.sqrt(2 * np.log(2))
+        fwhm_area = np.pi * fwhm_x * fwhm_y
+        background_contribution = bg * fwhm_area
+        total_integral = gaussian_within_fwhm + background_contribution
+        return total_integral
+    else:
+        return gaussian_within_fwhm
+
+
+def _print_2d_params(params, residual, allow_rotation):
+    """Print fitted parameters"""
+    bg, I0, x0, y0, wx, wy = params[:6]
+
+    print(f"\n2D Gaussian Fit Results:")
+    print(f"  Background: {bg:.2f}")
+    print(f"  Peak intensity: {I0:.2f}")
+    print(f"  Center: ({x0:.2f}, {y0:.2f})")
+    print(f"  Width X: {wx:.2f} px (FWHM: {wx * FWHM_FACTOR:.2f})")
+    print(f"  Width Y: {wy:.2f} px (FWHM: {wy * FWHM_FACTOR:.2f})")
+    print(f"  Ellipticity: {max(wx, wy) / min(wx, wy):.3f}")
+
+    if allow_rotation and len(params) > 6:
+        theta = params[6]
+        print(f"  Rotation: {np.degrees(theta):.2f}°")
+
+    print(f"  RMS residual: {residual:.2f}")
+
+
+def _plot_2d_fit(image, xx, yy, params, residual, allow_rotation):
+    """
+    Plot 2D Gaussian fit results
+
+    Args:
+        image: Original image
+        xx, yy: Coordinate meshgrids
+        params: Fitted parameters
+        residual: RMS residual
+        allow_rotation: Whether rotation was used
+    """
+    try:
+        import matplotlib.pyplot as plt
+        from matplotlib.patches import Ellipse
+    except ImportError:
+        print("Warning: matplotlib not available, skipping plot")
+        return
+
+    # Generate fitted image
+    coords = np.vstack((xx.ravel(), yy.ravel()))
+    if allow_rotation:
+        fitted_flat = gaussian_2d_rotated(coords, *params)
+    else:
+        fitted_flat = gaussian_2d_simple(coords, *params)
+
+    fitted = fitted_flat.reshape(image.shape)
+    residual_img = image - fitted
+
+    # Create figure with subplots
+    fig, axes = plt.subplots(2, 3, figsize=(15, 10))
+
+    # Original image
+    im0 = axes[0, 0].imshow(image, cmap='viridis', origin='lower')
+    axes[0, 0].set_title('Original Image')
+    axes[0, 0].set_xlabel('X (pixels)')
+    axes[0, 0].set_ylabel('Y (pixels)')
+    plt.colorbar(im0, ax=axes[0, 0])
+
+    # Fitted image
+    im1 = axes[0, 1].imshow(fitted, cmap='viridis', origin='lower')
+    axes[0, 1].set_title('Fitted Gaussian')
+    axes[0, 1].set_xlabel('X (pixels)')
+    axes[0, 1].set_ylabel('Y (pixels)')
+    plt.colorbar(im1, ax=axes[0, 1])
+
+    # Residual
+    im2 = axes[0, 2].imshow(residual_img, cmap='RdBu', origin='lower')
+    axes[0, 2].set_title(f'Residual (RMS={residual:.2f})')
+    axes[0, 2].set_xlabel('X (pixels)')
+    axes[0, 2].set_ylabel('Y (pixels)')
+    plt.colorbar(im2, ax=axes[0, 2])
+
+    # X projection
+    x_proj_orig = np.max(image, axis=0)
+    x_proj_fit = np.max(fitted, axis=0)
+    axes[1, 0].plot(xx[0, :], x_proj_orig, 'o', alpha=0.5, label='Original')
+    axes[1, 0].plot(xx[0, :], x_proj_fit, '-', linewidth=2, label='Fitted')
+    axes[1, 0].set_title('X Projection')
+    axes[1, 0].set_xlabel('X (pixels)')
+    axes[1, 0].set_ylabel('Intensity')
+    axes[1, 0].legend()
+    axes[1, 0].grid(True, alpha=0.3)
+
+    # Y projection
+    y_proj_orig = np.max(image, axis=1)
+    y_proj_fit = np.max(fitted, axis=1)
+    axes[1, 1].plot(yy[:, 0], y_proj_orig, 'o', alpha=0.5, label='Original')
+    axes[1, 1].plot(yy[:, 0], y_proj_fit, '-', linewidth=2, label='Fitted')
+    axes[1, 1].set_title('Y Projection')
+    axes[1, 1].set_xlabel('Y (pixels)')
+    axes[1, 1].set_ylabel('Intensity')
+    axes[1, 1].legend()
+    axes[1, 1].grid(True, alpha=0.3)
+
+    # Contour plot with ellipse
+    bg, I0, x0, y0, wx, wy = params[:6]
+    theta = params[6] if allow_rotation and len(params) > 6 else 0
+
+    axes[1, 2].imshow(image, cmap='gray', origin='lower', alpha=0.5)
+
+    # Draw contours of fitted Gaussian
+    levels = [0.1, 0.3, 0.5, 0.7, 0.9]
+    contours = axes[1, 2].contour(xx, yy, fitted,
+                                  levels=[bg + I0 * l for l in levels],
+                                  colors='red', linewidths=2)
+
+    # Draw ellipse at 1/e^2 level
+    ellipse = Ellipse(
+        xy=(x0, y0),
+        width=2 * wx,
+        height=2 * wy,
+        angle=np.degrees(theta),
+        fill=False,
+        edgecolor='cyan',
+        linewidth=2,
+        linestyle='--',
+        label='1/e² radius'
+    )
+    axes[1, 2].add_patch(ellipse)
+
+    # Mark center
+    axes[1, 2].plot(x0, y0, 'r+', markersize=15, markeredgewidth=2)
+
+    axes[1, 2].set_title('Contours & Ellipse')
+    axes[1, 2].set_xlabel('X (pixels)')
+    axes[1, 2].set_ylabel('Y (pixels)')
+    axes[1, 2].legend()
+
+    plt.tight_layout()
+    plt.show()
+
+
+def gauss_metric(img, s=True):
+    try:
+        params, residual, ftg = fit_gaussian_2d(img, verbose=False, allow_rotation=True, plot=False)
+        if s:
+            ss = gaussian_integral_fwhm_2d(params, True)
+            return ss
+        else:
+            return params[1]
+    except Exception as e:
+        return f"Gaussian Fitting Error: {e}"
+

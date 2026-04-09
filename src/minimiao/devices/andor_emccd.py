@@ -6,7 +6,7 @@
 import sys
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
-from minimiao import run_threads
+from minimiao import run_threads, logger
 
 sys.path.append(r'C:\Program Files\Andor SDK')
 
@@ -44,7 +44,7 @@ class EMCCDCamera:
             self.valid_index = 0
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.sdk = self._initialize_sdk()
         if self.sdk:

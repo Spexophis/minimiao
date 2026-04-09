@@ -8,6 +8,8 @@ import os
 import sys
 import threading
 
+from minimiao import logger
+
 sys.path.append(r'C:\Program Files\Mad City Labs\MicroDrive')
 micro_dll_path = os.path.join('C:', os.sep, 'Program Files', 'Mad City Labs', 'MicroDrive', 'MicroDrive.dll')
 
@@ -15,7 +17,7 @@ micro_dll_path = os.path.join('C:', os.sep, 'Program Files', 'Mad City Labs', 'M
 class MCLMicroDrive:
 
     def __init__(self, logg=None):
-        self.logg = logg or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self.mcl_deck = ct.CDLL(micro_dll_path)
         self.handle = self.initialize_deck()
         self.encoder_resolution, self.step_size, self.velocity_max, self.max_velocity_axis_two, \
