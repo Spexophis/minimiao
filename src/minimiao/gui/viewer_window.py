@@ -44,33 +44,8 @@ class FramePool(QObject):
                 self._free.append(idx)
 
 
-class PhotonPool(QObject):
-    def __init__(self, max_len=2 ** 16, dt_s=4e-6, px=(64, 64), parent=None):
-        super().__init__(parent)
-        self.max_len = int(max_len)
-        self.buf = deque([0] * self.max_len, maxlen=self.max_len)
-        self.dt_s = dt_s
-        self.xt = np.arange(self.max_len) * float(self.dt_s)
-        self.img = np.zeros(px, dtype=np.float64)
-
-    def new_acquire(self, counts, recon_img):
-        self.buf.extend(counts)
-        self.img = recon_img
-
-    def reset_buffer(self, max_len: int | None = None, dt_s:float | None = None, px:tuple | None = None):
-        if max_len is not None:
-            self.max_len = min(int(max_len), int(2 ** 16))
-        self.buf = deque(np.zeros(self.max_len, dtype=np.int64), maxlen=self.max_len)
-        if dt_s is not None:
-            self.dt_s = float(dt_s)
-        self.xt = np.arange(self.max_len) * float(self.dt_s)
-        if px is not None:
-            self.img = np.zeros(px, dtype=np.float64)
-
-
 class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
-    psr_view_signal = pyqtSignal()
 
     def __init__(self, config, logg, parent=None):
         super().__init__(parent)
@@ -82,10 +57,6 @@ class LiveViewer(QWidget):
         self.h = 1024
         self.w = 1024
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
-        self.photon_pool = PhotonPool()
-        self.cxt = None
-        self.data_curve = None
-        self.psr_mode = False
         self.fft_mode = False
         self.fft_worker = None
         self.view_stack.setCurrentIndex(0)
@@ -117,7 +88,6 @@ class LiveViewer(QWidget):
         self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
-        self.psr_view_signal.connect(self.on_psr_frame, Qt.ConnectionType.QueuedConnection)
         self.QComboBox_viewer_selection.currentIndexChanged.connect(self.switch_viewer)
 
     def _create_image_widgets(self):
@@ -267,29 +237,3 @@ class LiveViewer(QWidget):
         pen = pg.mkPen(color=color, width=1.)
         self._overlay_n += 1
         self.data_plot.plot(x, y, pen=pen)
-
-    def stream_trace(self, x: np.ndarray, y: np.ndarray):
-        """
-        Update the 1D trace plot lively.
-        """
-        if y is None:
-            return
-        self.data_plot.clear()
-        self.data_curve = self.data_plot.plot()
-        self.data_curve.setDownsampling(auto=True, method="peak")
-        self.data_curve.setSkipFiniteCheck(True)
-        self.data_plot.enableAutoRange(x=True)
-        self.data_curve.setData(x, y)
-
-    def stream_trace_update(self, xt: np.ndarray, counts: np.ndarray):
-        self.data_curve.setData(xt, counts)
-
-    def set_graph_image(self, img2d: np.ndarray, levels=None):
-        self.graph_img_item.setImage(img2d, autoLevels=(levels is None))
-        if levels is not None:
-            self.graph_img_item.setLevels(levels)
-
-    def on_psr_frame(self):
-        self.stream_trace_update(self.photon_pool.xt, np.array(self.photon_pool.buf))
-        if self.psr_mode:
-            self.set_graph_image(self.photon_pool.img)

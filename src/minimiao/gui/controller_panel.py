@@ -14,12 +14,12 @@ from . import custom_widgets as cw
 class ControlPanel(QWidget):
     Signal_check_emccd_temperature = pyqtSignal()
     Signal_switch_emccd_cooler = pyqtSignal(bool)
-    Signal_piezo_move_usb = pyqtSignal(str, float, float, float)
-    Signal_piezo_move = pyqtSignal(str, float, float, float)
     Signal_deck_read_position = pyqtSignal()
     Signal_deck_zero_position = pyqtSignal()
     Signal_deck_move_single_step = pyqtSignal(bool)
     Signal_deck_move_continuous = pyqtSignal(bool, int, float)
+    Signal_piezo_move_usb = pyqtSignal(str, float, float, float)
+    Signal_piezo_move = pyqtSignal(str, float, float, float)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_daq_update = pyqtSignal(int)
     Signal_daq_reset = pyqtSignal()
@@ -292,8 +292,6 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_ttl_stop_emccd = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
         self.QDoubleSpinBox_ttl_start_scmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
         self.QDoubleSpinBox_ttl_stop_scmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_cmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_cmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
 
         daq_scroll_layout.addWidget(cw.LabelWidget(str('Sample Rate / KS/s')), 0, 0, 1, 1)
         daq_scroll_layout.addWidget(self.QPushButton_reset_daq, 0, 1, 1, 1)
@@ -316,9 +314,6 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - Kira')), 0, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_scmos, 1, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_scmos, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - MPD')), 0, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(daq_scroll_area)
@@ -342,8 +337,8 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS", "CMOS", "MPD"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field", "Point Scan", "Focus Lock"])
+        self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS", "CMOS"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field", "Focus Lock"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
@@ -351,7 +346,7 @@ class ControlPanel(QWidget):
         self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field",
-                                                                         "Point Scan 2D", "Point Scan 3D"])
+                                                                         "SIM 2D", "SIM 3D"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
@@ -382,17 +377,17 @@ class ControlPanel(QWidget):
     def _set_signal_connections(self):
         self.QPushButton_emccd_cooler_check.clicked.connect(self.check_emccd_temperature)
         self.QPushButton_emccd_cooler_switch.clicked.connect(self.switch_emccd_cooler)
+        self.QPushButton_deck_position.clicked.connect(self.read_deck)
+        self.QPushButton_deck_position_zero.clicked.connect(self.zero_deck)
+        self.QPushButton_move_deck_up.clicked.connect(self.deck_move_up)
+        self.QPushButton_move_deck_down.clicked.connect(self.deck_move_down)
+        self.QPushButton_move_deck.clicked.connect(self.deck_move_range)
         self.QDoubleSpinBox_stage_x.valueChanged.connect(self.set_piezo_x)
         self.QDoubleSpinBox_stage_y.valueChanged.connect(self.set_piezo_y)
         self.QDoubleSpinBox_stage_z.valueChanged.connect(self.set_piezo_z)
         self.QDoubleSpinBox_stage_x_usb.valueChanged.connect(self.set_piezo_x_usb)
         self.QDoubleSpinBox_stage_y_usb.valueChanged.connect(self.set_piezo_y_usb)
         self.QDoubleSpinBox_stage_z_usb.valueChanged.connect(self.set_piezo_z_usb)
-        self.QPushButton_deck_position.clicked.connect(self.read_deck)
-        self.QPushButton_deck_position_zero.clicked.connect(self.zero_deck)
-        self.QPushButton_move_deck_up.clicked.connect(self.deck_move_up)
-        self.QPushButton_move_deck_down.clicked.connect(self.deck_move_down)
-        self.QPushButton_move_deck.clicked.connect(self.deck_move_range)
         self.QPushButton_laser_488_0.clicked.connect(self.set_laser_488_0)
         self.QPushButton_laser_488_1.clicked.connect(self.set_laser_488_1)
         self.QPushButton_laser_405.clicked.connect(self.set_laser_405)
@@ -609,14 +604,12 @@ class ControlPanel(QWidget):
                           self.QDoubleSpinBox_ttl_start_off_488.value(),
                           self.QDoubleSpinBox_ttl_start_read_488.value(),
                           self.QDoubleSpinBox_ttl_start_emccd.value(),
-                          self.QDoubleSpinBox_ttl_start_scmos.value(),
-                          self.QDoubleSpinBox_ttl_start_cmos.value()]
+                          self.QDoubleSpinBox_ttl_start_scmos.value()]
         digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
                         self.QDoubleSpinBox_ttl_stop_off_488.value(),
                         self.QDoubleSpinBox_ttl_stop_read_488.value(),
                         self.QDoubleSpinBox_ttl_stop_emccd.value(),
-                        self.QDoubleSpinBox_ttl_stop_scmos.value(),
-                        self.QDoubleSpinBox_ttl_stop_cmos.value()]
+                        self.QDoubleSpinBox_ttl_stop_scmos.value()]
         return digital_starts, digital_ends
 
     @pyqtSlot()
@@ -719,9 +712,7 @@ class ControlPanel(QWidget):
                 "QDoubleSpinBox_ttl_start_emccd": self.QDoubleSpinBox_ttl_start_emccd.value(),
                 "QDoubleSpinBox_ttl_stop_emccd": self.QDoubleSpinBox_ttl_stop_emccd.value(),
                 "QDoubleSpinBox_ttl_start_scmos": self.QDoubleSpinBox_ttl_start_scmos.value(),
-                "QDoubleSpinBox_ttl_stop_scmos": self.QDoubleSpinBox_ttl_stop_scmos.value(),
-                "QDoubleSpinBox_ttl_start_cmos": self.QDoubleSpinBox_ttl_start_cmos.value(),
-                "QDoubleSpinBox_ttl_stop_cmos": self.QDoubleSpinBox_ttl_stop_cmos.value(),
+                "QDoubleSpinBox_ttl_stop_scmos": self.QDoubleSpinBox_ttl_stop_scmos.value()
             }
             with open(self.config["Digital Timing Presets"], 'w') as f:
                 json.dump(self.digital_timing_presets, f, indent=4)

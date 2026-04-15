@@ -85,7 +85,7 @@ class DPP:
         phases = {key: amp for key, amp in zip(zms, amps)}
         self.dpp.apply_phases(phases)
 
-    def set_zernike(self, zm, amp):
+    def set_zm(self, zm, amp):
         phase_temp = self.dpp_cmd[self.current_cmd].copy()
         phase_temp[zm] += amp
         self.set_dpp(phase_temp)

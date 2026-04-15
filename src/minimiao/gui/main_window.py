@@ -10,8 +10,6 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from . import custom_widgets as cw
 from . import controller_panel, ao_panel, viewer_window
 
-from minimiao import logger
-
 
 class MainWindow(QMainWindow):
     aboutToClose = pyqtSignal()

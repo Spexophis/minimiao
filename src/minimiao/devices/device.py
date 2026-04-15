@@ -31,7 +31,7 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.dm = phaseform_dpp.DPP(logg=self.logg, config=self.config, path=self.data_folder)
+            self.dfm = phaseform_dpp.DPP(logg=self.logg, config=self.config, path=self.data_folder)
         except Exception as e:
             self.logg.error(f"{e}")
         try:
@@ -67,7 +67,7 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.dm.close()
+            self.dfm.close()
         except Exception as e:
             self.logg.error(f"{e}")
         try:
