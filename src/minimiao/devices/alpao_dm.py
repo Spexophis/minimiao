@@ -98,7 +98,7 @@ class DeformableMirror:
         except Exception as e:
             self.dm_cmd = [[0.] * self.n_actuator]
             self.logg.error(f"Error Loading DM {self.dm_name} Mirror Flat: {e}\n")
-        try:
+        try:  
             self.read_cmd(self.config["Adaptive Optics"]["Deformable Mirror"][self.dm_name]["Initial Flat"])
             self.current_cmd = 1
         except Exception as e:

@@ -194,7 +194,7 @@ class CommandExecutor(QObject):
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plot_1(dn)
         if vd_mod == "RESOLFT Scan":
-            dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=finite)
             self.devs.daq.photon_counter_mode = 1
@@ -203,7 +203,7 @@ class CommandExecutor(QObject):
             self.viewer.psr_mode = True
             self.viewer.psr_fn = 1
         elif vd_mod == "Point Scan":
-            dtr, gtr, dch, gch, pos = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
             pdw = 1
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=finite)
@@ -212,9 +212,18 @@ class CommandExecutor(QObject):
             self.rec.mode = 0
             self.viewer.psr_mode = True
             self.viewer.psr_fn = 1
+        elif vd_mod == "Static Point":
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_static(self.lasers, self.detector[dn])
+            self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                         digital_sequences=dtr, digital_channels=dch, finite=finite)
+            self.devs.daq.photon_counter_mode = 1
+            self.devs.daq.psr = self.rec
+            self.rec.mode = 1
+            self.viewer.psr_mode = False
+            self.viewer.psr_fn = 1
         else:
             raise Exception(f"Invalid video mode {vd_mod} for MPD")
-        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
@@ -337,6 +346,8 @@ class CommandExecutor(QObject):
             self.run_resolft_scan(acq_num)
         elif acq_mod == "Point Scan 2D" and scan.lower().startswith("point"):
             self.run_point_scan(acq_num)
+        elif acq_mod == "Static Point" and scan.lower().startswith("static"):
+            self.run_static_point(acq_num)
         else:
             self.logg.error(f"Invalid video mode")
 
@@ -374,13 +385,13 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plot_1(dn)
-        dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+        dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
         self.devs.daq.photon_counter_mode = 1
         self.devs.daq.psr = self.rec
         self.rec.mode = 1
-        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
@@ -420,13 +431,55 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(txt="RESOLFT Scanning Acquisition")
         self.run_task(task=self.resolft_scan, iteration=n)
 
+    def prepare_resolft_static(self, tim):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.update_trigger_parameters()
+        dn = self.ctrl_panel.get_detector()
+        self.viewer.set_plot_1(dn)
+        dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_resolft_static(self.lasers, self.detector[dn])
+        self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+        self.devs.daq.photon_counter_mode = 1
+        self.devs.daq.psr = self.rec
+        self.rec.mode = 1
+        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
+                                       dwell_samples=pdw)
+        self.rec.prepare_point_scan_live_recon()
+        self.devs.daq.photon_counter_length = dtr.shape[1]
+        self.devs.daq.prepare_photon_counter(self.detector[dn])
+        fd = os.path.join(self.path, tim + r"_resolft_static_triggers.npy")
+        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+
+    def resolft_static(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
+        try:
+            self.prepare_resolft_static(tim)
+        except Exception as e:
+            self.logg.error(f"Error preparing RESOLFT static: {e}")
+            return
+        try:
+            self.devs.daq.run_triggers()
+            time.sleep(0.2)
+            self.psv.emit(tim)
+        except Exception as e:
+            self.finish_resolft_scan()
+            self.logg.error(f"Error running RESOLFT static: {e}")
+            return
+        self.finish_resolft_scan()
+
+    def run_static_point(self, n: int):
+        self.vw.get_dialog(txt="RESOLFT Static Point Acquisition")
+        self.run_task(task=self.resolft_static, iteration=n)
+
     def prepare_point_scan(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plot_1(dn)
-        dtr, gtr, dch, gch, pos = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
+        dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
         pdw = 1
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                      digital_sequences=dtr, digital_channels=dch, finite=True)
@@ -527,7 +580,7 @@ class CommandExecutor(QObject):
             self.update_trigger_parameters()
             dn = self.ctrl_panel.get_detector()
             self.viewer.set_plot_1(dn)
-            dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=True)
             self.devs.daq.photon_counter_mode = 1
@@ -544,7 +597,7 @@ class CommandExecutor(QObject):
             self.update_trigger_parameters()
             dn = self.ctrl_panel.get_detector()
             self.viewer.set_plot_1(dn)
-            dtr, gtr, dch, gch, pos = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
             pdw = 1
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=True)
