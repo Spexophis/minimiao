@@ -10,9 +10,33 @@ from minimiao import run_threads, logger
 
 sys.path.append(r'C:\Program Files\Andor SDK')
 
-Readout_Mode = {0: "Full Vertical Binning", 1: "Multi-Track", 2: "Random-Track", 3: "Single-Track", 4: "Image"}
-Trigger_Mode = {0: "Internal", 1: "External", 6: "External Start", 7: "External Exposure", 10: "Software"}
-Acquisition_Mode = {1: "Single Scan", 2: "Accumulate", 3: "Kinetics", 4: "Fast Kinetics", 5: "Run Till Abort"}
+Preset_Mode = {
+    0: "Sensitivity and Speed (EM Amplifier)",
+    1: "Dynamic Range and Speed (EM Amplifier)",
+    2: "Fastest Frame Rate (EM Amplifier)",
+    3: "Time Lapse (EM Amplifier)",
+    4: "Time Lapse and Short Exposures (EM Amplifier)",
+    5: "EMCCD Highest Dynamic Range (EM Amplifier)",
+    6: "CCD Lowest Noise / Slow readout"
+}
+
+Readout_Mode = {0: "Full Vertical Binning",
+                1: "Multi-Track",
+                2: "Random-Track",
+                3: "Single-Track",
+                4: "Image"}
+
+Trigger_Mode = {0: "Internal",
+                1: "External",
+                6: "External Start",
+                7: "External Exposure",
+                10: "Software"}
+
+Acquisition_Mode = {1: "Single Scan",
+                    2: "Accumulate",
+                    3: "Kinetics",
+                    4: "Fast Kinetics",
+                    5: "Run Till Abort"}
 
 
 class EMCCDCamera:
@@ -49,6 +73,7 @@ class EMCCDCamera:
         self.sdk = self._initialize_sdk()
         if self.sdk:
             self._configure_camera()
+        self.preset_modes = None
         self.data = None
         self.acq_thread = None
 
@@ -77,22 +102,43 @@ class EMCCDCamera:
             return None
 
     def _configure_camera(self):
-        try:
-            self.get_sn()
-            self.cooler_on()
-            self.set_frame_transfer(0)
-            self.set_readout_rate(0, 0, 3)
-        except Exception as e:
-            self.logg.error(f"Error configuring camera: {e}")
+        self.get_sn()
+        self.cooler_on()
 
     def close(self):
         self.cooler_off()
-        # self.get_ccd_temperature()
-        # while self.temperature <= 0:
-        #     self.get_ccd_temperature()
         ret = self.sdk.ShutDown()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info("Andor EMCCD Shut Down")
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+
+    def load_preset_modes(self):
+        preset_fn = r"C:\ProgramData\AndorSolis\presetmodes.xml"
+        preset_fnb = preset_fn.encode("mbcs")
+        ret = self.sdk.OA_Initialize(preset_fnb, len(preset_fnb))
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info(f"Camera Preset Acquisition Mode Loaded")
+            ret, mds = self.sdk.OA_GetPreSetModeNames()
+            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+                raw_bytes = mds.value
+                text = raw_bytes.decode("utf-8", errors="replace")
+                mode_list = [x.strip() for x in text.split(',') if x.strip()]
+                self.logg.info(f"Camera Preset Acquisition Mode Available: {mode_list}")
+                self.preset_modes = mode_list
+            else:
+                self.logg.error(atmcd_errors.Error_Codes(ret))
+                self.preset_modes = []
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+            self.preset_modes = []
+
+    def set_preset_mode(self, ind):
+        mode_name = self.preset_modes[ind]
+        mode_name_b = mode_name.encode("mbcs")  # Windows encoding for Andor SDK2 char*
+        ret = self.sdk.OA_EnableMode(mode_name_b)
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info(f"Camera Acquisition Mode set to Preset : {mode_name}")
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 

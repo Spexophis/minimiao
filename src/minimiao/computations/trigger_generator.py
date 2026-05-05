@@ -11,7 +11,7 @@ from minimiao import logger
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=2.5e5, logg=None):
+    def __init__(self, sample_rate=2.0e5, logg=None):
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
@@ -123,8 +123,8 @@ class TriggerSequence:
             self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
 
     def generate_slm_triggers(self, slm_seq="5ms_dark_pair"):
-        if "200us" and "lit_balanced" in slm_seq:
-            # "200us_lit_balanced"
+        if "200us_lit_balanced" in slm_seq:
+            print("200us_lit_balanced")
             samps_total = round(576.533e-6 * self.sample_rate)
             expo_on = 199.893e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -133,8 +133,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        if "400us" and "lit_balanced" in slm_seq:
-            # "400us_lit_balanced"
+        elif "400us_lit_balanced" in slm_seq:
+            print("400us_lit_balanced")
             samps_total = round(776.64e-6 * self.sample_rate)
             expo_on = 400e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -143,8 +143,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "600us" and "lit_balanced" in slm_seq:
-            # "600us_lit_balanced"
+        elif "600us_lit_balanced" in slm_seq:
+            print("600us_lit_balanced")
             samps_total = round(976.747e-6 * self.sample_rate)
             expo_on = 600.107e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -153,8 +153,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "500us" and "lit_pair" in slm_seq:
-            # "500us_lit_pair"
+        elif "500us_lit_pair" in slm_seq:
+            print("500us_lit_pair")
             samps_total = round(810.667e-6 * self.sample_rate)
             expo_on = 499.947e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -163,8 +163,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "10ms" and "lit_pair" in slm_seq:
-            # "10ms_lit_pair"
+        elif "10ms_lit_pair" in slm_seq:
+            print("10ms_lit_pair")
             samps_total = round(10310.72e-6 * self.sample_rate)
             expo_on = 10000.0e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -173,8 +173,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
-        elif "20ms" and "lit_pair" in slm_seq:
-            # "20ms_lit_pair"
+        elif "20ms_lit_pair" in slm_seq:
+            print("20ms_lit_pair")
             samps_total = round(20310.72e-6 * self.sample_rate)
             expo_on = 20000.0e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -183,8 +183,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
-        elif "5ms" and "dark_pair" in slm_seq:
-            # "5ms_dark_pair"
+        elif "5ms_dark_pair" in slm_seq:
+            print("5ms_dark_pair")
             samps_total = round(5310.72e-6 * self.sample_rate)
             expo_on = 5000.0e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -193,8 +193,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "10ms" and "dark_pair" in slm_seq:
-            # "10ms_dark_pair"
+        elif "10ms_dark_pair" in slm_seq:
+            print("10ms_dark_pair")
             samps_total = round(10310.72e-6 * self.sample_rate)
             expo_on = 10000.0e-6
             samps_on = round(expo_on * self.sample_rate)
@@ -203,8 +203,8 @@ class TriggerSequence:
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
             cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "20ms" and "dark_pair" in slm_seq:
-            # "20ms_dark_pair"
+        elif "20ms_dark_pair" in slm_seq:
+            print("20ms_dark_pair")
             samps_total = round(20310.72e-6 * self.sample_rate)
             expo_on = 20000.0e-6
             samps_on = round(expo_on * self.sample_rate)

@@ -7,7 +7,7 @@ import warnings
 
 import nidaqmx
 import numpy as np
-from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY
+from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY, TaskMode, RegenerationMode
 from nidaqmx.error_codes import DAQmxWarnings
 from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
 from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
@@ -28,21 +28,17 @@ class NIDAQ:
         self._active = {}
         self._running = {}
         self.tasks, self._active, self._running, = self._configure()
-        self.data = None
-        self.acq_thread = None
-        self.sample_rate = int(250000)
+        self.sample_rate = int(200000)
         self.duty_cycle = float(0.5)
-        self.piezo_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
+        self.analog_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
         self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
                                  "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
-        self.photon_counter_channel = "/Dev1/ctr1"
-        self.photon_counter_terminal = "/Dev1/PFI0"
-        self._photon_counter_length = int(2 ** 16)
-        self.photon_counter_mode = 0
-        self.psr = None
+        self.clock_external_start_terminal = "/Dev1/PFI1"
         self.clock_counter_channel = "/Dev1/ctr0"
         self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
-        self.mode = None
+        self.run_mode = None
+        self.clock_triggered = False
+        self.sequence_samples = None
 
     def __del__(self):
         pass
@@ -69,15 +65,16 @@ class NIDAQ:
 
     def _configure(self):
         try:
-            tasks = {"piezo": None, "digital": None, "photon_counter": None, "clock": None, "gate": None}
+            tasks = {"digital": None, "analog": None, "clock": None}
             _active = {key: False for key in tasks.keys()}
             _running = {key: False for key in tasks.keys()}
             return tasks, _active, _running
+
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
-                    e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, \
+                    "Unexpected error code: {}".format(e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -90,7 +87,7 @@ class NIDAQ:
         try:
             with nidaqmx.Task() as task:
                 for ind in indices:
-                    task.ao_channels.add_ao_voltage_chan(self.piezo_channels[ind], min_val=0., max_val=10.)
+                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind], min_val=0., max_val=10.)
                 task.write(pos)
                 task.wait_until_done(WAIT_INFINITELY)
                 task.stop()
@@ -118,7 +115,7 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_clock_channel(self):
+    def write_clock_channel(self, samples_per_trigger=0, trigger=False):
         try:
             self.tasks["clock"] = nidaqmx.Task("clock")
             co_channel = self.tasks["clock"].co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channel,
@@ -126,7 +123,16 @@ class NIDAQ:
                                                                                 duty_cycle=self.duty_cycle)
             co_channel.co_ctr_timebase_src = '20MHzTimebase'
             co_channel.co_pulse_term = self.clock_counter_terminals[0]
-            self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
+            if samples_per_trigger > 0:
+                self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.FINITE,
+                                                               samps_per_chan=samples_per_trigger)
+            else:
+                self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
+            if trigger:
+                self.tasks["clock"].triggers.start_trigger.cfg_dig_edge_start_trig(trigger_source=self.clock_external_start_terminal,
+                                                                                   trigger_edge=Edge.RISING)
+                self.tasks["clock"].triggers.start_trigger.retriggerable = True
+            self.tasks["clock"].control(TaskMode.TASK_COMMIT)
             self._active["clock"] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
@@ -136,9 +142,12 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_digital_sequences(self, digital_sequences, indices=None, callback=None):
+    def write_digital_sequences(self, digital_sequences, indices=None):
         if indices is None:
             indices = [0, 1, 2, 3, 4]
+
+        digital_sequences = np.asarray(digital_sequences)
+
         if digital_sequences.ndim > 1:
             n_channels, n_samples = digital_sequences.shape
             if n_channels == 1:
@@ -146,24 +155,27 @@ class NIDAQ:
         else:
             n_channels = 1
             n_samples = digital_sequences.shape[0]
+
         if n_channels != len(indices):
             self.logg.error("WARNING: Length of n_channels and indices differ, skipping digital sequences update.")
             return
+
         try:
             self.tasks["digital"] = nidaqmx.Task("digital")
+
             for ind in indices:
                 self.tasks["digital"].do_channels.add_do_chan(self.digital_channels[ind],
                                                               line_grouping=LineGrouping.CHAN_PER_LINE)
             self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                              source=self.clock_counter_terminals[0],
-                                                             active_edge=Edge.RISING, sample_mode=self.mode,
+                                                             active_edge=Edge.RISING, sample_mode=self.run_mode,
                                                              samps_per_chan=n_samples)
+            if self.run_mode == AcquisitionType.CONTINUOUS:
+                self.tasks["digital"].out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
+
             self.tasks["digital"].write(digital_sequences == 1.0, auto_start=False)
             self._active["digital"] = True
-            if callback is not None:
-                self.tasks["digital"].register_signal_event(nidaqmx.constants.Signal.CHANGE_DETECTION_EVENT, callback)
-                self.tasks["digital"].change_detection.dig_edge_start_trig.cfg_dig_edge_start_trig(
-                    trigger_source=self.digital_channels[4], trigger_edge=nidaqmx.constants.Edge.FALLING)
+
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -172,27 +184,35 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_piezo_sequences(self, piezo_sequences, indices=None):
+    def write_analog_sequences(self, piezo_sequences, indices=None):
         if indices is None:
             indices = [0, 1, 2]
+
+        piezo_sequences = np.asarray(piezo_sequences)
+
         if piezo_sequences.ndim > 1:
             n_channels, n_samples = piezo_sequences.shape
         else:
             n_channels = 1
             n_samples = piezo_sequences.shape[0]
+
         if n_channels != len(indices):
             self.logg.error("WARNING: Length of n_channels and indices differ, skipping piezo sequences update.")
             return
+
         try:
-            self.tasks["piezo"] = nidaqmx.Task("piezo")
+            self.tasks["analog"] = nidaqmx.Task("analog")
             for ind in indices:
-                self.tasks["piezo"].ao_channels.add_ao_voltage_chan(self.piezo_channels[ind], min_val=0., max_val=10.)
-            self.tasks["piezo"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+                self.tasks["analog"].ao_channels.add_ao_voltage_chan(self.analog_channels[ind], min_val=0., max_val=10.)
+            self.tasks["analog"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                            source=self.clock_counter_terminals[1],
-                                                           active_edge=Edge.RISING, sample_mode=self.mode,
+                                                           active_edge=Edge.RISING, sample_mode=self.run_mode,
                                                            samps_per_chan=n_samples)
-            self.tasks["piezo"].write(piezo_sequences, auto_start=False)
-            self._active["piezo"] = True
+            if self.run_mode == AcquisitionType.CONTINUOUS:
+                self.tasks["analog"].out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
+
+            self.tasks["analog"].write(piezo_sequences, auto_start=False)
+            self._active["analog"] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -201,19 +221,81 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_triggers(self, piezo_sequences=None, piezo_channels=None,
-                       digital_sequences=None, digital_channels=None,
-                       finite=True):
-        self.write_clock_channel()
+    def write_triggers(self, digital_sequences=None, digital_channels=None,
+                       analog_sequences=None, analog_channels=None,
+                       finite=True, trg=False):
+        sequence_samples = None
+
+        if analog_sequences is not None:
+            analog_sequences = np.asarray(analog_sequences)
+
+            if analog_sequences.ndim > 1:
+                n_analog_channel, analog_samples = analog_sequences.shape
+            else:
+                n_analog_channel = 1
+                analog_samples = analog_sequences.shape[0]
+
+            if analog_channels is None:
+                analog_channels = list(range(n_analog_channel))
+
+            if n_analog_channel != len(analog_channels):
+                self.logg.error(
+                    "WARNING: Length of n_analog_channel and analog_channels differ, "
+                    "skipping piezo sequences."
+                )
+                return
+
+            sequence_samples = analog_samples
+
+        if digital_sequences is not None:
+            digital_sequences = np.asarray(digital_sequences)
+
+            if digital_sequences.ndim > 1:
+                n_digital_channel, digital_samples = digital_sequences.shape
+            else:
+                n_digital_channel = 1
+                digital_samples = digital_sequences.shape[0]
+
+            if digital_channels is None:
+                digital_channels = list(range(n_digital_channel))
+
+            if n_digital_channel != len(digital_channels):
+                self.logg.error(
+                    "WARNING: Length of n_digital_channel and digital_channels differ, "
+                    "skipping digital sequences."
+                )
+                return
+
+            if sequence_samples is None:
+                sequence_samples = digital_samples
+            elif sequence_samples != digital_samples:
+                self.logg.error(
+                    "WARNING: Length of digital sequences and analog sequences differ."
+                )
+                return
+
+        if sequence_samples is None:
+            self.logg.error("No analog or digital sequence was provided.")
+            return
+
+        self.sequence_samples = sequence_samples
+
         if finite:
-            self.mode = AcquisitionType.FINITE
+            self.run_mode = AcquisitionType.FINITE
+            clock_samples = sequence_samples
         else:
-            self.mode = AcquisitionType.CONTINUOUS
+            self.run_mode = AcquisitionType.CONTINUOUS
+            if trg:
+                clock_samples = sequence_samples
+            else:
+                clock_samples = 0
+        self.write_clock_channel(samples_per_trigger=clock_samples, trigger=trg)
+
         try:
             if digital_sequences is not None:
                 self.write_digital_sequences(digital_sequences, indices=digital_channels)
-            if piezo_sequences is not None:
-                self.write_piezo_sequences(piezo_sequences, indices=piezo_channels)
+            if analog_sequences is not None:
+                self.write_analog_sequences(analog_sequences, indices=analog_channels)
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -221,78 +303,51 @@ class NIDAQ:
                     e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
-
-    @property
-    def photon_counter_length(self) -> int:
-        return self._photon_counter_length
-
-    @photon_counter_length.setter
-    def photon_counter_length(self, value: int) -> None:
-        self._photon_counter_length = max(int(value), int(2 ** 16))
-
-    def prepare_photon_counter(self):
-        if self.tasks["clock"] is None:
-            self.write_clock_channel()
-
-        self.tasks["photon_counter"] = nidaqmx.Task("photon_counter")
-        ci = self.tasks["photon_counter"].ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channel, edge=Edge.RISING)
-        ci.ci_count_edges_term = self.photon_counter_terminal
-        self.tasks["photon_counter"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source=self.clock_counter_terminals[0],
-                                     active_edge=Edge.RISING, sample_mode=self.mode,
-                                     samps_per_chan=self.photon_counter_length)
-        self.tasks["photon_counter"].in_stream.input_buf_size = self.photon_counter_length
-        self.data = run_threads.PhotonCountList(self.photon_counter_length)
-        self.acq_thread = run_threads.PhotonCountThread(self)
-        if self.photon_counter_mode:
-            self.data.on_update(self.psr.point_scan_live_recon)
-        self._active["photon_counter"] = True
-
-    def start_photon_count(self):
-        self.acq_thread.start()
-        self.logg.info("Photon counting started")
-
-    def stop_photon_count(self):
-        if self.acq_thread:
-            self.acq_thread.stop()
-            self.acq_thread = None
-        self.logg.info("Photon counting stopped")
-
-    def get_photon_count(self):
-        try:
-            avail = self.tasks["photon_counter"].in_stream.avail_samp_per_chan
-            if avail > 0:
-                counts = self.tasks["photon_counter"].read(number_of_samples_per_channel=avail, timeout=0.0)
-                self.data.add_element(counts, avail)
-        except nidaqmx.DaqWarning as e:
-            self.logg.error("DAQ read error %s: %s", e.error_code, e)
-
-    def get_data(self):
-        edg_num, count_data = self.data.get_elements()
-        return count_data
 
     def start_triggers(self):
         try:
             for key, _task in self.tasks.items():
-                if key != "clock":
-                    if self._active.get(key, False):
-                        if not self._running[key]:
-                            _task.start()
-                            self._running[key] = True
+                if key == "clock":
+                    continue
+
+                if _task is None:
+                    continue
+
+                if self._active.get(key, False):
+                    if not self._running.get(key, False):
+                        _task.start()
+                        self._running[key] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
 
     def run_triggers(self):
         try:
+            if self.tasks["clock"] is None:
+                self.logg.error("Clock task has not been configured.")
+                return
+
             self.start_triggers()
-            self._running["clock"] = True
-            self.tasks["clock"].start()
-            if self.mode == AcquisitionType.FINITE:
-                for key, _task in self.tasks.items():
-                    if key != "clock":
-                        if self._active.get(key, False):
-                            if self._running.get(key, False):
-                                _task.wait_until_done(WAIT_INFINITELY)
+
+            if not self._running.get("clock", False):
+                self.tasks["clock"].start()
+                self._running["clock"] = True
+
             self.logg.info("Trigger is running")
+
+            if self.run_mode == AcquisitionType.FINITE:
+                for key, _task in self.tasks.items():
+                    if key == "clock":
+                        continue
+
+                    if _task is None:
+                        continue
+
+                    if self._active.get(key, False):
+                        _task.wait_until_done(WAIT_INFINITELY)
+                        self._running[key] = False
+
+                self.logg.info("Finite trigger sequence finished.")
+
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -303,19 +358,36 @@ class NIDAQ:
 
     def stop_triggers(self, _close=True):
         for key, _task in self.tasks.items():
+            if _task is None:
+                continue
+
             if self._active.get(key, False):
                 if self._running.get(key, False):
-                    _task.stop()
+                    try:
+                        _task.stop()
+                    except nidaqmx.DaqWarning as e:
+                        self.logg.warning("DaqWarning caught as exception: %s", e)
+
         self._running = {key: False for key in self._running}
+
         if _close:
             self.close_triggers()
 
     def close_triggers(self):
         for key, _task in self.tasks.items():
+            if _task is None:
+                continue
+
             if self._active.get(key, False):
-                _task.close()
-                _task = None
+                try:
+                    _task.close()
+                except nidaqmx.DaqWarning as e:
+                    self.logg.warning("DaqWarning caught as exception: %s", e)
+
+                self.tasks[key] = None
+
         self._active = {key: False for key in self._active}
+        self._running = {key: False for key in self._running}
 
     def measure_ao(self, output_channels, input_channels, data):
         if data.ndim > 1:
