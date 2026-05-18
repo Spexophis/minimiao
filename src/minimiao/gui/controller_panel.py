@@ -324,7 +324,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=["None"])
+        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[])
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
 
@@ -423,6 +423,9 @@ class ControlPanel(QWidget):
         return [self.QSpinBox_emccd_coordinate_x.value(), self.QSpinBox_emccd_coordinate_y.value(),
                 self.QSpinBox_emccd_coordinate_nx.value(), self.QSpinBox_emccd_coordinate_ny.value(),
                 self.QSpinBox_emccd_coordinate_bin.value()]
+
+    def get_emccd_exposure(self):
+        return self.QDoubleSpinBox_emccd_t_exposure.value()
 
     def get_emccd_gain(self):
         return self.QSpinBox_emccd_gain.value()

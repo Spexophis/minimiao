@@ -4,14 +4,13 @@
 
 
 import numpy as np
-import os
 
 from minimiao import logger
 
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=2.0e5, logg=None):
+    def __init__(self, sample_rate=2.5e5, logg=None):
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
@@ -43,7 +42,7 @@ class TriggerSequence:
         self.refresh_time = 0.006  # s
         self.refresh_time_samples = int(np.ceil(self.refresh_time * self.sample_rate))
         # SLM
-        self.trigger_pulse_width = 8.0e-5  # s
+        self.trigger_pulse_width = 10.0e-5  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
         self.slm_delay_time = 0.00001  # s
         self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
@@ -156,33 +155,36 @@ class TriggerSequence:
         elif "500us_lit_pair" in slm_seq:
             print("500us_lit_pair")
             samps_total = round(810.667e-6 * self.sample_rate)
-            expo_on = 499.947e-6
+            expo_on = 2 * 499.947e-6 + 310.72e-6
             samps_on = round(expo_on * self.sample_rate)
             samps_end = round(770.133e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+            cam_seq = np.zeros(samps_total, dtype=np.uint8)
+            # cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "10ms_lit_pair" in slm_seq:
             print("10ms_lit_pair")
             samps_total = round(10310.72e-6 * self.sample_rate)
-            expo_on = 10000.0e-6
+            expo_on = 2 * 10000.0e-6 + 310.72e-6
             samps_on = round(expo_on * self.sample_rate)
             samps_end = round(10270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+            cam_seq = np.zeros(samps_total, dtype=np.uint8)
+            # cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "20ms_lit_pair" in slm_seq:
             print("20ms_lit_pair")
             samps_total = round(20310.72e-6 * self.sample_rate)
-            expo_on = 20000.0e-6
+            expo_on = 2 * 20000.0e-6 + 310.72e-6
             samps_on = round(expo_on * self.sample_rate)
             samps_end = round(20270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
+            act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+            cam_seq = np.zeros(samps_total, dtype=np.uint8)
+            # cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
+            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "5ms_dark_pair" in slm_seq:
             print("5ms_dark_pair")
             samps_total = round(5310.72e-6 * self.sample_rate)
@@ -218,88 +220,19 @@ class TriggerSequence:
             raise ValueError("SLM sequence is wrong.")
         return act_seq, cam_seq, expo_on, samps_on
 
-    def generate_sim_triggers(self, lasers, camera, slm_seq, dim):
-        cam_ind = camera + 3
-        digital_channels = lasers.copy()
-        digital_channels.append(cam_ind)
-        interval_samples = self.initial_samples
-        act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
-        dark_samples = int(act_seq.shape[0] / 2)
-        offset_samples = max(self.standby_samples - dark_samples, 0) + int(1e-3 * self.sample_rate)
-        if len(digital_channels) == 2:
-            cycle_samples = interval_samples + act_seq.shape[0] + offset_samples
-            digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-            digital_trigger[0][interval_samples:interval_samples + act_seq.shape[0]] = act_seq
-            digital_trigger[1][interval_samples:interval_samples + cam_seq.shape[0]] = cam_seq
-        elif len(digital_channels) == 3:
-            expo_samples = int(self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]])
-            interp_samples = max(interval_samples, expo_samples)
-            cycle_samples = interp_samples + act_seq.shape[0] + offset_samples
-            digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-            digital_trigger[0][:expo_samples] = 1
-            digital_trigger[1][interp_samples:interp_samples + act_seq.shape[0]] = act_seq
-            digital_trigger[2][interp_samples:interp_samples + cam_seq.shape[0]] = cam_seq
-        else:
-            self.logg.error("Digital channels error.")
-            raise ValueError("Digital channels number is wrong.")
-        if dim == 2:
-            digital_trigger = np.tile(digital_trigger, (1, 3))
-        elif dim == 3:
-            digital_trigger = np.tile(digital_trigger, (1, 5))
-        else:
-            self.logg.error("SIM dimension error.")
-            raise ValueError("SIM dimension number is wrong.")
-        return digital_trigger, digital_channels
-
     def generate_digital_triggers(self, lasers, camera, slm_seq):
         cam_ind = camera + 3
-        digital_channels = lasers.copy()
-        digital_channels.append(cam_ind)
-        interval_samples = self.initial_samples
-        if slm_seq == "None":
-            if interval_samples > self.digital_starts[cam_ind]:
-                offset_samples = interval_samples - self.digital_starts[cam_ind]
-                self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
-                self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
-            cycle_samples = max(self.digital_ends[cam_ind] + self.standby_samples + 2,
-                                max([self.digital_ends[i] for i in digital_channels]))
-            digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-            self.exposure_samples = self.digital_ends[cam_ind] - self.digital_starts[cam_ind]
-            self.exposure_time = self.exposure_samples / self.sample_rate
-            for ln, ch in enumerate(digital_channels):
-                digital_trigger[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
-        else:
-            act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
-            dark_samples = int(act_seq.shape[0] / 2)
-            offset_samples = max(self.standby_samples - dark_samples, 0)
-            if len(digital_channels) == 2:
-                cycle_samples = interval_samples + act_seq.shape[0] + offset_samples
-                digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-                digital_trigger[0][interval_samples:interval_samples + act_seq.shape[0]] = act_seq
-                digital_trigger[1][interval_samples:interval_samples + cam_seq.shape[0]] = cam_seq
-            elif len(digital_channels) == 3:
-                expo_samples = int(self.digital_ends[lasers[0]] - self.digital_starts[lasers[0]])
-                interp_samples = max(interval_samples, expo_samples)
-                cycle_samples = interp_samples + act_seq.shape[0] + offset_samples
-                digital_trigger = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-                digital_trigger[0][:expo_samples] = 1
-                digital_trigger[1][interp_samples:interp_samples + act_seq.shape[0]] = act_seq
-                digital_trigger[2][interp_samples:interp_samples + cam_seq.shape[0]] = cam_seq
-            else:
-                self.logg.error("Digital channels error.")
-                raise ValueError("Digital channels number is wrong.")
+        digital_channels = [2, cam_ind]
+        act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
+        digital_trigger = np.vstack((act_seq, cam_seq))
         return digital_trigger, digital_channels
 
-    def generate_sim_triggers_for_3d(self, lasers, camera, slm_seq):
-        digital_triggers, chs = self.generate_sim_triggers(lasers, camera, slm_seq, 3)
-        if self.standby_samples > self.return_samples:
-            cycle_samples = digital_triggers.shape[1]
-        else:
-            compensate_samples = self.return_samples - self.standby_samples
-            cycle_samples = digital_triggers.shape[1] + compensate_samples
-            compensate_sequence = np.zeros((digital_triggers.shape[0], compensate_samples))
-            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
-        return digital_triggers, cycle_samples, chs
+    def generate_sim_triggers(self, lasers, camera, slm_seq):
+        cam_ind = camera + 3
+        digital_channels = [2, cam_ind]
+        act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
+        digital_trigger = np.vstack((act_seq, cam_seq))
+        return digital_trigger, digital_channels
 
     def generate_digital_triggers_for_scan(self, lasers, camera, slm_seq):
         digital_triggers, chs = self.generate_digital_triggers(lasers, camera, slm_seq)
@@ -311,26 +244,6 @@ class TriggerSequence:
             compensate_sequence = np.zeros((digital_triggers.shape[0], compensate_samples))
             digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
         return digital_triggers, cycle_samples, chs
-
-    def generate_sim_3d(self, lasers, camera, slm_seq):
-        digital_triggers, cycle_samples, dig_chs = self.generate_sim_triggers_for_3d(lasers, camera, slm_seq)
-        pos = 1
-        pz_chs = []
-        for i in range(3):
-            if self.piezo_scan_pos[i] > 0:
-                pos *= self.piezo_scan_pos[i]
-                pz_chs.append(i)
-        if len(pz_chs) == 0:
-            raise Exception("Error: zero piezo scan step")
-        piezo_sequences = [np.empty((0,)) for _ in range(len(pz_chs))]
-        for n, pch in enumerate(pz_chs):
-            piezo_sequences[n] = np.repeat(self.piezo_scan_positions[pch], digital_triggers.shape[1])
-            piezo_sequences[n] = shift_array(piezo_sequences[n], max(self.standby_samples, self.return_samples),
-                                             fill=piezo_sequences[n][0], direction="backward")
-            for i in range(n):
-                piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
-            digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
-        return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
 
     def generate_piezo_scan(self, lasers, camera, slm_seq):
         digital_triggers, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera, slm_seq)
@@ -377,7 +290,7 @@ class TriggerSequence:
             pixel_dwell_sample = self.digital_ends[5] - self.digital_starts[5]
         else:
             if self.slm_start_samples > self.digital_ends[0]:
-                offset_samples =  self.slm_start_samples - self.digital_ends[0]
+                offset_samples = self.slm_start_samples - self.digital_ends[0]
                 self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
                 self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
             line_samples = int(self.digital_ends[0] + int(np.ceil(1.4e-3 * self.sample_rate)))
@@ -417,19 +330,21 @@ class TriggerSequence:
         n = line_samples // dwell_samples
         digital_sequences = []
         if self.slm_start_samples > self.digital_ends[0]:
-            offset_samples =  self.slm_start_samples - self.digital_ends[0]
+            offset_samples = self.slm_start_samples - self.digital_ends[0]
             self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
             self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
         if 0 in lasers:
             switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
-            switch_on_sequence[:n * dwell_samples].reshape(n, dwell_samples)[:, self.digital_starts[0]:self.digital_ends[0]] = 1
+            switch_on_sequence[:n * dwell_samples].reshape(n, dwell_samples)[
+                :, self.digital_starts[0]:self.digital_ends[0]] = 1
             digital_sequences.append(switch_on_sequence)
         start_ = 0
         end_ = 0
         if 2 in lasers:
             switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
             start_ += max(self.digital_ends[0] - self.slm_start_samples - self.slm_delay_samples, 0)
-            switch_off_sequence[:n * dwell_samples].reshape(n, dwell_samples)[:, start_:start_ + self.trigger_pulse_samples] = 1
+            switch_off_sequence[:n * dwell_samples].reshape(n, dwell_samples)[
+                :, start_:start_ + self.trigger_pulse_samples] = 1
             digital_sequences.append(switch_off_sequence)
         if 5 in digital_channels:
             readout_sequence = np.zeros(line_samples, dtype=np.uint8)

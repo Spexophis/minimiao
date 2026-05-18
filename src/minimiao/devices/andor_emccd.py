@@ -114,12 +114,12 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def load_preset_modes(self):
-        preset_fn = r"C:\ProgramData\AndorSolis\presetmodes.xml"
+        preset_fn = r"C:\ProgramData\AndorSolis\usermodes.xml"
         preset_fnb = preset_fn.encode("mbcs")
         ret = self.sdk.OA_Initialize(preset_fnb, len(preset_fnb))
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info(f"Camera Preset Acquisition Mode Loaded")
-            ret, mds = self.sdk.OA_GetPreSetModeNames()
+            ret, mds = self.sdk.OA_GetUserModeNames()
             if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
                 raw_bytes = mds.value
                 text = raw_bytes.decode("utf-8", errors="replace")
@@ -357,23 +357,30 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def prepare_live(self, rd=4, aq=5, tr=7):
-        self.set_acquisition_mode(aq)
+    def prepare_live(self, rd=4, aq=5, tr=1, preset=2):
         self.set_readout_mode(rd)
-        self.set_trigger_mode(tr)
         self.set_roi()
+        self.set_trigger_mode(tr)
+        self.set_acquisition_mode(aq)
+        self.set_frame_transfer(1)
+        self.set_preset_mode(preset)
+        # self.set_kinetics_num(1000)
+        self.set_exposure_time()
         self.set_gain()
-        self.set_kinetic_cycle_time(0)
         self.get_acquisition_timings()
         self.get_buffer_size()
 
     def start_live(self):
         self.data = run_threads.CameraDataList(self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
-        ret = self.sdk.StartAcquisition()
+        ret = self.sdk.PrepareAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.acq_thread.start()
-            self.logg.info('Start live image')
+            ret = self.sdk.StartAcquisition()
+            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+                self.acq_thread.start()
+                self.logg.info('Start live image')
+            else:
+                self.logg.error(atmcd_errors.Error_Codes(ret))
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
@@ -410,13 +417,15 @@ class EMCCDCamera:
         else:
             return None
 
-    def prepare_data_acquisition(self, rd=4, aq=5, tr=7):
+    def prepare_data_acquisition(self, rd=4, aq=3, tr=1, preset=2):
         self.set_readout_mode(rd)
         self.set_roi()
-        self.set_acquisition_mode(aq)
         self.set_trigger_mode(tr)
+        self.set_acquisition_mode(aq)
+        self.set_preset_mode(preset)
+        self.set_exposure_time()
+        self.set_kinetics_num(self.acq_num)
         self.set_gain()
-        self.set_kinetic_cycle_time(0)
         self.get_acquisition_timings()
         self.get_buffer_size()
 
@@ -453,28 +462,6 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    # def prepare_data_acquisition(self, num):
-    #     self.set_readout_mode(4)
-    #     self.set_acquisition_mode(3)
-    #     self.set_kinetics_num(num)
-    #     self.set_trigger_mode(7)
-    #     # self.set_exposure_time()
-    #     self.set_roi()
-    #     self.get_acquisition_timings()
-    #     self.get_buffer_size()
-    #     ret = self.sdk.PrepareAcquisition()
-    #     if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-    #         self.logg.info('Ready to acquire data')
-    #     else:
-    #         self.logg.error(atmcd_errors.Error_Codes(ret))
-    #
-    # def start_data_acquisition(self):
-    #     ret = self.sdk.StartAcquisition()
-    #     if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-    #         self.logg.info('Kinetic acquisition start')
-    #     else:
-    #         self.logg.error(atmcd_errors.Error_Codes(ret))
-
     def get_acq_num(self):
         ret, first, last = self.sdk.GetNumberAvailableImages()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
@@ -490,21 +477,6 @@ class EMCCDCamera:
                 "GetAcquisitionProgress returned {} \n"
                 "number of accumulations completed = {} \n"
                 "kinetic scans completed = {}".format(ret, self.numAccumulate, self.numKinetics))
-
-    # def stop_data_acquisition(self):
-    #     ret = self.sdk.AbortAcquisition()
-    #     if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-    #         self.logg.info('Kinetic acquisition stopped')
-    #     else:
-    #         self.logg.error(atmcd_errors.Error_Codes(ret))
-
-    # def get_data(self, num):
-    #     ret, data_array = self.sdk.GetAcquiredData16(num * self.img_size)
-    #     if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-    #         self.logg.info('Data Retrieved')
-    #         return data_array.reshape(num, self.pixels_y, self.pixels_x)
-    #     else:
-    #         self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def wait_for_acquisition(self):
         ret = self.sdk.WaitForAcquisition()

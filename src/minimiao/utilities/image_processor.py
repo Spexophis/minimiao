@@ -27,6 +27,21 @@ def img_statistics(img):
     return img.min(), img.max(), rms(img)
 
 
+def get_profile(data, ax, norm=False):
+    data = data - data.min()
+    data = data / data.max()
+    if ax == 'Y':
+        m = data.mean(0)
+    elif ax == 'X':
+        m = data.mean(1)
+    else:
+        raise ValueError("invalid axis")
+    if norm:
+        return m / m.max()
+    else:
+        return m
+
+
 def calculate_focus_measure_with_sobel(image):
     edges = filters.sobel(image)
     focus_measure = np.var(edges)

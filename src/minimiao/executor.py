@@ -26,17 +26,14 @@ class CommandExecutor(QObject):
         self.ctrl_panel = self.vw.ctrl_panel
         self.viewer = self.vw.viewer
         self.ao_panel = self.vw.ao_panel
-        self.rec = cmp.rec
         self.trg = cmp.trg
-        self.wfr = cmp.wfp
-        self.flk = cmp.flp
         self.path = path
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
         self.lasers = []
         self.slm_seq = ""
-        self.cameras = {"imaging": 0, "focus_lock": 1}
+        self.cameras = {"imaging": 0, "wfs": 1, "focus_lock": 2}
         self.task_worker = None
 
     @staticmethod
@@ -93,6 +90,8 @@ class CommandExecutor(QObject):
 
             for key in self.devs.slm.ord_dict.keys():
                 self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
+
+            self.devs.emccd.load_preset_modes()
 
             self.logg.info("Finish setting up controllers")
         except Exception as e:
@@ -276,15 +275,10 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Cobolt Laser Error: {e}")
 
     def set_lasers(self, lasers):
-        pws = self.ctrl_panel.get_cobolt_laser_power("all")
-        ln = []
-        pw = []
-        for ls in lasers:
-            ln.append(self.laser_lists[ls])
-            pw.append(pws[ls])
+        pw = self.ctrl_panel.get_cobolt_laser_power("488_1")
         try:
-            self.devs.laser.set_modulation_mode(ln, pw)
-            self.devs.laser.laser_on(ln)
+            self.devs.laser.set_modulation_mode(["488_1"], [pw])
+            self.devs.laser.laser_on(["488_1"])
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
 
@@ -302,6 +296,7 @@ class CommandExecutor(QObject):
                 self.devs.cam_set[0].start_h, self.devs.cam_set[0].end_h = x, x + nx - 1
                 self.devs.cam_set[0].start_v, self.devs.cam_set[0].end_v = y, y + ny - 1
                 self.devs.cam_set[0].gain = self.ctrl_panel.get_emccd_gain()
+                self.devs.cam_set[0].t_exposure = self.ctrl_panel.get_emccd_exposure()
             elif self.cameras[key] == 1:
                 x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
                 self.devs.cam_set[1].set_roi(bn, bn, x, nx, y, ny)
@@ -328,9 +323,8 @@ class CommandExecutor(QObject):
         try:
             self.update_digital_triggers()
             self.update_piezo_scanning()
-            if self.cameras[cam_key] <= 2:
-                self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
-                                                  standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
+            self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
+                                              standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
@@ -338,39 +332,20 @@ class CommandExecutor(QObject):
     def prepare_video(self, vd_mod):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
+        self.slm_seq = self.ctrl_panel.get_slm_sequence()
+        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
         self.set_camera_roi("imaging")
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
         self.update_trigger_parameters("imaging")
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq != "None":
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        if vd_mod == "Wide Field":
-            dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
-            if self.cameras["imaging"] == 0:
-                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-            if self.cameras["imaging"] == 1:
-                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-        if vd_mod == "SIM":
-            dtr, chs = self.trg.generate_sim_triggers(self.lasers, self.cameras["imaging"], self.slm_seq, 2)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False)
-            if self.cameras["imaging"] == 0:
-                self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-            if self.cameras["imaging"] == 1:
-                self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
-                                                      exposure=self.trg.exposure_time,
-                                                      standby=self.trg.standby_time)
-        if vd_mod == "Focus Lock":
-            self.logg.info(f"Focus Lock live")
+        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                              exposure=self.trg.exposure_time,
+                                              standby=self.trg.standby_time)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=True)
 
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
@@ -388,11 +363,10 @@ class CommandExecutor(QObject):
 
     def start_video(self):
         try:
-            if self.slm_seq != "None":
-                self.devs.slm.activate()
+            self.devs.slm.activate()
+            self.devs.daq.run_triggers()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
-            self.devs.daq.run_triggers()
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -404,8 +378,7 @@ class CommandExecutor(QObject):
             self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.devs.daq.stop_triggers()
             self.logg.info(r"Live Video Stopped")
-            if self.slm_seq != "None":
-                self.devs.slm.deactivate()
+            self.devs.slm.deactivate()
             self.lasers_off()
             self.reset_piezo_positions()
         except Exception as e:
@@ -477,14 +450,59 @@ class CommandExecutor(QObject):
 
     @pyqtSlot(str, int)
     def data_acquisition(self, acq_mod: str, acq_num: int):
-        if acq_mod == "Wide Field":
-            self.run_widefield(acq_num)
-        elif acq_mod == "SIM 2D":
-            self.run_sim_2d(acq_num)
-        elif acq_mod == "SIM 3D":
-            self.run_sim_3d(acq_num)
-        else:
-            self.logg.error(f"Invalid video mode")
+        self.vw.get_dialog(txt="Data Acquisition")
+        self.run_task(task=self.run_data_acquisition, iteration=acq_num)
+
+    def prepare_data_acquisition(self, tim):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.slm_seq = self.ctrl_panel.get_slm_sequence()
+        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
+        self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
+        self.update_trigger_parameters("imaging")
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+        # self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
+        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                              exposure=self.trg.exposure_time,
+                                              standby=self.trg.standby_time)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=True)
+        fd = os.path.join(self.path, tim + r"_data_acquisition_triggers.npy")
+        np.save(str(fd), dtr)
+
+    def run_data_acquisition(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
+        try:
+            self.prepare_data_acquisition(tim)
+        except Exception as e:
+            self.logg.error(f"Error preparing widefield: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
+        try:
+            self.devs.slm.activate()
+            self.devs.daq.run_triggers()
+            time.sleep(0.01)
+            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
+            time.sleep(0.2)
+            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield')
+        except Exception as e:
+            self.finish_data_acquisition()
+            self.logg.error(f"Error running widefield: {e}")
+            return
+        self.finish_data_acquisition()
+
+    def finish_data_acquisition(self):
+        try:
+            self.devs.daq.stop_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
+            self.lasers_off()
+            self.devs.slm.deactivate()
+            self.reset_piezo_positions()
+            self.logg.info("Widefield image stack acquired")
+        except Exception as e:
+            self.logg.error(f"Error stopping widefield: {e}")
 
     @pyqtSlot(str)
     def save_data(self, tm: str):
@@ -595,180 +613,6 @@ class CommandExecutor(QObject):
     def run_focus_finding(self):
         self.vw.get_dialog(txt="Focus Finding")
         self.run_task(task=self.focus_finding)
-
-    def prepare_widefield(self, tim):
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq != "None":
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.update_trigger_parameters("imaging")
-        dtr, ptr, dch, pch, pos = self.trg.generate_piezo_scan(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.daq.set_piezo_position(pos=[ptr[0]], indices=[2])
-        self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                     digital_sequences=dtr, digital_channels=dch,
-                                     finite=True)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-        fd = os.path.join(self.path, tim + r"_widefield_triggers.npy")
-        np.save(str(fd), np.vstack((ptr, dtr)))
-
-    def widefield(self):
-        tim = time.strftime("%Y%m%d%H%M%S")
-        try:
-            self.prepare_widefield(tim)
-        except Exception as e:
-            self.logg.error(f"Error preparing widefield: {e}")
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            return
-        try:
-            if self.slm_seq != "None":
-                self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
-            self.devs.daq.run_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
-            time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield')
-        except Exception as e:
-            self.finish_widefield()
-            self.logg.error(f"Error running widefield: {e}")
-            return
-        self.finish_widefield()
-
-    def finish_widefield(self):
-        try:
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
-            self.lasers_off()
-            if self.slm_seq != "None":
-                self.devs.slm.deactivate()
-            self.reset_piezo_positions()
-            self.logg.info("Widefield image stack acquired")
-        except Exception as e:
-            self.logg.error(f"Error stopping widefield: {e}")
-
-    def run_widefield(self, n: int):
-        self.vw.get_dialog(txt="Widefield Acquisition")
-        self.run_task(task=self.widefield, iteration=n)
-
-    def prepare_sim_2d(self):
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq == "None":
-            raise ValueError("SLM sequence cannot be None.")
-        else:
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
-        self.update_trigger_parameters("imaging")
-        dtr, sw, dch = self.trg.generate_sim_triggers(self.lasers, self.cameras["imaging"], self.slm_seq, 2)
-        self.devs.cam_set[self.cameras["imaging"]].acq_num = 3
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dch, finite=True)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-
-    def sim_2d(self):
-        try:
-            self.prepare_sim_2d()
-        except Exception as e:
-            self.logg.error(f"Error preparing 2D SIM stack: {e}")
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            return
-        try:
-            self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
-            time.sleep(0.2)
-            self.devs.daq.run_triggers()
-            time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_sim_2d')
-        except Exception as e:
-            self.finish_sim_2d()
-            self.logg.error(f"Error running 2D SIM stack: {e}")
-            return
-        self.finish_sim_2d()
-
-    def finish_sim_2d(self):
-        try:
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
-            self.lasers_off()
-            self.devs.slm.deactivate()
-            self.logg.info("2D SIM image stack acquired")
-        except Exception as e:
-            self.logg.error(f"Error stopping 2D SIM stack: {e}")
-
-    def run_sim_2d(self, n: int):
-        self.vw.get_dialog(txt="2D SIM Acquisition")
-        self.run_task(task=self.sim_2d, iteration=n)
-
-    def prepare_sim_3d(self):
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq == "None":
-            raise ValueError("SLM sequence cannot be None.")
-        else:
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
-        self.update_trigger_parameters("imaging")
-        dtr, ptr, dch, pch, pos = self.trg.generate_sim_3d(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.daq.set_piezo_position(pos=[ptr[0]], indices=[2])
-        self.devs.cam_set[self.cameras["imaging"]].acq_num = pos * 5
-        self.devs.daq.write_triggers(piezo_sequences=ptr, piezo_channels=pch,
-                                     digital_sequences=dtr, digital_channels=dch,
-                                     finite=True)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-
-    def sim_3d(self):
-        try:
-            self.prepare_sim_3d()
-        except Exception as e:
-            self.logg.error(f"Error preparing 3D SIM stack: {e}")
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            return
-        try:
-            if self.slm_seq != "None":
-                self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
-            self.devs.daq.run_triggers()
-            time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_sim_3d')
-        except Exception as e:
-            self.finish_sim_3d()
-            self.logg.error(f"Error running 3D SIM stack: {e}")
-            return
-        self.finish_sim_3d()
-
-    def finish_sim_3d(self):
-        try:
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
-            self.lasers_off()
-            if self.slm_seq != "None":
-                self.devs.slm.deactivate()
-            self.reset_piezo_positions()
-            self.logg.info("3D SIM image stack acquired")
-        except Exception as e:
-            self.logg.error(f"Error stopping 3D SIM stack: {e}")
-
-    def run_sim_3d(self, n: int):
-        self.vw.get_dialog(txt="3D SIM Acquisition")
-        self.run_task(task=self.sim_3d, iteration=n)
 
     @pyqtSlot(int)
     def set_dm_current(self, i: int):

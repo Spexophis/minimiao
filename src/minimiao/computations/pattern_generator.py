@@ -23,7 +23,13 @@ def generate_binary_phase_1bit(size=(2048, 1536), period=(8, 0), phase=(0, 0), v
     xx, yy = np.meshgrid(x, y)
     xx += offset_x
     yy += offset_y
-    return np.where(((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2)), value, 0).astype(typ)
+    if period_x > 0 and period_y > 0:
+        return np.where(((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2)), value, 0).astype(typ)
+    if period_x > 0 and period_y == 0:
+        return np.where(((xx % period_x) < (period_x // 2)), value, 0).astype(typ)
+    if period_x == 0 and period_y > 0:
+        return np.where(((yy % period_y) < (period_y // 2)), value, 0).astype(typ)
+    return None
 
 
 def generate_binary_phase_8bit(bit_indices, bit_sequences):
