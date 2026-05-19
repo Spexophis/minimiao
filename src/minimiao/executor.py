@@ -451,19 +451,24 @@ class CommandExecutor(QObject):
     @pyqtSlot(bool, str, int)
     def acquisition(self, sw: bool, acq_mod: str, acq_num: int):
         if sw:
+            fn = self.vw.get_file_dialog()
             tim = time.strftime("%Y%m%d%H%M%S")
+            if fn is not None:
+                file_name = tim + "_" + acq_mod + "_" + fn
+            else:
+                file_name = tim + "_" + acq_mod
             try:
-                self.prepare_acquisition(tim)
+                self.prepare_acquisition()
             except Exception as e:
                 self.logg.error(f"Error preparing widefield: {e}")
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
-            self.start_acquisition(tim, acq_mod, acq_num)
+            self.start_acquisition(file_name, acq_num)
         else:
             self.stop_acquisition()
 
-    def prepare_acquisition(self, tim):
+    def prepare_acquisition(self):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
@@ -481,12 +486,11 @@ class CommandExecutor(QObject):
                                               standby=self.trg.standby_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=True)
 
-    def start_acquisition(self, t: str, acq_mod: str, acq_num: int):
+    def start_acquisition(self, labl: str, acq_num: int):
         try:
             self.devs.slm.activate()
             self.devs.daq.run_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition(n=acq_num,
-                                                                              fd=self.path, fn=t + "_" + acq_mod)
+            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
         except Exception as e:
             self.stop_acquisition()
@@ -504,42 +508,29 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stop acquisition: {e}")
 
     @pyqtSlot(str)
-    def save_data(self, tm: str):
-        fn = self.vw.get_file_dialog()
-        if fn is not None:
-            fd = os.path.join(self.path, tm + '_' + fn)
-        else:
-            fd = os.path.join(self.path, tm)
-        tf.imwrite(str(fd + r".tif"), data=self.devs.cam_set[self.cameras["imaging"]].get_data())
+    def save_data(self, fd: str):
         with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            df_idx = pd.DataFrame(list(self.devs.cam_set[self.cameras["imaging"]].data.ind_list),
-                                  columns=["acquisition_sequence"])
-            df_idx.to_excel(writer, sheet_name="acquisition_sequence", index=False)
             for i, arr in enumerate(self.trg.piezo_scan_positions):
                 df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                 df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
-        self.devs.cam_set[self.cameras["imaging"]].data = None
 
     def prepare_focus_finding(self):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        if self.slm_seq != "None":
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
+        self.set_camera_roi("imaging")
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
         self.update_trigger_parameters("imaging")
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True)
-        if self.cameras["imaging"] == 0:
-            self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                                  exposure=self.trg.exposure_time,
-                                                  standby=self.trg.standby_time)
-        if self.cameras["imaging"] == 1:
-            self.ctrl_panel.display_scmos_timings(clean=self.trg.initial_time,
-                                                  exposure=self.trg.exposure_time,
-                                                  standby=self.trg.standby_time)
+        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
+                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
+        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
+                                              exposure=self.trg.exposure_time,
+                                              standby=self.trg.standby_time)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
         # self.devs.cam_set[self.cameras["focus_lock"]].set_exposure(self.ctrl_panel.get_tis_expo())
         # self.devs.cam_set[self.cameras["focus_lock"]].prepare_live()
 
@@ -560,13 +551,12 @@ class CommandExecutor(QObject):
             data = []
             # data_calib = []
             pzs = []
-            if self.slm_seq != "None":
-                self.devs.slm.activate()
+            self.devs.slm.activate()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
             for i, z in enumerate(zps):
                 self.set_piezo_position_z(z, port="software")
-                time.sleep(0.1)
+                time.sleep(0.08)
                 self.devs.daq.run_triggers()
                 time.sleep(0.04)
                 self.devs.daq.stop_triggers(_close=False)
@@ -600,8 +590,7 @@ class CommandExecutor(QObject):
             self.devs.daq.stop_triggers()
             self.devs.cam_set[self.cameras["imaging"]].stop_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].stop_live()
-            if self.slm_seq != "None":
-                self.devs.slm.deactivate()
+            self.devs.slm.deactivate()
             self.lasers_off()
             self.reset_piezo_positions()
             self.logg.info("Focus finding stack acquired")
