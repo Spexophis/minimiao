@@ -66,7 +66,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_fft.connect(self.fft)
         self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
         self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
-        self.ctrl_panel.Signal_data_acquire.connect(self.data_acquisition)
+        self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
         self.svd.connect(self.save_data)
         self.sig_plt.connect(self.viewer.plot_trace)
         # DM
@@ -448,61 +448,60 @@ class CommandExecutor(QObject):
         w.deleteLater()
         self.vw.dialog.close()
 
-    @pyqtSlot(str, int)
-    def data_acquisition(self, acq_mod: str, acq_num: int):
-        self.vw.get_dialog(txt="Data Acquisition")
-        self.run_task(task=self.run_data_acquisition, iteration=acq_num)
+    @pyqtSlot(bool, str, int)
+    def acquisition(self, sw: bool, acq_mod: str, acq_num: int):
+        if sw:
+            tim = time.strftime("%Y%m%d%H%M%S")
+            try:
+                self.prepare_acquisition(tim)
+            except Exception as e:
+                self.logg.error(f"Error preparing widefield: {e}")
+                self.devs.daq.stop_triggers()
+                self.lasers_off()
+                return
+            self.start_acquisition(tim, acq_mod, acq_num)
+        else:
+            self.stop_acquisition()
 
-    def prepare_data_acquisition(self, tim):
+    def prepare_acquisition(self, tim):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.update_trigger_parameters("imaging")
         dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-        # self.devs.cam_set[self.cameras["imaging"]].acq_num = pos
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
+        self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
+        self.update_trigger_parameters("imaging")
+        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
+                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
         self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
                                               exposure=self.trg.exposure_time,
                                               standby=self.trg.standby_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=True)
-        fd = os.path.join(self.path, tim + r"_data_acquisition_triggers.npy")
-        np.save(str(fd), dtr)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=True)
 
-    def run_data_acquisition(self):
-        tim = time.strftime("%Y%m%d%H%M%S")
-        try:
-            self.prepare_data_acquisition(tim)
-        except Exception as e:
-            self.logg.error(f"Error preparing widefield: {e}")
-            self.devs.daq.stop_triggers()
-            self.lasers_off()
-            return
+    def start_acquisition(self, t: str, acq_mod: str, acq_num: int):
         try:
             self.devs.slm.activate()
             self.devs.daq.run_triggers()
-            time.sleep(0.01)
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition()
-            time.sleep(0.2)
-            self.svd.emit(time.strftime("%Y%m%d%H%M%S") + '_widefield')
+            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition(n=acq_num,
+                                                                              fd=self.path, fn=t + "_" + acq_mod)
+            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
         except Exception as e:
-            self.finish_data_acquisition()
-            self.logg.error(f"Error running widefield: {e}")
+            self.stop_acquisition()
+            self.logg.error(f"Error start acquisition: {e}")
             return
-        self.finish_data_acquisition()
 
-    def finish_data_acquisition(self):
+    def stop_acquisition(self):
         try:
-            self.devs.daq.stop_triggers()
             self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
+            self.devs.daq.stop_triggers()
             self.lasers_off()
             self.devs.slm.deactivate()
             self.reset_piezo_positions()
-            self.logg.info("Widefield image stack acquired")
         except Exception as e:
-            self.logg.error(f"Error stopping widefield: {e}")
+            self.logg.error(f"Error stop acquisition: {e}")
 
     @pyqtSlot(str)
     def save_data(self, tm: str):
@@ -622,8 +621,8 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
-    @pyqtSlot(str, int, float)
-    def set_zernike(self, md: str, iz: int, amp: float):
+    @pyqtSlot(int, float)
+    def set_zernike(self, iz: int, amp: float):
         try:
             self.devs.dfm.set_zm(iz, amp)
         except Exception as e:

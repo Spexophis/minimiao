@@ -364,14 +364,13 @@ class EMCCDCamera:
         self.set_acquisition_mode(aq)
         self.set_frame_transfer(1)
         self.set_preset_mode(preset)
-        # self.set_kinetics_num(1000)
         self.set_exposure_time()
         self.set_gain()
         self.get_acquisition_timings()
         self.get_buffer_size()
 
     def start_live(self):
-        self.data = run_threads.CameraDataList(self.buffer_size)
+        self.data = run_threads.CameraDataList(max_length=self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         ret = self.sdk.PrepareAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
@@ -417,25 +416,29 @@ class EMCCDCamera:
         else:
             return None
 
-    def prepare_data_acquisition(self, rd=4, aq=3, tr=1, preset=2):
+    def prepare_data_acquisition(self, rd=4, aq=5, tr=1, preset=2):
         self.set_readout_mode(rd)
         self.set_roi()
         self.set_trigger_mode(tr)
         self.set_acquisition_mode(aq)
+        self.set_frame_transfer(1)
         self.set_preset_mode(preset)
         self.set_exposure_time()
-        self.set_kinetics_num(self.acq_num)
         self.set_gain()
         self.get_acquisition_timings()
         self.get_buffer_size()
 
-    def start_data_acquisition(self):
-        self.data = run_threads.CameraDataList(self.acq_num)
+    def start_data_acquisition(self, n, fd, fn):
+        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
-        ret = self.sdk.StartAcquisition()
+        ret = self.sdk.PrepareAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.acq_thread.start()
-            self.logg.info('Acquisition started')
+            ret = self.sdk.StartAcquisition()
+            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+                self.acq_thread.start()
+                self.logg.info('Acquisition started')
+            else:
+                self.logg.error(atmcd_errors.Error_Codes(ret))
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 

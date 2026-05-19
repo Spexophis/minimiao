@@ -30,7 +30,7 @@ class ControlPanel(QWidget):
     Signal_fft = pyqtSignal(bool)
     Signal_plot_profile = pyqtSignal()
     Signal_add_profile = pyqtSignal()
-    Signal_data_acquire = pyqtSignal(str, int)
+    Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
 
     def __init__(self, config, logg, parent=None, *args, **kwargs):
@@ -337,7 +337,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS", "CMOS"])
+        self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS"])
         self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field", "Focus Lock"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
@@ -345,10 +345,11 @@ class ControlPanel(QWidget):
         self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
         self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["Wide Field",
-                                                                         "SIM 2D", "SIM 3D"])
+        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["2D_WideField", "3D_WideField",
+                                                                         "2D_SIM", "3D_SIM",
+                                                                         "2D_NSIM"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
-        self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
+        self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
 
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Camera')), 0, 0, 1, 1)
@@ -663,9 +664,12 @@ class ControlPanel(QWidget):
 
     @pyqtSlot()
     def run_acquisition(self):
-        acq_mode = self.QComboBox_acquisition_modes.currentText()
-        acq_num = self.QSpinBox_acquisition_number.value()
-        self.Signal_data_acquire.emit(acq_mode, acq_num)
+        if self.QPushButton_acquire.isChecked():
+            acq_mode = self.QComboBox_acquisition_modes.currentText()
+            acq_num = self.QSpinBox_acquisition_number.value()
+            self.Signal_data_acquire.emit(True, acq_mode, acq_num)
+        else:
+            self.Signal_data_acquire.emit(False, "None", 0)
 
     @pyqtSlot()
     def load_selected_digital_timing_presets(self):
@@ -687,8 +691,6 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_ttl_stop_emccd.setValue(values.get("QDoubleSpinBox_ttl_stop_emccd", 0))
         self.QDoubleSpinBox_ttl_start_scmos.setValue(values.get("QDoubleSpinBox_ttl_start_scmos", 0))
         self.QDoubleSpinBox_ttl_stop_scmos.setValue(values.get("QDoubleSpinBox_ttl_stop_scmos", 0))
-        self.QDoubleSpinBox_ttl_start_cmos.setValue(values.get("QDoubleSpinBox_ttl_start_cmos", 0))
-        self.QDoubleSpinBox_ttl_stop_cmos.setValue(values.get("QDoubleSpinBox_ttl_stop_cmos", 0))
 
     @pyqtSlot(str)
     def save_digital_timing_preset(self, m: str):

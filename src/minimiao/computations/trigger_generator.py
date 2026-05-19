@@ -161,7 +161,16 @@ class TriggerSequence:
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            # cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
+            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
+        elif "5ms_lit_pair" in slm_seq:
+            print("5ms_lit_pair")
+            samps_total = round(5310.72e-6 * self.sample_rate)
+            expo_on = 2 * 5000.0e-6 + 310.72e-6
+            samps_on = round(expo_on * self.sample_rate)
+            samps_end = round(5270.187e-6 * self.sample_rate)
+            act_seq = np.zeros(samps_total, dtype=np.uint8)
+            act_seq[:self.trigger_pulse_samples] = 1
+            cam_seq = np.zeros(samps_total, dtype=np.uint8)
             cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "10ms_lit_pair" in slm_seq:
             print("10ms_lit_pair")
@@ -172,7 +181,6 @@ class TriggerSequence:
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            # cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
             cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "20ms_lit_pair" in slm_seq:
             print("20ms_lit_pair")
@@ -183,7 +191,6 @@ class TriggerSequence:
             act_seq = np.zeros(samps_total, dtype=np.uint8)
             act_seq[:self.trigger_pulse_samples] = 1
             cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            # cam_seq[self.slm_start_samples:samps_total + samps_end + self.slm_delay_samples] = 1
             cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         elif "5ms_dark_pair" in slm_seq:
             print("5ms_dark_pair")
