@@ -231,6 +231,8 @@ class TriggerSequence:
         cam_ind = camera + 3
         digital_channels = [2, cam_ind]
         act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
+        act_seq = np.pad(act_seq, (self.standby_samples, 0), 'constant', constant_values=(0, 0))
+        cam_seq = np.pad(cam_seq, (self.standby_samples, 0), 'constant', constant_values=(0, 0))
         digital_trigger = np.vstack((act_seq, cam_seq))
         return digital_trigger, digital_channels
 

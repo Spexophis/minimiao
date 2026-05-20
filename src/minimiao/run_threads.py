@@ -27,7 +27,7 @@ class CameraAcquisitionThread(threading.Thread):
         while self.running:
             with self.lock:
                 self.cam.get_images()
-            time.sleep(0.001)  # 1 ms yield (tune)
+            time.sleep(0.02)  # 1 ms yield (tune)
 
     def stop(self):
         self.running = False
