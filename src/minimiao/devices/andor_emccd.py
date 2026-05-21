@@ -384,17 +384,23 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_live(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
+        # Abort hardware first so any in-flight SDK call in the thread returns
+        # quickly instead of blocking join() indefinitely.
         ret = self.sdk.AbortAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info('Live image stopped')
-            self.data = None
-            self.free_memory()
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        self.data = None
+        self.free_memory()
 
     def get_images(self):
+        if self.data is None:
+            return
+
         ret, first, last = self.sdk.GetNumberNewImages()
         if ret != atmcd_errors.Error_Codes.DRV_SUCCESS:
             return
@@ -405,6 +411,9 @@ class EMCCDCamera:
 
         ret, data_array, valid_first, valid_last = self.sdk.GetImages16(first, last, self.img_size * num)
         if ret != atmcd_errors.Error_Codes.DRV_SUCCESS:
+            return
+
+        if self.data is None:
             return
 
         frames = np.asarray(data_array, dtype=np.uint16).reshape(num, self.pixels_y, self.pixels_x)
@@ -443,14 +452,20 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_data_acquisition(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
+        # Abort hardware first so any in-flight SDK call in the thread returns
+        # quickly instead of blocking join() indefinitely.
         ret = self.sdk.AbortAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info('Acquisition stopped')
-            self.free_memory()
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()   # flush + join the background TIFF-writer thread
+            self.data = None
+        self.free_memory()
 
     def get_data(self):
         if self.data is not None:

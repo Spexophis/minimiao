@@ -6,32 +6,38 @@
 import threading
 import time
 import traceback
-import tifffile as tf
 from collections import deque
-from queue import Queue, Empty
 from pathlib import Path
+from queue import Queue, Empty
+
 import numpy as np
+import tifffile as tf
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
 
     def __init__(self, cam):
-        super().__init__()
+        super().__init__(daemon=True)
         self.cam = cam
-        self.running = False
-        self.lock = threading.Lock()  # instance lock, not class-level
+        self._stop_event = threading.Event()
+        self.lock = threading.Lock()
 
     def run(self):
-        self.running = True
-        while self.running:
+        while not self._stop_event.is_set():
             with self.lock:
                 self.cam.get_images()
-            time.sleep(0.02)  # 1 ms yield (tune)
+            time.sleep(0.02)
 
-    def stop(self):
-        self.running = False
-        self.join()
+    def stop(self, timeout=5.0):
+        self._stop_event.set()
+        self.join(timeout=timeout)
+        if self.is_alive():
+            self.cam.logg.warning(
+                "CameraAcquisitionThread did not exit within %.1fs; "
+                "camera USB may be frozen — hardware power-cycle may be required",
+                timeout,
+            )
 
 
 class CameraDataList:
@@ -146,20 +152,22 @@ class CameraDataList:
 
                 current_pos += n_take
 
-                # If full, package this stack for saving
+                # If full, hand off the lists and reset — heavy numpy work done outside lock
                 if len(self.data_list) == self.max_length:
-                    stack_to_save = np.stack(
-                        [np.array(img, copy=True) for img in self.data_list],
-                        axis=0
-                    )
+                    imgs_to_stack = self.data_list
                     stack_ids_to_save = list(self.ind_list)
-
-                    # Start a brand-new list for the next stack
                     self.data_list = []
                     self.ind_list = []
+                else:
+                    imgs_to_stack = None
+                    stack_ids_to_save = None
 
-            # Queue full stack outside the lock
-            if stack_to_save is not None:
+            # Build and queue the array outside the lock to avoid blocking get_images()
+            if imgs_to_stack is not None:
+                stack_to_save = np.stack(
+                    [np.array(img, copy=True) for img in imgs_to_stack],
+                    axis=0
+                )
                 self._save_queue.put(
                     (
                         self._stack_save_count,
@@ -211,7 +219,7 @@ class CameraDataList:
         if self.save_to_disk and self._save_thread is not None:
             self._save_queue.join()
             self._stop_saver.set()
-            self._save_thread.join()
+            self._save_thread.join(timeout=5.0)
 
     def get_elements(self):
         with self._lock:
@@ -227,28 +235,6 @@ class CameraDataList:
 
     def on_update(self, callback):
         self.callback = callback
-
-
-class PSLiveWorker(QThread):
-    psr_ready = pyqtSignal(object, object)
-    psr_new = pyqtSignal()
-
-    def __init__(self, dat, reco, fps=10, parent=None):
-        super().__init__(parent)
-        self.dat = dat
-        self.reco = reco
-        self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
-        self._running = True
-
-    def stop(self):
-        self._running = False
-        self.wait()
-
-    def run(self):
-        while self._running:
-            self.msleep(self.period_ms)
-            self.psr_ready.emit(list(self.dat.count_list).copy(), self.reco.live_rec.copy())
-            self.psr_new.emit()
 
 
 class FFTWorker(QThread):

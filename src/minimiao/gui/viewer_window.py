@@ -167,6 +167,13 @@ class LiveViewer(QWidget):
 
     def switch_camera(self, h, w):
         self.h, self.w = h, w
+        # Disconnect the outgoing pool's slots before replacing it; without this
+        # every call adds a new connection and old pool objects accumulate.
+        try:
+            self.image_viewer.frameConsumed.disconnect(self.pool.release)
+            self.image_viewer.frameDiscarded.disconnect(self.pool.release)
+        except (TypeError, RuntimeError):
+            pass
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
         self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)

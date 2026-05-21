@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 
 
+import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
 
@@ -153,3 +154,125 @@ def generate_split_grating(beam_num=5, spacing=32, pixel_nums=(1024, 1272), iter
         if binary:
             field = np.where(np.real(field_new) >= 0, 1, -1)
     return field
+
+
+def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, NA=1.3,
+                           grating_period=1.20001e-6, duty_cycle=0.5, phase_depth=np.pi, orientation_deg=0, grating_shift=0.0,
+                           order_filter_radius_factor=0.18, verbose=False):
+    L = N * dx
+    x = (np.arange(N) - N // 2) * dx
+    y = (np.arange(N) - N // 2) * dx
+    X, Y = np.meshgrid(x, y)
+    theta = np.deg2rad(orientation_deg)
+    # Coordinate along the grating modulation direction
+    U = X * np.cos(theta) + Y * np.sin(theta)
+    # Binary pattern: 0 or 1
+    binary_pattern = ((U + grating_shift) % grating_period) < (duty_cycle * grating_period)
+    # Binary phase: 0 or pi
+    phase_mask = phase_depth * binary_pattern.astype(float)
+    # Complex field immediately after phase mask
+    E_mask = np.exp(1j * phase_mask)
+    # Fourier transform: image-conjugate plane -> pupil / spatial-frequency plane
+    E_fourier = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(E_mask)))
+    # Spatial-frequency coordinates
+    fx = np.fft.fftshift(np.fft.fftfreq(N, d=dx))
+    fy = np.fft.fftshift(np.fft.fftfreq(N, d=dx))
+    FX, FY = np.meshgrid(fx, fy)
+    # Objective coherent cutoff frequency
+    f_cutoff = NA / wavelength
+    # Circular objective pupil
+    objective_pupil = (FX ** 2 + FY ** 2) <= f_cutoff ** 2
+    # First diffraction order spatial frequency
+    f1 = 1.0 / grating_period
+    # ±1 order positions, oriented according to grating angle
+    fx1 = f1 * np.cos(theta)
+    fy1 = f1 * np.sin(theta)
+    # Circular mask radius around each order
+    order_filter_radius = order_filter_radius_factor * f1
+    # Circular masks around +1 and -1 diffraction orders
+    mask_plus1 = ((FX - fx1) ** 2 + (FY - fy1) ** 2) <= order_filter_radius ** 2
+    mask_minus1 = ((FX + fx1) ** 2 + (FY + fy1) ** 2) <= order_filter_radius ** 2
+    order_selection_mask = mask_plus1 | mask_minus1
+    # Apply both objective pupil and ±1 order selection
+    E_fourier_filtered = E_fourier * objective_pupil * order_selection_mask
+    # Inverse Fourier transform: selected orders -> focal plane
+    E_focal = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(E_fourier_filtered)))
+    I_focal = np.abs(E_focal) ** 2
+    I_focal /= I_focal.max()
+    E_fourier_pupil_only = E_fourier * objective_pupil
+    E_unfiltered = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(E_fourier_pupil_only)))
+    I_unfiltered = np.abs(E_unfiltered) ** 2
+    I_unfiltered /= I_unfiltered.max()
+    if verbose:
+        extent_um = [x[0] * 1e6, x[-1] * 1e6, y[0] * 1e6, y[-1] * 1e6]
+
+        # ---- Figure 1: binary phase mask ----
+        plt.figure(figsize=(6, 5))
+        plt.imshow(phase_mask, extent=extent_um, cmap='gray', origin='lower')
+        plt.colorbar(label='Phase [rad]')
+        plt.xlabel('x [µm]')
+        plt.ylabel('y [µm]')
+        plt.title('Binary phase modulation in conjugate image plane')
+        plt.tight_layout()
+        plt.show()
+
+        # ---- Figure 2: Fourier plane diffraction pattern ----
+        fourier_intensity = np.abs(E_fourier) ** 2
+        fourier_intensity_log = np.log10(fourier_intensity / fourier_intensity.max() + 1e-8)
+
+        extent_freq = [fx[0] * 1e-3, fx[-1] * 1e-3, fy[0] * 1e-3, fy[-1] * 1e-3]
+
+        plt.figure(figsize=(6, 5))
+        plt.imshow(fourier_intensity_log, extent=extent_freq, cmap='gray', origin='lower')
+        plt.xlabel(r'$f_x$ [mm$^{-1}$]')
+        plt.ylabel(r'$f_y$ [mm$^{-1}$]')
+        plt.title('Fourier plane: diffraction orders')
+        plt.colorbar(label='log10 normalized intensity')
+        plt.tight_layout()
+        plt.show()
+
+        # ---- Figure 3: selected ±1 diffraction orders ----
+        selected_intensity = np.abs(E_fourier_filtered) ** 2
+        selected_intensity_log = np.log10(selected_intensity / selected_intensity.max() + 1e-8)
+
+        plt.figure(figsize=(6, 5))
+        plt.imshow(selected_intensity_log, extent=extent_freq, cmap='gray', origin='lower')
+        plt.xlabel(r'$f_x$ [mm$^{-1}$]')
+        plt.ylabel(r'$f_y$ [mm$^{-1}$]')
+        plt.title('Fourier plane after selecting ±1 orders')
+        plt.colorbar(label='log10 normalized intensity')
+        plt.tight_layout()
+        plt.show()
+
+        # ---- Figure 4: focal-plane intensity without and with filtering ----
+        plt.figure(figsize=(6, 5))
+        plt.imshow(I_unfiltered, extent=extent_um, cmap='gray', origin='lower')
+        plt.xlabel('x [µm]')
+        plt.ylabel('y [µm]')
+        plt.title('Focal plane intensity: pupil only')
+        plt.colorbar(label='Normalized intensity')
+        plt.tight_layout()
+        plt.show()
+
+        plt.figure(figsize=(6, 5))
+        plt.imshow(I_focal, extent=extent_um, cmap='gray', origin='lower')
+        plt.xlabel('x [µm]')
+        plt.ylabel('y [µm]')
+        plt.title('Focal plane intensity: ±1 orders only')
+        plt.colorbar(label='Normalized intensity')
+        plt.tight_layout()
+        plt.show()
+
+        # ---- Figure 5: central line profile of sinusoidal illumination ----
+        center_line = I_focal[N // 2, :]
+
+        plt.figure(figsize=(8, 4))
+        plt.plot(x * 1e6, center_line, linewidth=2)
+        plt.xlabel('x [µm]')
+        plt.ylabel('Normalized intensity')
+        plt.title('Central line profile of generated sinusoidal pattern')
+        plt.xlim(-30, 30)
+        plt.grid(alpha=0.3)
+        plt.tight_layout()
+        plt.show()
+    return phase_mask, np.abs(E_fourier) ** 2, np.abs(E_fourier_filtered) ** 2, I_unfiltered, I_focal
