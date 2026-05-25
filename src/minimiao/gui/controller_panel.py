@@ -68,7 +68,7 @@ class ControlPanel(QWidget):
         scmos_scroll_area, scmos_scroll_layout = cw.create_scroll_area()
         cmos_scroll_area, cmos_scroll_layout = cw.create_scroll_area()
 
-        self.QLCDNumber_ccd_tempetature = cw.LCDNumberWidget(0, 3)
+        self.QLCDNumber_emccd_tempetature = cw.LCDNumberWidget(0, 3)
         self.QPushButton_emccd_cooler_check = cw.PushButtonWidget('Check', False, True)
         self.QPushButton_emccd_cooler_switch = cw.PushButtonWidget('Cooler OFF', True, True, True)
         self.QSpinBox_emccd_coordinate_x = cw.SpinBoxWidget(0, 1024, 1, 1)
@@ -77,13 +77,12 @@ class ControlPanel(QWidget):
         self.QSpinBox_emccd_coordinate_ny = cw.SpinBoxWidget(0, 1024, 1, 1024)
         self.QSpinBox_emccd_coordinate_bin = cw.SpinBoxWidget(0, 1024, 1, 1)
         self.QSpinBox_emccd_gain = cw.SpinBoxWidget(0, 300, 1, 0)
-        self.QDoubleSpinBox_emccd_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.009)
         self.QDoubleSpinBox_emccd_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
-        self.QDoubleSpinBox_emccd_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.050)
+        self.QLCDNumber_emccd_frame_rate = cw.LCDNumberWidget(25, 4)
 
         emccd_scroll_layout.addRow(cw.LabelWidget(str('EMCCD')))
         emccd_scroll_layout.addRow(cw.FrameWidget())
-        emccd_scroll_layout.addRow(cw.LabelWidget(str('Temperature')), self.QLCDNumber_ccd_tempetature)
+        emccd_scroll_layout.addRow(cw.LabelWidget(str('Temperature')), self.QLCDNumber_emccd_tempetature)
         emccd_scroll_layout.addRow(self.QPushButton_emccd_cooler_check, self.QPushButton_emccd_cooler_switch)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('X')), self.QSpinBox_emccd_coordinate_x)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Y')), self.QSpinBox_emccd_coordinate_y)
@@ -91,9 +90,8 @@ class ControlPanel(QWidget):
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_emccd_coordinate_ny)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Bin')), self.QSpinBox_emccd_coordinate_bin)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('EMGain')), self.QSpinBox_emccd_gain)
-        emccd_scroll_layout.addRow(cw.LabelWidget(str('Clean / s')), self.QDoubleSpinBox_emccd_t_clean)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_emccd_t_exposure)
-        emccd_scroll_layout.addRow(cw.LabelWidget(str('Standby / s')), self.QDoubleSpinBox_emccd_t_standby)
+        emccd_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_emccd_frame_rate)
 
         self.QSpinBox_scmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 1, 0)
         self.QSpinBox_scmos_coordinate_y = cw.SpinBoxWidget(0, 2048, 1, 0)
@@ -432,15 +430,14 @@ class ControlPanel(QWidget):
         return self.QSpinBox_emccd_gain.value()
 
     def display_emccd_temperature(self, temperature):
-        self.QLCDNumber_ccd_tempetature.display(temperature)
+        self.QLCDNumber_emccd_tempetature.display(temperature)
 
-    def display_emccd_timings(self, clean=None, exposure=None, standby=None):
-        if clean is not None:
-            self.QDoubleSpinBox_emccd_t_clean.setValue(clean)
-        if exposure is not None:
-            self.QDoubleSpinBox_emccd_t_exposure.setValue(exposure)
-        if standby is not None:
-            self.QDoubleSpinBox_emccd_t_standby.setValue(standby)
+    def display_emccd_timings(self, exposure_time=None, kinetic_time=None):
+        if exposure_time is not None:
+            self.QDoubleSpinBox_emccd_t_exposure.setValue(exposure_time)
+        if kinetic_time is not None:
+            fps = 1.0 / kinetic_time
+            self.QLCDNumber_emccd_frame_rate.display(fps)
 
     def get_scmos_roi(self):
         return [self.QSpinBox_scmos_coordinate_x.value(), self.QSpinBox_scmos_coordinate_y.value(),

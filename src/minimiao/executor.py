@@ -323,29 +323,30 @@ class CommandExecutor(QObject):
         try:
             self.update_digital_triggers()
             self.update_piezo_scanning()
-            self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras[cam_key]].t_clean,
-                                              standby_time=self.devs.cam_set[self.cameras[cam_key]].t_readout)
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
 
     def prepare_video(self, vd_mod):
+        self.update_trigger_parameters("imaging")
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
         self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.update_trigger_parameters("imaging")
+        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
+                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
+                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
+                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=True)
+        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
@@ -364,9 +365,9 @@ class CommandExecutor(QObject):
     def start_video(self):
         try:
             self.devs.slm.activate()
-            self.devs.daq.run_triggers()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
+            self.devs.daq.run_triggers()
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -375,8 +376,8 @@ class CommandExecutor(QObject):
 
     def stop_video(self):
         try:
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.devs.daq.stop_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.logg.info(r"Live Video Stopped")
             self.devs.slm.deactivate()
             self.lasers_off()
@@ -469,29 +470,32 @@ class CommandExecutor(QObject):
             self.stop_acquisition()
 
     def prepare_acquisition(self):
+        self.update_trigger_parameters("imaging")
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
         self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].prepare_data_acquisition()
-        self.update_trigger_parameters("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
+        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
+        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
+                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
+                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
+                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=True)
+        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
     def start_acquisition(self, labl: str, acq_num: int):
         try:
             self.devs.slm.activate()
-            self.devs.daq.run_triggers()
             self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
             self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
+            self.devs.daq.run_triggers()
         except Exception as e:
             self.stop_acquisition()
             self.logg.error(f"Error start acquisition: {e}")
@@ -499,8 +503,8 @@ class CommandExecutor(QObject):
 
     def stop_acquisition(self):
         try:
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
             self.devs.daq.stop_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
             self.lasers_off()
             self.devs.slm.deactivate()
             self.reset_piezo_positions()
@@ -515,21 +519,24 @@ class CommandExecutor(QObject):
                 df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
 
     def prepare_focus_finding(self):
+        self.update_trigger_parameters("imaging")
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"], self.slm_seq)
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = self.trg.exposure_time
         self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.update_trigger_parameters("imaging")
+        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
+                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
+                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
+                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(clean=self.trg.initial_time,
-                                              exposure=self.trg.exposure_time,
-                                              standby=self.trg.standby_time)
+        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
         # self.devs.cam_set[self.cameras["focus_lock"]].set_exposure(self.ctrl_panel.get_tis_expo())
         # self.devs.cam_set[self.cameras["focus_lock"]].prepare_live()

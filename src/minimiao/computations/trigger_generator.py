@@ -10,7 +10,7 @@ from minimiao import logger
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=2.5e5, logg=None):
+    def __init__(self, sample_rate=2.0e5, logg=None):
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
@@ -38,31 +38,31 @@ class TriggerSequence:
         self.piezo_scan_positions = [start + step * np.arange(ns) for start, step, ns in
                                      zip(self.piezo_starts, self.piezo_steps, self.piezo_scan_pos)]
         self.piezo_scan_dlt = 0.25  # s
-        # GUI & Thread
-        self.refresh_time = 0.006  # s
-        self.refresh_time_samples = int(np.ceil(self.refresh_time * self.sample_rate))
-        # SLM
+        # TTL
         self.trigger_pulse_width = 10.0e-5  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
+        self.cycle_time = 50.0e-3  # s
+        self.cycle_samples = int(np.ceil(self.cycle_time * self.sample_rate))
+        # SLM
         self.slm_delay_time = 0.00001  # s
         self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
         self.slm_start_time = 270.187e-6  # s
         self.slm_start_samples = round(self.slm_start_time * self.sample_rate)
-        self.switch_off_time = 720.96e-6 - self.slm_start_time  # s
-        self.switch_off_samples = round(self.switch_off_time * self.sample_rate)
-        self.readout_time = 520.853e-6 - self.slm_start_time  # s
-        self.readout_samples = round(self.readout_time * self.sample_rate)
-        self.total_switch_on_time = 776.64e-6  # s
-        self.total_switch_on_samples = round(self.total_switch_on_time * self.sample_rate)
-        self.total_readout_time = 576.533e-6  # s
-        self.total_readout_samples = round(self.total_readout_time * self.sample_rate)
+        self.slm_total_time = 0  # s
+        self.slm_total_samples = round(self.slm_total_time * self.sample_rate)
+        self.slm_end_time = 0  # s
+        self.slm_end_samples = round(self.slm_end_time * self.sample_rate)
+        self.slm_on_time = 0  # s
+        self.slm_on_samples = round(self.slm_on_time * self.sample_rate)
         # camera
         self.initial_time = 0.00159  # s
         self.initial_samples = int(np.ceil(self.initial_time * self.sample_rate))
-        self.standby_time = 0.03893  # s
-        self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
         self.exposure_time = 0.005  # s
         self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
+        self.standby_time = 0.03893  # s
+        self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
+        self.kinetic_time = 0.05  # s
+        self.kinetic_samples = int(np.ceil(self.kinetic_time * self.sample_rate))
 
     @staticmethod
     def setup_logging():
@@ -113,138 +113,49 @@ class TriggerSequence:
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
 
-    def update_camera_parameters(self, initial_time=None, standby_time=None):
+    def update_camera_parameters(self, initial_time=None, exposure_time=None, standby_time=None, kinetic_time=None):
         if initial_time is not None:
             self.initial_time = initial_time
             self.initial_samples = int(np.ceil(self.initial_time * self.sample_rate))
+        if exposure_time is not None:
+            self.exposure_time = exposure_time
+            self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
         if standby_time is not None:
             self.standby_time = standby_time
             self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
+        if kinetic_time is not None:
+            self.kinetic_time = kinetic_time
+            self.kinetic_samples = int(np.ceil(self.kinetic_time * self.sample_rate))
 
-    def generate_slm_triggers(self, slm_seq="5ms_dark_pair"):
-        if "200us_lit_balanced" in slm_seq:
-            print("200us_lit_balanced")
-            samps_total = round(576.533e-6 * self.sample_rate)
-            expo_on = 199.893e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(520.853e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "400us_lit_balanced" in slm_seq:
-            print("400us_lit_balanced")
-            samps_total = round(776.64e-6 * self.sample_rate)
-            expo_on = 400e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(720.96e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "600us_lit_balanced" in slm_seq:
-            print("600us_lit_balanced")
-            samps_total = round(976.747e-6 * self.sample_rate)
-            expo_on = 600.107e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(921.067e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "500us_lit_pair" in slm_seq:
-            print("500us_lit_pair")
-            samps_total = round(810.667e-6 * self.sample_rate)
-            expo_on = 2 * 499.947e-6 + 310.72e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(770.133e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
-        elif "5ms_lit_pair" in slm_seq:
-            print("5ms_lit_pair")
-            samps_total = round(5310.72e-6 * self.sample_rate)
-            expo_on = 2 * 5000.0e-6 + 310.72e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(5270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
-        elif "10ms_lit_pair" in slm_seq:
-            print("10ms_lit_pair")
-            samps_total = round(10310.72e-6 * self.sample_rate)
-            expo_on = 2 * 10000.0e-6 + 310.72e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(10270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
-        elif "20ms_lit_pair" in slm_seq:
-            print("20ms_lit_pair")
-            samps_total = round(20310.72e-6 * self.sample_rate)
-            expo_on = 2 * 20000.0e-6 + 310.72e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(20270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
-        elif "5ms_dark_pair" in slm_seq:
-            print("5ms_dark_pair")
-            samps_total = round(5310.72e-6 * self.sample_rate)
-            expo_on = 5000.0e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(5270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "10ms_dark_pair" in slm_seq:
-            print("10ms_dark_pair")
-            samps_total = round(10310.72e-6 * self.sample_rate)
-            expo_on = 10000.0e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(10270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        elif "20ms_dark_pair" in slm_seq:
-            print("20ms_dark_pair")
-            samps_total = round(20310.72e-6 * self.sample_rate)
-            expo_on = 20000.0e-6
-            samps_on = round(expo_on * self.sample_rate)
-            samps_end = round(20270.187e-6 * self.sample_rate)
-            act_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            act_seq[:self.trigger_pulse_samples] = 1
-            cam_seq = np.zeros(samps_total * 2, dtype=np.uint8)
-            cam_seq[self.slm_start_samples:samps_end + self.slm_delay_samples] = 1
-        else:
-            self.logg.error("SLM sequence error.")
-            raise ValueError("SLM sequence is wrong.")
-        return act_seq, cam_seq, expo_on, samps_on
+    def update_slm_parameters(self, total_time=None, start_time=None, on_time=None, end_time=None, delay_time=None):
+        if total_time is not None:
+            self.slm_total_time = total_time
+            self.slm_total_samples = round(self.slm_total_time * self.sample_rate)
+        if start_time is not None:
+            self.slm_start_time = start_time
+            self.slm_start_samples = round(self.slm_start_time * self.sample_rate)
+        if on_time is not None:
+            self.slm_on_time = on_time
+            self.slm_on_samples = round(self.slm_on_time * self.sample_rate)
+        if end_time is not None:
+            self.slm_end_time = end_time
+            self.slm_end_samples = round(self.slm_end_time * self.sample_rate)
+        if delay_time is not None:
+            self.slm_delay_time = delay_time
+            self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
 
-    def generate_digital_triggers(self, lasers, camera, slm_seq):
+    def generate_digital_triggers(self, lasers, camera):
         cam_ind = camera + 3
         digital_channels = [2, cam_ind]
-        act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
-        act_seq = np.pad(act_seq, (self.standby_samples, 0), 'constant', constant_values=(0, 0))
-        cam_seq = np.pad(cam_seq, (self.standby_samples, 0), 'constant', constant_values=(0, 0))
-        digital_trigger = np.vstack((act_seq, cam_seq))
-        return digital_trigger, digital_channels
+        self.cycle_samples = max(self.slm_total_samples, self.kinetic_samples) + 2
+        self.cycle_time = self.cycle_samples / self.sample_rate
+        digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
+        digital_triggers[0, :self.trigger_pulse_samples] = 1
+        digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
+        return digital_triggers, digital_channels
 
-    def generate_sim_triggers(self, lasers, camera, slm_seq):
-        cam_ind = camera + 3
-        digital_channels = [2, cam_ind]
-        act_seq, cam_seq, self.exposure_time, self.exposure_samples = self.generate_slm_triggers(slm_seq)
-        digital_trigger = np.vstack((act_seq, cam_seq))
-        return digital_trigger, digital_channels
-
-    def generate_digital_triggers_for_scan(self, lasers, camera, slm_seq):
-        digital_triggers, chs = self.generate_digital_triggers(lasers, camera, slm_seq)
+    def generate_digital_triggers_for_scan(self, lasers, camera):
+        digital_triggers, chs = self.generate_digital_triggers(lasers, camera)
         if self.standby_samples > self.return_samples:
             cycle_samples = digital_triggers.shape[1]
         else:
@@ -254,8 +165,8 @@ class TriggerSequence:
             digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
         return digital_triggers, cycle_samples, chs
 
-    def generate_piezo_scan(self, lasers, camera, slm_seq):
-        digital_triggers, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera, slm_seq)
+    def generate_piezo_scan(self, lasers, camera):
+        digital_triggers, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera)
         pos = 1
         pz_chs = []
         for i in range(3):
@@ -273,184 +184,6 @@ class TriggerSequence:
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
         return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
-
-    def generate_live_point_scan_2d(self, lasers, slm_seq):
-        digital_channels = lasers.copy()
-        digital_channels.append(5)
-        digital_sequences = []
-        if slm_seq == "None":
-            line_samples = int(self.digital_ends[5] + self.sample_rate * 5e-5)
-            n = 1 + int(self.refresh_time_samples / line_samples)
-            if 0 in lasers:
-                switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
-                switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
-                switch_on_sequence = np.tile(switch_on_sequence, n)
-                digital_sequences.append(switch_on_sequence)
-            if 2 in lasers:
-                switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
-                switch_off_sequence[self.digital_starts[2]:self.digital_ends[2]] = 1
-                switch_off_sequence = np.tile(switch_off_sequence, n)
-                digital_sequences.append(switch_off_sequence)
-            if 5 in digital_channels:
-                readout_sequence = np.zeros(line_samples, dtype=np.uint8)
-                readout_sequence[self.digital_starts[5]:self.digital_ends[5]] = 1
-                readout_sequence = np.tile(readout_sequence, n)
-                digital_sequences.append(readout_sequence)
-            pixel_dwell_sample = self.digital_ends[5] - self.digital_starts[5]
-        else:
-            if self.slm_start_samples > self.digital_ends[0]:
-                offset_samples = self.slm_start_samples - self.digital_ends[0]
-                self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
-                self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
-            line_samples = int(self.digital_ends[0] + int(np.ceil(1.4e-3 * self.sample_rate)))
-            if 0 in lasers:
-                switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
-                switch_on_sequence[self.digital_starts[0]:self.digital_ends[0]] = 1
-                digital_sequences.append(switch_on_sequence)
-            start_ = 0
-            end_ = 0
-            if 2 in lasers:
-                switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
-                start_ += max(self.digital_ends[0] - self.slm_start_samples - self.slm_delay_samples, 0)
-                switch_off_sequence[start_:start_ + self.trigger_pulse_samples] = 1
-                digital_sequences.append(switch_off_sequence)
-            if 5 in digital_channels:
-                readout_sequence = np.zeros(line_samples, dtype=np.uint8)
-                start_ += self.total_switch_on_samples + self.slm_start_samples
-                end_ += start_ + self.readout_samples
-                readout_sequence[start_:end_ + self.slm_delay_samples] = 1
-                digital_sequences.append(readout_sequence)
-            pixel_dwell_sample = self.readout_samples + self.slm_delay_samples
-        return np.asarray(digital_sequences), digital_channels, pixel_dwell_sample
-
-    def generate_piezo_point_scan_2d(self, lasers):
-        line_samples = int(self.piezo_scan_dlt * self.sample_rate)
-        fast_x = np.linspace(self.piezo_positions[0] - self.piezo_ranges[0] / 2,
-                             self.piezo_positions[0] + self.piezo_ranges[0] / 2,
-                             line_samples)
-        slow_y = np.linspace(self.piezo_positions[0] - self.piezo_ranges[0] / 2,
-                             self.piezo_positions[0] + self.piezo_ranges[0] / 2,
-                             self.piezo_scan_pos[1])
-        fast_x = np.tile(fast_x, self.piezo_scan_pos[1])
-        slow_y = np.repeat(slow_y, line_samples)
-        dwell_samples = int(line_samples / self.piezo_scan_pos[0])
-        digital_channels = lasers.copy()
-        digital_channels.append(5)
-        n = line_samples // dwell_samples
-        digital_sequences = []
-        if self.slm_start_samples > self.digital_ends[0]:
-            offset_samples = self.slm_start_samples - self.digital_ends[0]
-            self.digital_starts = [(_start + offset_samples) for _start in self.digital_starts]
-            self.digital_ends = [(_end + offset_samples) for _end in self.digital_ends]
-        if 0 in lasers:
-            switch_on_sequence = np.zeros(line_samples, dtype=np.uint8)
-            switch_on_sequence[:n * dwell_samples].reshape(n, dwell_samples)[
-                :, self.digital_starts[0]:self.digital_ends[0]] = 1
-            digital_sequences.append(switch_on_sequence)
-        start_ = 0
-        end_ = 0
-        if 2 in lasers:
-            switch_off_sequence = np.zeros(line_samples, dtype=np.uint8)
-            start_ += max(self.digital_ends[0] - self.slm_start_samples - self.slm_delay_samples, 0)
-            switch_off_sequence[:n * dwell_samples].reshape(n, dwell_samples)[
-                :, start_:start_ + self.trigger_pulse_samples] = 1
-            digital_sequences.append(switch_off_sequence)
-        if 5 in digital_channels:
-            readout_sequence = np.zeros(line_samples, dtype=np.uint8)
-            start_ += self.total_switch_on_samples + self.slm_start_samples
-            end_ += start_ + self.readout_samples
-            readout_sequence[:n * dwell_samples].reshape(n, dwell_samples)[:, start_:end_ + self.slm_delay_samples] = 1
-            digital_sequences.append(readout_sequence)
-        digital_sequences = np.tile(np.array(digital_sequences), (1, self.piezo_scan_pos[1]))
-        pixel_dwell_sample = self.readout_samples + self.slm_delay_samples
-        return np.vstack((fast_x, slow_y)), [0, 1], digital_sequences, digital_channels, pixel_dwell_sample
-
-    # def generate_piezo_point_scan_2d(self, lasers, camera, span="1 um"):
-    #     ramp_libs = {"1 um": self.generate_piezo_scan_ramp_1um(),
-    #                  "2 um": self.generate_piezo_scan_ramp_2um()}
-    #     fast_x, slow_y, fv, samples_x, line, offset = ramp_libs[span]
-    #     cam_ind = camera + 2
-    #     digital_channels = lasers.copy()
-    #     initial_offset = self.initial_samples
-    #     if initial_offset > self.digital_starts[cam_ind]:
-    #         initial_offset -= self.digital_starts[cam_ind]
-    #         self.digital_starts = [(_start + initial_offset) for _start in self.digital_starts]
-    #         self.digital_ends = [(_end + initial_offset) for _end in self.digital_ends]
-    #     self.exposure_samples = self.digital_ends[cam_ind] - self.digital_starts[cam_ind]
-    #     self.exposure_time = self.exposure_samples / self.sample_rate
-    #     interval_samples = int(self.sample_rate * self.piezo_steps[0] * 10 / fv)
-    #     if interval_samples < self.standby_samples + self.exposure_samples:
-    #         raise Exception("Error: step size is less than the sum of camera exposure and readout")
-    #     cycle_samples = self.digital_ends[cam_ind] + interval_samples + 2
-    #     digital_channels.append(cam_ind)
-    #     digital_sequences = np.zeros((len(digital_channels), cycle_samples), dtype=np.uint8)
-    #     for ln, chl in enumerate(digital_channels):
-    #         digital_sequences[ln, self.digital_starts[chl]:self.digital_ends[chl]] = 1
-    #     digital_sequences = np.tile(digital_sequences, 32)
-    #     offset_samples = np.zeros((len(digital_channels), int((0.025 + offset) / (0.2 / samples_x))))
-    #     digital_sequences = np.concatenate((offset_samples, digital_sequences), axis=1)
-    #     offset_samples = np.zeros((len(digital_channels), line.shape[0] - digital_sequences.shape[1]))
-    #     digital_sequences = np.concatenate((digital_sequences, offset_samples), axis=1)
-    #     digital_sequences = np.tile(digital_sequences, 32)
-    #     offset_samples = np.zeros((len(digital_channels), samples_x + 2000))
-    #     digital_sequences = np.concatenate((offset_samples, digital_sequences), axis=1)
-    #     return np.vstack((fast_x, slow_y)), digital_sequences, digital_channels, [0, 1], 32 * 32
-    #
-    # def generate_piezo_scan_ramp_1um(self):
-    #     lt = 0.25
-    #     lnm = 32
-    #     fv = 2 / lt
-    #     starts = [s - 0.1 for s in self.piezo_positions]
-    #     starts[1] += 0.025
-    #     ends = [s + 0.1 for s in self.piezo_positions]
-    #     offset = 0.03
-    #     samples_x = int(lt * self.sample_rate)
-    #     d_0 = np.linspace(start=starts[0], stop=ends[0], num=samples_x, endpoint=True)
-    #     d_1 = starts[0] * np.ones(2000) - offset
-    #     fast_x = np.concatenate((d_0, d_1))
-    #     d_2 = np.linspace(start=starts[0] - offset, stop=ends[0] - offset, num=samples_x,
-    #                       endpoint=True)
-    #     dx = d_2[1] - d_2[0]
-    #     d_extension = np.linspace(d_2[-1] + dx, d_2[-1] + offset, num=int(offset / dx), endpoint=True)
-    #     d_2 = np.concatenate((d_2, d_extension))
-    #     d_2[:3500] = np.linspace(start=starts[0] - offset, stop=d_2[3500] + 0.025, num=3500, endpoint=True)
-    #     d_2[3500:] += 0.0025
-    #     line = np.concatenate((d_2, d_1))
-    #     for i in range(lnm):
-    #         fast_x = np.concatenate((fast_x, line))
-    #     slow_y = np.arange(starts[1], ends[1], step=self.piezo_steps[1])
-    #     slow_y = slow_y[:lnm]
-    #     slow_y = np.repeat(slow_y, line.shape[0])
-    #     slow_y = np.concatenate((np.ones(samples_x + 2000) * starts[1], slow_y))
-    #     return fast_x, slow_y, fv, samples_x, line, offset
-    #
-    # def generate_piezo_scan_ramp_2um(self):
-    #     lt = 0.25
-    #     lnm = 32
-    #     fv = 2 / lt
-    #     starts = [s - 0.1 for s in self.piezo_positions]
-    #     starts[1] += 0.025
-    #     ends = [s + 0.1 for s in self.piezo_positions]
-    #     offset = 0.03
-    #     samples_x = int(lt * self.sample_rate)
-    #     d_0 = np.linspace(start=starts[0], stop=ends[0], num=samples_x, endpoint=True)
-    #     d_1 = starts[0] * np.ones(2000) - offset
-    #     fast_x = np.concatenate((d_0, d_1))
-    #     d_2 = np.linspace(start=starts[0] - offset, stop=ends[0] - offset, num=samples_x,
-    #                       endpoint=True)
-    #     dx = d_2[1] - d_2[0]
-    #     d_extension = np.linspace(d_2[-1] + dx, d_2[-1] + offset, num=int(offset / dx), endpoint=True)
-    #     d_2 = np.concatenate((d_2, d_extension))
-    #     d_2[:3500] = np.linspace(start=starts[0] - offset, stop=d_2[3500] + 0.025, num=3500, endpoint=True)
-    #     d_2[3500:] += 0.0025
-    #     line = np.concatenate((d_2, d_1))
-    #     for i in range(lnm):
-    #         fast_x = np.concatenate((fast_x, line))
-    #     slow_y = np.arange(starts[1], ends[1], step=self.piezo_steps[1])
-    #     slow_y = slow_y[:lnm]
-    #     slow_y = np.repeat(slow_y, line.shape[0])
-    #     slow_y = np.concatenate((np.ones(samples_x + 2000) * starts[1], slow_y))
-    #     return fast_x, slow_y, fv, samples_x, line, offset
 
 
 def convert_list(arrays):

@@ -28,7 +28,7 @@ class NIDAQ:
         self._active = {}
         self._running = {}
         self.tasks, self._active, self._running, = self._configure()
-        self.sample_rate = int(2.5e5)
+        self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
         self.analog_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
         self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",

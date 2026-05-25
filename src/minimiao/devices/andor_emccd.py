@@ -44,11 +44,12 @@ class EMCCDCamera:
         def __init__(self):
             self.temperature = None
             self.gain = 0
-            self.t_clean = None
-            self.t_readout = None
-            self.t_exposure = None
+            self.t_clean = 0.0
+            self.t_readout = 0.04
+            self.t_exposure = 0.01
             self.t_accumulate = None
-            self.t_kinetic = None
+            self.t_kinetic = 0.05
+            self.fps = 1 / self.t_kinetic
             self.bin_h = 1
             self.bin_v = 1
             self.cp_h = 1024

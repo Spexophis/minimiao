@@ -133,6 +133,9 @@ class QXGA:
             res = self.r11.R11_RpcRoGetSelected(ct.byref(index))
             if (res == 0) & (index.value == n):
                 self.logg.info('Order is set to #%s' % n)
+                o = self.get_order_name(index.value)
+                t_total, t_end, t_on = self.get_sequence_parameters(o.decode('utf-8'))
+                return t_total, t_end, t_on
             else:
                 raise RuntimeError('Order set is wrong')
         else:
@@ -151,3 +154,59 @@ class QXGA:
             self.logg.info('Deactivate QXGA successfully')
         else:
             raise RuntimeError('Fail to deactivate')
+
+    def get_sequence_parameters(self, slm_seq="10ms_lit_pair"):
+        if "200us_lit_balanced" in slm_seq:
+            self.logg.info("200us_lit_balanced")
+            t_total = 576.533e-6
+            t_on = 199.893e-6
+            t_end = 520.853e-6
+        elif "400us_lit_balanced" in slm_seq:
+            self.logg.info("400us_lit_balanced")
+            t_total = 776.64e-6
+            t_on = 400e-6
+            t_end = 720.96e-6
+        elif "600us_lit_balanced" in slm_seq:
+            self.logg.info("600us_lit_balanced")
+            t_total = 976.747e-6
+            t_on = 600.107e-6
+            t_end = 921.067e-6
+        elif "500us_lit_pair" in slm_seq:
+            self.logg.info("500us_lit_pair")
+            t_total = 2 * 810.667e-6
+            t_on = 2 * 499.947e-6 + 310.72e-6
+            t_end = 770.133e-6 + t_total
+        elif "5ms_lit_pair" in slm_seq:
+            self.logg.info("5ms_lit_pair")
+            t_total = 2 * 5310.72e-6
+            t_on = 2 * 5000.0e-6 + 310.72e-6
+            t_end = 5270.187e-6 + t_total
+        elif "10ms_lit_pair" in slm_seq:
+            self.logg.info("10ms_lit_pair")
+            t_total = 2 * 10310.72e-6
+            t_on = 2 * 10000.0e-6 + 310.72e-6
+            t_end = 10270.187e-6 + t_total
+        elif "20ms_lit_pair" in slm_seq:
+            self.logg.info("20ms_lit_pair")
+            t_total = 2 * 20310.72e-6
+            t_on = 2 * 20000.0e-6 + 310.72e-6
+            t_end = 20270.187e-6 + t_total
+        elif "5ms_dark_pair" in slm_seq:
+            self.logg.info("5ms_dark_pair")
+            t_total = 5310.72e-6
+            t_on = 5000.0e-6
+            t_end = 5270.187e-6
+        elif "10ms_dark_pair" in slm_seq:
+            self.logg.info("10ms_dark_pair")
+            t_total = 10310.72e-6
+            t_on = 10000.0e-6
+            t_end = 10270.187e-6
+        elif "20ms_dark_pair" in slm_seq:
+            self.logg.info("20ms_dark_pair")
+            t_total = 20310.72e-6
+            t_on = 20000.0e-6
+            t_end = 20270.187e-6
+        else:
+            self.logg.error("SLM sequence error.")
+            raise ValueError("SLM sequence is wrong.")
+        return t_total, t_end, t_on

@@ -33,9 +33,10 @@ class CameraAcquisitionThread(threading.Thread):
         self._stop_event.set()
         self.join(timeout=timeout)
         if self.is_alive():
-            self.cam.logg.warning(
+            self.cam.logg.error(
                 "CameraAcquisitionThread did not exit within %.1fs; "
-                "camera USB may be frozen — hardware power-cycle may be required",
+                "camera USB may be frozen;"
+                "hardware power-cycle may be required",
                 timeout,
             )
 
