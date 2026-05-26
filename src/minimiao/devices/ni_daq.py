@@ -33,7 +33,7 @@ class NIDAQ:
         self.duty_cycle = float(0.5)
         self.mode = None
         self.analog_output_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2"]
-        self.analog_input_channels = ["Dev1/ai0", "Dev1/ai1", "Dev1/ai2"]
+        self.analog_input_channels = ["Dev1/ai1", "Dev1/ai2", "Dev1/ai3"]
         self.analog_reader = None
         self.analog_data = None
         self.galvo_channels = ["Dev1/ao0", "Dev1/ao1"]
