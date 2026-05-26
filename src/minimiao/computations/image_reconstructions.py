@@ -16,12 +16,15 @@ class ImgRecon:
 
         self.mode = 1  # 0 - confocal; 1 - resolft
 
-        self._gate_len = 256
-        self._point_scan_gate_mask = np.zeros(self._gate_len, dtype=bool)
+        self._scan_gate_len = 1024
+        self._point_scan_gate_mask = np.zeros(self._scan_gate_len, dtype=bool)
+        self._off_gate_len = 1024
+        self._switch_off_gate_mask = np.zeros(self._off_gate_len, dtype=bool)
 
         self.point_scan_n_pixels = 0
         self.point_scan_n_lines = 0
         self.point_scan_dwell_samples = 0
+        self.point_scan_off_samples = 0
         self._expected = 0
 
         self.live_counts = []
@@ -41,14 +44,24 @@ class ImgRecon:
         return self._point_scan_gate_mask
 
     @property
-    def gate_len(self) -> int:
-        return self._gate_len
+    def switch_off_gate_mask(self) -> np.ndarray:
+        return self._switch_off_gate_mask
+
+    @property
+    def scan_gate_len(self) -> int:
+        return self._scan_gate_len
 
     @point_scan_gate_mask.setter
     def point_scan_gate_mask(self, gate_mask) -> None:
         gate_mask = np.asarray(gate_mask, dtype=bool)
         self._point_scan_gate_mask = np.roll(gate_mask, 1)
-        self._rebuild_gate_cache()
+        self._rebuild_scan_gate_cache()
+
+    @switch_off_gate_mask.setter
+    def switch_off_gate_mask(self, gate_mask) -> None:
+        gate_mask = np.asarray(gate_mask, dtype=bool)
+        self._switch_off_gate_mask = np.roll(gate_mask, 1)
+        self._rebuild_off_gate_cache()
 
     def set_point_scan_params(self, n_lines: int, n_pixels: int, dwell_samples: int) -> None:
         self.point_scan_n_lines = int(n_lines)
@@ -56,17 +69,21 @@ class ImgRecon:
         self.point_scan_dwell_samples = int(dwell_samples)
         self._rebuild_expected()
 
-    def _rebuild_gate_cache(self) -> None:
+    def _rebuild_scan_gate_cache(self) -> None:
         m = self._point_scan_gate_mask
-        self._gate_len = int(m.shape[0])
+        self._scan_gate_len = int(m.shape[0])
+        
+    def _rebuild_off_gate_cache(self) -> None:
+        n = self._switch_off_gate_mask
+        self._off_gate_len = int(n.shape[0])
 
     def _rebuild_expected(self) -> None:
         self._expected = int(self.point_scan_n_lines) * int(self.point_scan_n_pixels) * int(
             self.point_scan_dwell_samples)
 
     def prepare_point_scan_live_recon(self):
-        self.live_counts = [np.zeros(self._gate_len, dtype=np.uint32),
-                            np.zeros(self._gate_len, dtype=np.uint32)]
+        self.live_counts = [np.zeros(self._scan_gate_len, dtype=np.uint32),
+                            np.zeros(self._scan_gate_len, dtype=np.uint32)]
         self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32),
                          np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32)]
         self._reshape_buffer = [
@@ -97,3 +114,35 @@ class ImgRecon:
 
             else:
                 self.logg.error(f"photon counts = {len(photon_counts)}, indices {len(ind_list)}. ")
+
+    @staticmethod
+    def full_recon(gate, counts, ny, nx):
+        n_pixels = ny * nx
+
+        on_gate = np.roll(np.asarray(gate[2], dtype=bool), 1)
+        readout_gate = np.roll(np.asarray(gate[4], dtype=bool), 1)
+        off_gate = np.roll(np.asarray(gate[3], dtype=bool), 1)
+
+        per_on = counts[on_gate]
+        per_readout = counts[readout_gate]
+        per_off = counts[off_gate]
+
+        assert len(per_on) % n_pixels == 0, f"Length is not divisible by {ny}*{nx}"
+        dwell_on = len(per_on) // n_pixels
+
+        assert len(per_off) % n_pixels == 0, f"Length is not divisible by {ny}*{nx}"
+        dwell_off = len(per_off) // n_pixels
+
+        assert len(per_readout) % n_pixels == 0, f"Length is not divisible by {ny}*{nx}"
+        dwell_readout = len(per_readout) // n_pixels
+
+        on_buf = per_on.reshape(ny, nx, dwell_on)
+        on_img = np.sum(on_buf, axis=2)
+
+        off_buf = per_off.reshape(ny, nx, dwell_off)
+        off_img = np.sum(off_buf, axis=2)
+
+        readout_buf = per_readout.reshape(ny, nx, dwell_readout)
+        readout_img = np.sum(readout_buf, axis=2)
+
+        return on_img, off_img, readout_img

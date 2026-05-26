@@ -65,6 +65,7 @@ class CommandExecutor(QObject):
         self.ao_panel.Signal_set_dm.connect(self.set_dm_current)
         self.ao_panel.Signal_set_dm_flat.connect(self.set_dm_flat)
         self.ao_panel.Signal_update_cmd.connect(self.update_dm)
+        self.ao_panel.Signal_load_dm.connect(self.load_dm)
         self.ao_panel.Signal_save_dm.connect(self.save_dm)
         # AO
         self.ao_panel.Signal_sensorlessAO_run.connect(self.run_sensorless_iteration)
@@ -115,7 +116,7 @@ class CommandExecutor(QObject):
 
     def set_piezo_position_z(self, pos_z):
         try:
-            self.devs.daq.set_piezo_position([pos_z / 10.], [0])
+            self.devs.daq.set_piezo_position([pos_z / 10.], [2])
             QTimer.singleShot(100, lambda: self.update_piezo_display_z())
         except Exception as e:
             self.logg.error(f"MCL Piezo Error: {e}")
@@ -361,17 +362,20 @@ class CommandExecutor(QObject):
             fd = os.path.join(self.path, tm)
         img_res = np.array(self.rec.live_rec).astype(np.float16)
         tf.imwrite(str(fd + r"_" + scan + r"_recon_image.tif"), data=img_res, compression='zlib')
+        pws = self.ctrl_panel.get_cobolt_laser_power("all")
         try:
-            res = np.zeros((4, self.rec.gate_len))
-            res[0] = np.arange(self.rec.gate_len) / self.trg.sample_rate
-            res[1] = self.rec.point_scan_gate_mask * 1
-            res[2] = np.array(self.devs.daq.mpd_data.count_lists[0])
-            res[3] = np.array(self.devs.daq.mpd_data.count_lists[1])
-            np.save(str(fd + r"_photon_counts.npy"), res)
+            res = np.zeros((3, self.rec.scan_gate_len))
+            res[0] = np.arange(self.rec.scan_gate_len) / self.trg.sample_rate
+            res[1] = np.array(self.devs.daq.mpd_data.count_lists[0])
+            res[2] = np.array(self.devs.daq.mpd_data.count_lists[1])
+            np.save(str(fd + r"_" + scan + r"_photon_counts.npy"), res)
+            np.savez(str(fd + r"_" + scan + r"_laser_powers.npz"), my_list=pws)
         except Exception as e:
             self.logg.error(f"Error writing photon counting data: {e}")
         try:
-            with pd.ExcelWriter(str(fd + r"_scan_positions.xlsx"), engine="openpyxl") as writer:
+            if self.devs.daq.analog_data is not None:
+                np.save(str(fd + r"_" + scan + r"_position_records.npy"), self.devs.daq.analog_data)
+            with pd.ExcelWriter(str(fd + r"_" + scan + r"_scan_positions.xlsx"), engine="openpyxl") as writer:
                 for i, arr in enumerate(self.trg.piezo_scan_positions):
                     df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
@@ -387,7 +391,8 @@ class CommandExecutor(QObject):
         self.viewer.set_plot_1(dn)
         dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
-                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+                                     digital_sequences=dtr, digital_channels=dch,
+                                     rd=True, finite=True)
         self.devs.daq.photon_counter_mode = 1
         self.devs.daq.psr = self.rec
         self.rec.mode = 1
@@ -437,13 +442,14 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plot_1(dn)
-        dtr, gtr, dch, gch, pos, pdw = self.trg.generate_galvo_resolft_static(self.lasers, self.detector[dn])
+        dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_static(self.lasers, self.detector[dn])
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
-                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+                                     digital_sequences=dtr, digital_channels=dch,
+                                     rd=True, finite=True)
         self.devs.daq.photon_counter_mode = 1
         self.devs.daq.psr = self.rec
         self.rec.mode = 1
-        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
@@ -482,11 +488,12 @@ class CommandExecutor(QObject):
         dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
         pdw = 1
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
-                                     digital_sequences=dtr, digital_channels=dch, finite=True)
+                                     digital_sequences=dtr, digital_channels=dch,
+                                     rd=True, finite=True)
         self.devs.daq.photon_counter_mode = 1
         self.devs.daq.psr = self.rec
         self.rec.mode = 0
-        self.rec.point_scan_gate_mask = dtr[-1]
+        self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
@@ -525,6 +532,83 @@ class CommandExecutor(QObject):
     def run_point_scan(self, n: int):
         self.vw.get_dialog(txt="Point Scanning Acquisition")
         self.run_task(task=self.point_scan, iteration=n)
+
+    def prepare_auto_roi(self):
+        mth = self.ctrl_panel.get_live_mode()
+        scan = self.ctrl_panel.get_galvo_scan_set()
+        if scan.lower().replace('_', ' ').startswith(mth.lower()):
+            self.lasers = self.ctrl_panel.get_lasers()
+            self.set_lasers(self.lasers)
+            self.update_digital_timings()
+        else:
+            self.logg.error(f"Error: galvo set {scan} and video mode {mth} does not match")
+            return
+
+    def auto_roi(self, vd_mod):
+        try:
+            galvo_positions, galvo_ranges, dot_steps, offset, ret = self.ctrl_panel.get_galvo_scan_parameters()
+            galvo_ranges_l = [2 * galvo_range for galvo_range in galvo_ranges]
+            dot_steps_l = [8 * dot_step for dot_step in dot_steps]
+            self.trg.update_galvo_scan_parameters(origins=galvo_positions, ranges=galvo_ranges_l, foci=dot_steps_l,
+                                                  offsets=offset, returns=ret)
+            axis_origins, axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
+            return_time = self.ctrl_panel.get_piezo_scan_time()
+            self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, axis_origins, return_time)
+
+            dn = self.ctrl_panel.get_detector()
+            self.viewer.set_plot_1(dn)
+            if vd_mod == "RESOLFT Scan":
+                dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+                self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                             digital_sequences=dtr, digital_channels=dch,
+                                             rd=True, finite=True)
+                self.devs.daq.photon_counter_mode = 1
+                self.devs.daq.psr = self.rec
+                self.rec.mode = 1
+                self.viewer.psr_mode = True
+                self.viewer.psr_fn = 1
+            else:
+                raise Exception(f"Invalid video mode {vd_mod} for MPD")
+            self.rec.point_scan_gate_mask = gts[0]
+            self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
+                                           dwell_samples=pdw)
+            self.rec.prepare_point_scan_live_recon()
+            self.devs.daq.photon_counter_length = dtr.shape[1]
+            self.devs.daq.prepare_photon_counter(self.detector[dn])
+            self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
+                                                 dt_s=1 / self.devs.daq.sample_rate,
+                                                 px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
+            if getattr(self.viewer, "psr_worker", None) is None:
+                self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data,
+                                                                  fps=10, parent=self.viewer)
+                self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
+                self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
+                self.viewer.psr_worker.start()
+            self.logg.info(f"Finish preparing auto ROI: {vd_mod}")
+            self.devs.daq.run_triggers()
+            self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0,
+                                     self.viewer.photon_pool.buf_1)
+            self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1], self.trg.dot_pos[0],
+                                            self.trg.dot_pos[1])
+        except Exception as e:
+            self.logg.error(f"Error preparing auto ROI: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
+
+    def finish_auto_roi(self):
+        try:
+            if getattr(self.viewer, "psr_worker", None) is not None:
+                self.viewer.psr_worker.stop()
+                self.viewer.psr_worker = None
+            self.devs.daq.stop_photon_count()
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            self.reset_galvo_positions()
+            self.reset_piezo_positions()
+            self.logg.info(r"Auto ROI Stopped")
+        except Exception as e:
+            self.logg.error(f"Error stopping auto roi: {e}")
 
     @pyqtSlot(str, int, float)
     def set_zernike(self, md: str, iz: int, amp: float, factory=False):
@@ -565,6 +649,10 @@ class CommandExecutor(QObject):
             self.logg.error(f"DM Error: {e}")
 
     @pyqtSlot()
+    def load_dm(self):
+        pass
+
+    @pyqtSlot()
     def save_dm(self):
         try:
             t = time.strftime("%Y%m%d_%H%M%S_")
@@ -586,7 +674,7 @@ class CommandExecutor(QObject):
             self.devs.daq.photon_counter_mode = 1
             self.devs.daq.psr = self.rec
             self.rec.mode = 1
-            self.rec.point_scan_gate_mask = dtr[-1]
+            self.rec.point_scan_gate_mask = gts[0]
             self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                            dwell_samples=pdw)
             self.devs.daq.photon_counter_length = dtr.shape[1]
@@ -604,7 +692,7 @@ class CommandExecutor(QObject):
             self.devs.daq.photon_counter_mode = 1
             self.devs.daq.psr = self.rec
             self.rec.mode = 0
-            self.rec.point_scan_gate_mask = dtr[-1]
+            self.rec.point_scan_gate_mask = gts[0]
             self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                            dwell_samples=pdw)
             self.devs.daq.photon_counter_length = dtr.shape[1]

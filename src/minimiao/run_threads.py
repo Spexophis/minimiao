@@ -150,7 +150,7 @@ class PhotonCountList:
             d = np.asarray(elements, dtype=np.int64)
             self.count_starts[ind] = self.count_ends[ind] % self.count_lens[ind]
             self.count_ends[ind] = (self.count_ends[ind] + num) % self.count_lens[ind]
-            counts = np.diff(np.insert(d, 0, self.data_lists[ind][-1]))
+            counts = np.diff(np.insert(d, 0, self.data_lists[ind][-1])).astype(np.uint32)
             self.count_lists[ind].extend(counts.tolist())
             self.data_lists[ind].extend(elements)
             if self.count_starts[ind] <= self.count_ends[ind]:
