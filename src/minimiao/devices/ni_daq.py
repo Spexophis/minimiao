@@ -156,7 +156,7 @@ class NIDAQ:
                 task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
                                                 samps_per_chan=16, active_edge=Edge.RISING)
                 pos = task.read(number_of_samples_per_channel=16)
-            return [sum(p) / len(p) for p in pos]
+            return sum(pos) / len(pos)
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:

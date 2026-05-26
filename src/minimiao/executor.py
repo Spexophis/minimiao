@@ -119,14 +119,14 @@ class CommandExecutor(QObject):
             self.devs.daq.set_piezo_position([pos_z / 10.], [2])
             QTimer.singleShot(100, lambda: self.update_piezo_display_z())
         except Exception as e:
-            self.logg.error(f"MCL Piezo Error: {e}")
+            self.logg.error(f"Piezo Error: {e}")
 
     def update_piezo_display_z(self):
         try:
-            position = self.devs.daq.get_piezo_position(0)
-            self.ctrl_panel.display_piezo_position(position, 0)
+            position = self.devs.daq.get_piezo_position([2])
+            self.ctrl_panel.display_piezo_position(position, 2)
         except Exception as e:
-            self.logg.error(f"MCL Piezo Read Error: {e}")
+            self.logg.error(f"Piezo Read Error: {e}")
 
     def update_piezo_scanner(self):
         axis_origins, axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
