@@ -518,32 +518,9 @@ class CommandExecutor(QObject):
                 df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                 df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
 
-    def prepare_focus_finding(self):
-        self.update_trigger_parameters("imaging")
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
-                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
-                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
-        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
-                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
-        # self.devs.cam_set[self.cameras["focus_lock"]].set_exposure(self.ctrl_panel.get_tis_expo())
-        # self.devs.cam_set[self.cameras["focus_lock"]].prepare_live()
-
     def focus_finding(self):
         try:
-            self.prepare_focus_finding()
+            self.prepare_video("live")
         except Exception as e:
             self.logg.error(f"Error starting focus finding: {e}")
             self.devs.daq.stop_triggers()
@@ -557,22 +534,26 @@ class CommandExecutor(QObject):
             zps = np.arange(start, end + step_size, step_size)
             data = []
             # data_calib = []
-            pzs = []
             self.devs.slm.activate()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
+            self.devs.daq.run_triggers()
             for i, z in enumerate(zps):
                 self.set_piezo_position_z(z, port="software")
-                time.sleep(0.08)
-                self.devs.daq.run_triggers()
-                time.sleep(0.04)
-                self.devs.daq.stop_triggers(_close=False)
+                time.sleep(0.1)
                 temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
                 data.append(temp)
                 # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
-                pzs.append(ipr.calculate_focus_measure_with_sobel(temp - temp.min()))
+            self.devs.daq.stop_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            # self.devs.cam_set[self.cameras["focus_lock"]].stop_live()
+            self.devs.slm.deactivate()
+            self.lasers_off()
             fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
             tf.imwrite(fd, np.asarray(data))
+            pzs = []
+            for dat in data:
+                pzs.append(ipr.calculate_focus_measure_with_sobel(dat - dat.min()))
             self.viewer.plot_trace(y=pzs, x=zps)
             fp = ipr.peak_find(zps, pzs)
             if isinstance(fp, str):
@@ -590,7 +571,6 @@ class CommandExecutor(QObject):
             self.finish_focus_finding()
             self.logg.error(f"Error running focus finding: {e}")
             return
-        self.finish_focus_finding()
 
     def finish_focus_finding(self):
         try:
@@ -599,8 +579,7 @@ class CommandExecutor(QObject):
             # self.devs.cam_set[self.cameras["focus_lock"]].stop_live()
             self.devs.slm.deactivate()
             self.lasers_off()
-            self.reset_piezo_positions()
-            self.logg.info("Focus finding stack acquired")
+            self.logg.info("Focus finding Finish")
         except Exception as e:
             self.logg.error(f"Error stopping focus finding: {e}")
 

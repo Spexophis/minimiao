@@ -17,20 +17,29 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 class CameraAcquisitionThread(threading.Thread):
 
-    def __init__(self, cam):
+    def __init__(self, cam, interval=0.05):
         super().__init__(daemon=True)
         self.cam = cam
-        self._stop_event = threading.Event()
+        self._running = False
         self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+        self.interval = interval
 
     def run(self):
-        while not self._stop_event.is_set():
-            with self.lock:
+        self._running = True
+        while self._running:
+            with self.condition:
+                self.condition.wait(timeout=self.interval)
+
+                if not self._running:
+                    break
+
                 self.cam.get_images()
-            time.sleep(0.02)
 
     def stop(self, timeout=5.0):
-        self._stop_event.set()
+        with self.condition:
+            self._running = False
+            self.condition.notify()  # Wake up thread immediately
         self.join(timeout=timeout)
         if self.is_alive():
             self.cam.logg.error(
@@ -39,6 +48,9 @@ class CameraAcquisitionThread(threading.Thread):
                 "hardware power-cycle may be required",
                 timeout,
             )
+
+    def is_running(self):
+        return self._running
 
 
 class CameraDataList:
@@ -226,13 +238,9 @@ class CameraDataList:
         with self._lock:
             return np.array(self.data_list) if self.data_list else None
 
-    def get_last_element(self, copy=False):
+    def get_last_element(self):
         with self._lock:
-            if not self.data_list:
-                return None
-            arr = self.data_list[-1]
-
-        return arr.copy() if copy else arr
+            return np.array(self.data_list[-1]) if self.data_list else None
 
     def on_update(self, callback):
         self.callback = callback

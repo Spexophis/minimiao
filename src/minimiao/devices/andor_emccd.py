@@ -385,18 +385,18 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_live(self):
-        # Abort hardware first so any in-flight SDK call in the thread returns
-        # quickly instead of blocking join() indefinitely.
-        ret = self.sdk.AbortAcquisition()
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info('Live image stopped')
-        else:
-            self.logg.error(atmcd_errors.Error_Codes(ret))
         if self.acq_thread is not None:
             self.acq_thread.stop()
             self.acq_thread = None
-        self.data = None
-        self.free_memory()
+        if self.data is not None:
+            self.data.close()
+            self.data = None
+        ret = self.sdk.AbortAcquisition()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info('Live image stopped')
+            self.free_memory()
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def get_images(self):
         if self.data is None:
@@ -453,19 +453,17 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_data_acquisition(self):
-        # Abort hardware first so any in-flight SDK call in the thread returns
-        # quickly instead of blocking join() indefinitely.
-        ret = self.sdk.AbortAcquisition()
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info('Acquisition stopped')
-        else:
-            self.logg.error(atmcd_errors.Error_Codes(ret))
         if self.acq_thread is not None:
             self.acq_thread.stop()
             self.acq_thread = None
         if self.data is not None:
             self.data.close()   # flush + join the background TIFF-writer thread
             self.data = None
+        ret = self.sdk.AbortAcquisition()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info('Acquisition stopped')
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
         self.free_memory()
 
     def get_data(self):
