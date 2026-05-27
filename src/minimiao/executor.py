@@ -18,6 +18,7 @@ from .utilities import image_processor as ipr
 class CommandExecutor(QObject):
     svd = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
+    sig_auto_focus = pyqtSignal(float)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
@@ -55,6 +56,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_piezo_move_usb.connect(self.set_piezo_positions_usb)
         self.ctrl_panel.Signal_piezo_move.connect(self.set_piezo_positions)
         self.ctrl_panel.Signal_focus_finding.connect(self.run_focus_finding)
+        self.sig_auto_focus.connect(self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue)
         # self.ctrl_panel.Signal_focus_locking.connect(self.run_focus_locking)
         # Cobolt Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
@@ -92,6 +94,8 @@ class CommandExecutor(QObject):
                 self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
 
             self.devs.emccd.load_preset_modes()
+
+            self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
 
             self.logg.info("Finish setting up controllers")
         except Exception as e:
@@ -518,14 +522,35 @@ class CommandExecutor(QObject):
                 df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
                 df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
 
-    def focus_finding(self):
+    def prepare_task(self, single=True):
+        self.update_trigger_parameters("imaging")
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.slm_seq = self.ctrl_panel.get_slm_sequence()
+        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
+        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
+        self.set_camera_roi("imaging")
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
+        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
+        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
+                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
+                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
+                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
+
+    def finish_task(self):
         try:
-            self.prepare_video("live")
-        except Exception as e:
-            self.logg.error(f"Error starting focus finding: {e}")
             self.devs.daq.stop_triggers()
+            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            self.devs.slm.deactivate()
             self.lasers_off()
-            return
+            self.logg.info("Focus Finding Finish")
+        except Exception as e:
+            self.logg.error(f"Error Stopping Focus Finding: {e}")
+
+    def focus_finding(self):
         try:
             pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
             center_pos, axis_length, step_size = pos_z[0], 0.96, 0.06
@@ -537,29 +562,35 @@ class CommandExecutor(QObject):
             self.devs.slm.activate()
             self.devs.cam_set[self.cameras["imaging"]].start_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
+            self.devs.piezo.move_position(2, zps[0])
             self.devs.daq.run_triggers()
+            deadline = time.time() + 2.0
+            while self.devs.cam_set[self.cameras["imaging"]].get_last_image() is None:
+                if time.time() > deadline:
+                    raise RuntimeError("Timeout waiting for first camera frame")
+                time.sleep(0.02)
             for i, z in enumerate(zps):
-                self.set_piezo_position_z(z, port="software")
-                time.sleep(0.1)
+                self.devs.piezo.move_position(2, z)
+                time.sleep(0.06)
+                self.devs.daq.run_triggers()
+                time.sleep(0.06)
                 temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
-                data.append(temp)
+                if temp is not None:
+                    data.append(temp)
                 # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].stop_live()
-            self.devs.slm.deactivate()
-            self.lasers_off()
+            self.finish_task()
             fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_widefield_stack.tif')
             tf.imwrite(fd, np.asarray(data))
             pzs = []
             for dat in data:
                 pzs.append(ipr.calculate_focus_measure_with_sobel(dat - dat.min()))
-            self.viewer.plot_trace(y=pzs, x=zps)
+            self.sig_plt.emit(list(pzs), list(zps))
             fp = ipr.peak_find(zps, pzs)
             if isinstance(fp, str):
                 self.logg.error(fp)
             else:
-                self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue(fp)
+                self.sig_auto_focus.emit(float(fp))
             # time.sleep(0.06)
             # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
             # fd = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + '_focus_calibration_stack.tif')
@@ -568,24 +599,21 @@ class CommandExecutor(QObject):
             #            metadata={'unit': 'um'})
             # self.p.foc_ctrl.calibrate(np.append(zps, fp), np.asarray(data_calib))
         except Exception as e:
-            self.finish_focus_finding()
-            self.logg.error(f"Error running focus finding: {e}")
-            return
-
-    def finish_focus_finding(self):
-        try:
-            self.devs.daq.stop_triggers()
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
             # self.devs.cam_set[self.cameras["focus_lock"]].stop_live()
-            self.devs.slm.deactivate()
-            self.lasers_off()
-            self.logg.info("Focus finding Finish")
-        except Exception as e:
-            self.logg.error(f"Error stopping focus finding: {e}")
+            self.finish_task()
+            self.logg.error(f"Error Running Focus Finding: {e}")
+            return
 
     @pyqtSlot()
     def run_focus_finding(self):
         self.vw.get_dialog(txt="Focus Finding")
+        try:
+            self.prepare_task()
+        except Exception as e:
+            self.logg.error(f"Error Starting Focus Finding: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
         self.run_task(task=self.focus_finding)
 
     @pyqtSlot(int)
@@ -593,6 +621,7 @@ class CommandExecutor(QObject):
         try:
             self.devs.dfm.set_dpp(self.devs.dfm.dpp_cmd[i])
             self.devs.dfm.current_cmd = i
+            self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[i])
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
@@ -600,6 +629,9 @@ class CommandExecutor(QObject):
     def set_zernike(self, iz: int, amp: float):
         try:
             self.devs.dfm.set_zm(iz, amp)
+            phase_temp = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd].copy()
+            phase_temp[iz] += amp
+            self.ao_panel.update_dm_display(phase_temp)
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
@@ -607,14 +639,14 @@ class CommandExecutor(QObject):
     def set_dm_flat(self):
         if int(self.ao_panel.get_cmd_index()) == self.devs.dfm.current_cmd:
             self.devs.dfm.write_flat_cmd(t=time.strftime("%Y_%m_%d_%H_%M"),
-                                         cmd=self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd])
+                                         cmd=self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
 
     @pyqtSlot()
     def update_dm(self):
         try:
-            self.devs.dfm.dm_cmd.append(self.devs.dfm.temp_cmd[-1])
+            self.devs.dfm.dpp_cmd.append(self.devs.dfm.temp_cmd[-1])
             self.ao_panel.update_cmd_index()
-            self.devs.dfm.set_dpp(self.devs.dfm.dm_cmd[-1])
+            self.devs.dfm.set_dpp(self.devs.dfm.dpp_cmd[-1])
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
@@ -627,21 +659,42 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
-    def sensorless_iteration(self, dms):
+    def single_acquire(self):
+        deadline = time.time() + 2.0
+        while self.devs.cam_set[self.cameras["imaging"]].get_last_image() is None:
+            if time.time() > deadline:
+                raise RuntimeError("Timeout waiting for first camera frame")
+            time.sleep(0.02)
+
+    def sensorless_iteration(self, amps):
         ims = []
-        for dmsp in dms:
-            self.devs.dfm.set_dpp(dmsp)
-            time.sleep(0.016)
+        for amp in amps:
+            self.devs.dfm.set_dpp(amp)
+            time.sleep(0.04)
             self.devs.daq.run_triggers()
-            time.sleep(0.032)
-            self.devs.daq.stop_triggers(_close=False)
-            ims.append(self.devs.camera.get_last_image())
+            time.sleep(0.1)
+            ims.append(self.devs.cam_set[self.cameras["imaging"]].get_last_image())
         return ims
+
+    @staticmethod
+    def image_assessment(mf, images):
+        if mf == "Max(Intensity)":
+            return [img.max() for img in images]
+        elif mf == "Sum(Intensity)":
+            return [img.sum() for img in images]
+        elif mf == "SNR(FFT)":
+            return [ipr.snr(img) for img in images]
+        elif mf == "HighPass(FFT)":
+            return [ipr.hpf(img) for img in images]
+        else:
+            return []
 
     def sensorless_iterations(self):
         try:
-            lpr, hpr, slf, mf, err = self.ao_panel.get_ao_parameters()
-            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dm_serial + '_ao_iterations_' + mf
+            lpr, hpr, mf, err = self.ao_panel.get_sensorless_parameters()
+            ipr.set_hpr(hpr)
+            ipr.set_lpr(lpr)
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dpp_model + '_ao_iterations_' + mf
             new_folder = os.path.join(self.path, name)
             os.makedirs(new_folder, exist_ok=True)
             self.logg.info(f'Directory {new_folder} has been created successfully.')
@@ -649,69 +702,45 @@ class CommandExecutor(QObject):
             self.logg.error(f'Error creating directory for sensorless iteration: {e}')
             return
         try:
-            vd_mod = self.ctrl_panel.get_live_mode()
-            self.prepare_video(vd_mod, True)
-        except Exception as e:
-            self.logg.error(f"Prepare sensorless iteration Error: {e}")
-            return
-        try:
-            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_ao_iteration()
-            md = self.ao_panel.get_img_wfs_method()
+            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_sensorless_iteration()
             amprange = [amp_start + step_number * amp_step for step_number in range(amp_step_number)]
             results = [('Mode', 'Amp', 'Metric')]
             za = []
             mv = []
             zp = [0] * self.devs.dfm.n_zernike
-            cmd = self.devs.dfm.dm_cmd[self.devs.dfm.current_cmd]
-            self.devs.camera.start_live()
-            time.sleep(0.1)
+            cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd]
+            self.devs.cam_set[self.cameras["imaging"]].start_live()
+            time.sleep(0.04)
             self.logg.info("Sensorless AO iterations start")
             self.devs.dfm.set_dpp(cmd)
-            time.sleep(0.016)
+            time.sleep(0.04)
             if err:
                 images = []
                 for i in range(8):
                     self.devs.daq.run_triggers()
-                    time.sleep(0.032)
-                    self.devs.daq.stop_triggers(_close=False)
-                    images.append(self.devs.camera.get_last_image())
-                if mf == "Max(Intensity)":
-                    mts = [img.max() for img in images]
-                if mf == "Sum(Intensity)":
-                    mts = [img.sum() for img in images]
-                if mf == "SNR(FFT)":
-                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
-                if mf == "HighPass(FFT)":
-                    mts = [ipr.hpf(img, hpr) for img in images]
-                if mf == "Selected(FFT)":
-                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
+                    time.sleep(0.1)
+                    images.append(self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+                mts = self.image_assessment(mf, images)
                 std = np.std(mts)
                 fn = new_folder + r"\original.tiff"
                 tf.imwrite(str(fn), np.asarray(images))
             else:
                 self.devs.daq.run_triggers()
-                time.sleep(0.032)
-                self.devs.daq.stop_triggers(_close=False)
+                time.sleep(0.1)
                 fn = new_folder + r"\original.tiff"
-                tf.imwrite(str(fn), self.devs.camera.get_last_image())
+                tf.imwrite(str(fn), self.devs.cam_set[self.cameras["imaging"]].get_last_image())
             for mode in range(mode_start, mode_stop + 1):
-                self.v.dialog_text.setText(f"Zernike mode #{mode}")
+                self.vw.dialog_text.setText(f"Zernike mode #{mode}")
                 labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
-                cmds = [self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, amp, method=md), cmd) for amp in
-                        amprange]
+                cmds = []
+                for amp in amprange:
+                    temp = cmd.copy()
+                    temp[mode] += amp
+                    cmds.append(temp)
                 images = self.sensorless_iteration(cmds)
-                if mf == "Max(Intensity)":
-                    mts = [img.max() for img in images]
-                if mf == "Sum(Intensity)":
-                    mts = [img.sum() for img in images]
-                if mf == "SNR(FFT)":
-                    mts = [ipr.snr(img, lpr, hpr, True) for img in images]
-                if mf == "HighPass(FFT)":
-                    mts = [ipr.hpf(img, hpr) for img in images]
-                if mf == "Selected(FFT)":
-                    mts = [ipr.selected_frequency(img, [slf, 2 * slf]) for img in images]
+                mts = self.image_assessment(mf, images)
                 self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
-                self.sig_plt.emit(amprange, mts)
+                self.sig_plt.emit(mts, amprange)
                 if err:
                     mts_err = [std] * len(mts)
                     pm = ipr.peak_find(amprange, mts, mts_err)
@@ -721,7 +750,7 @@ class CommandExecutor(QObject):
                     self.logg.error(f"zernike mode #{mode} " + pm)
                 else:
                     zp[mode] = pm
-                    cmd = self.devs.dfm.cmd_add(self.devs.dfm.get_zernike_cmd(mode, pm, method=md), cmd)
+                    cmd[mode] += pm
                     self.devs.dfm.set_dpp(cmd)
                     self.logg.info("set mode %d at value of %.4f" % (mode, pm))
                 for amp, mt in zip(amprange, mts):
@@ -733,25 +762,31 @@ class CommandExecutor(QObject):
                     for img, label in zip(images, labels):
                         tif.write(img, description=label)
             self.devs.dfm.set_dpp(cmd)
-            time.sleep(0.016)
+            time.sleep(0.04)
             self.devs.daq.run_triggers()
-            time.sleep(0.032)
-            self.devs.daq.stop_triggers(_close=False)
+            time.sleep(0.1)
             fn = new_folder + r"\final.tiff"
-            tf.imwrite(str(fn), self.devs.camera.get_last_image())
-            self.devs.dfm.dm_cmd.append(cmd)
+            tf.imwrite(str(fn), self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+            self.devs.dfm.dpp_cmd.append(cmd)
             self.ao_panel.update_cmd_index()
             i = int(self.ao_panel.get_cmd_index())
             self.devs.dfm.current_cmd = i
             self.devs.dfm.write_cmd(new_folder, '_')
             self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
+            self.finish_task()
         except Exception as e:
-            self.stop_video()
+            self.finish_task()
             self.logg.error(f"Sensorless AO Error: {e}")
             return
-        self.stop_video()
 
     @pyqtSlot()
     def run_sensorless_iteration(self):
         self.vw.get_dialog(txt="Sensorless Iteration")
+        try:
+            self.prepare_task()
+        except Exception as e:
+            self.logg.error(f"Error Starting Sensorless Iteration: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
         self.run_task(task=self.sensorless_iterations)

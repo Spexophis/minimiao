@@ -3,11 +3,45 @@
 # Licensed under the MIT License.
 
 
+from typing import Tuple
+
 import numpy as np
-from numpy.fft import fft2, fftshift
 from scipy.optimize import curve_fit
 from skimage import filters
-from typing import Tuple, Optional
+
+wl = 0.505  # wavelength in microns
+na = 1.3  # numerical aperture
+dx = 0.054  # pixel size in microns
+fs = 1 / dx  # Spatial sampling frequency, inverse microns
+lpr = 0.1
+hpr = 0.5
+
+
+def set_wl(wavelength):
+    global wl
+    wl = wavelength
+
+
+def set_na(numerical_aperture):
+    global na
+    na = numerical_aperture
+
+
+def set_dx(pixel_size):
+    global dx
+    global fs
+    dx = pixel_size
+    fs = 1 / dx
+
+
+def set_lpr(low_pass):
+    global lpr
+    lpr = low_pass
+
+
+def set_hpr(high_pass):
+    global hpr
+    hpr = high_pass
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -25,6 +59,70 @@ def rms(data):
 
 def img_statistics(img):
     return img.min(), img.max(), rms(img)
+
+
+def disc_array(shape=(128, 128), radi=64.0, origin=None, dtp=np.float64):
+    _nx = shape[0]
+    _ny = shape[1]
+    ox = _nx / 2
+    oy = _ny / 2
+    x = np.linspace(-ox, ox - 1, _nx)
+    y = np.linspace(-oy, oy - 1, _ny)
+    xv, yv = np.meshgrid(x, y)
+    rho = np.sqrt(xv ** 2 + yv ** 2)
+    disc = (rho < radi).astype(dtp)
+    if origin is not None:
+        s0 = origin[0] - int(_nx / 2)
+        s1 = origin[1] - int(_ny / 2)
+        disc = np.roll(np.roll(disc, int(s0), 0), int(s1), 1)
+    return disc
+
+
+def gaussian_filter(shape, sigma, pv, orig=None):
+    _nx, _ny = shape
+    if orig is None:
+        ux = _nx / 2.
+        uy = _ny / 2.
+    else:
+        ux, uy = orig
+    g = np.fromfunction(lambda i, j: np.exp(-((i - ux) ** 2. + (j - uy) ** 2.) / (2. * sigma ** 2.)), (_nx, _ny))
+    return pv * g
+
+
+def snr(img, relative=True, gau=True):
+    _ny, _nx = img.shape
+    df = fs / _nx
+    radius = (na / wl) / df
+    msk = disc_array(shape=(_nx, _ny), radi=0.9 * radius)
+    if gau:
+        lp = msk * gaussian_filter(shape=(_nx, _ny), sigma=lpr * radius, pv=1, orig=None)
+        hp = (1 - gaussian_filter(shape=(_nx, _ny), sigma=hpr * radius, pv=1, orig=None)) * msk
+    else:
+        lp = disc_array(shape=(_nx, _ny), radi=lpr * radius)
+        hp = msk - disc_array(shape=(_nx, _ny), radi=hpr * radius)
+    wft = np.fft.fftshift(np.fft.fft2(img))
+    if relative:
+        num = (np.abs(hp * wft)).sum() / (np.abs(wft * msk)).sum()
+        den = (np.abs(lp * wft)).sum() / (np.abs(wft * msk)).sum()
+        return num / den
+    else:
+        return (np.abs(hp * wft)).sum() / (np.abs(lp * wft)).sum()
+
+
+def hpf(img, relative=True, gau=True):
+    _nx, _ny = img.shape
+    df = fs / _nx
+    radius = (na / wl) / df
+    msk = disc_array(shape=(_nx, _ny), radi=0.9 * radius)
+    if gau:
+        hp = (1 - gaussian_filter(shape=(_nx, _ny), sigma=hpr * radius, pv=1, orig=None)) * msk
+    else:
+        hp = msk - disc_array(shape=(_nx, _ny), radi=hpr * radius)
+    wft = np.fft.fftshift(np.fft.fft2(img))
+    if relative:
+        return (np.abs(wft * hp)).sum() / (np.abs(wft * msk)).sum()
+    else:
+        return (np.abs(wft * hp)).sum()
 
 
 def get_profile(data, ax, norm=False):
@@ -816,4 +914,3 @@ def gauss_metric(img, s=True):
             return params[1]
     except Exception as e:
         return f"Gaussian Fitting Error: {e}"
-

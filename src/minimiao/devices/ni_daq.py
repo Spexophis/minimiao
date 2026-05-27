@@ -582,7 +582,12 @@ class NIDAQ:
 
                     if self._active.get(key, False):
                         _task.wait_until_done(WAIT_INFINITELY)
+                        _task.stop()
                         self._running[key] = False
+
+                if self.tasks.get("clock") is not None and self._running.get("clock", False):
+                    self.tasks["clock"].stop()
+                    self._running["clock"] = False
 
                 self.logg.info("Finite trigger sequence finished.")
 

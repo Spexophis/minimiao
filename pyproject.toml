@@ -23,6 +23,7 @@ dependencies = [
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
     "tifffile>=2025.5.10",
+    "xlsxwriter>=3.2.9",
 ]
 
 [tool.setuptools]
