@@ -672,7 +672,7 @@ class CommandExecutor(QObject):
             self.devs.dfm.set_dpp(amp)
             time.sleep(0.04)
             self.devs.daq.run_triggers()
-            time.sleep(0.1)
+            time.sleep(0.01)
             ims.append(self.devs.cam_set[self.cameras["imaging"]].get_last_image())
         return ims
 

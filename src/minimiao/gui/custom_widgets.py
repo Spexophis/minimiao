@@ -379,7 +379,7 @@ class RadioButtonWidget(QtWidgets.QRadioButton):
 
 
 class ComboBoxWidget(QtWidgets.QComboBox):
-    def __init__(self, list_items):
+    def __init__(self, list_items, minlen=24, maxlen=128):
         super().__init__()
         for item in list_items:
             self.addItem(item)
@@ -405,8 +405,8 @@ class ComboBoxWidget(QtWidgets.QComboBox):
             }
         ''')
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
-        self.setMinimumHeight(24)
-        self.setMaximumWidth(128)
+        self.setMinimumHeight(minlen)
+        self.setMaximumWidth(maxlen)
 
 class LineEditWidget(QtWidgets.QLineEdit):
     def __init__(self):

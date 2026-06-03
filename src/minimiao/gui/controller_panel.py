@@ -322,7 +322,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
 
-        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[])
+        self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[], maxlen=256)
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
 
