@@ -381,6 +381,7 @@ class CommandExecutor(QObject):
     def stop_video(self):
         try:
             self.devs.daq.stop_triggers()
+            time.sleep(0.04)
             self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.logg.info(r"Live Video Stopped")
             self.devs.slm.deactivate()
@@ -508,6 +509,7 @@ class CommandExecutor(QObject):
     def stop_acquisition(self):
         try:
             self.devs.daq.stop_triggers()
+            time.sleep(0.04)
             self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
             self.lasers_off()
             self.devs.slm.deactivate()
@@ -543,6 +545,7 @@ class CommandExecutor(QObject):
     def finish_task(self):
         try:
             self.devs.daq.stop_triggers()
+            time.sleep(0.04)
             self.devs.cam_set[self.cameras["imaging"]].stop_live()
             self.devs.slm.deactivate()
             self.lasers_off()
