@@ -107,7 +107,7 @@ class EMCCDCamera:
         self.cooler_on()
         self.set_trigger_mode(1)
         self.set_readout_mode(4)
-        self.set_frame_transfer(0)
+        # self.set_frame_transfer(0)
 
     def close(self):
         self.cooler_off()
