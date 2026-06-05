@@ -31,11 +31,11 @@ class NIDAQ:
         self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
         self.analog_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
-        self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3",
-                                 "Dev1/port0/line4", "Dev1/port0/line5", "Dev1/port0/line6"]
-        self.clock_external_start_terminal = "/Dev1/PFI1"
-        self.clock_counter_channel = "/Dev1/ctr0"
-        self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev3/PFI0"]
+        self.digital_channels = ["Dev2/port0/line0", "Dev2/port0/line1", "Dev2/port0/line3",
+                                 "Dev2/port0/line4", "Dev2/port0/line5", "Dev2/port0/line6"]
+        self.clock_external_start_terminal = "/Dev2/PFI1"
+        self.clock_counter_channel = "/Dev2/ctr0"
+        self.clock_counter_terminals = ["/Dev2/PFI12", "/Dev3/PFI0"]
         self.run_mode = None
         self.retriggered = False
         self.sequence_samples = None
@@ -256,7 +256,7 @@ class NIDAQ:
             # Use retriggerable counter output as sample clock
             self.tasks["digital"].timing.cfg_samp_clk_timing(
                 rate=self.sample_rate,
-                source=self.clock_counter_terminals[0],  # "/Dev1/PFI12"
+                source=self.clock_counter_terminals[0],  # "/Dev2/PFI12"
                 active_edge=Edge.RISING,
                 sample_mode=self.run_mode,
                 samps_per_chan=n_samples
@@ -306,7 +306,7 @@ class NIDAQ:
             - AO runs as a CONTINUOUS task with regeneration enabled.
             - AO uses /Dev3/PFI0 as its external sample clock.
             - /Dev3/PFI0 should receive the counter pulse train generated
-              on /Dev1/PFI12.
+              on /Dev2/PFI12.
             - Each external trigger causes the counter to emit exactly
               n_samples pulses, so exactly one AO sequence is output.
         """
@@ -341,7 +341,7 @@ class NIDAQ:
 
             # Use the retriggerable counter pulse train as AO sample clock.
             # In your current wiring:
-            #   Dev1/PFI12 --> Dev3/PFI0
+            #   Dev2/PFI12 --> Dev3/PFI0
             self.tasks["analog"].timing.cfg_samp_clk_timing(
                 rate=self.sample_rate,
                 source=self.clock_counter_terminals[1],  # "/Dev3/PFI0"

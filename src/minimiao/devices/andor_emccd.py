@@ -105,6 +105,9 @@ class EMCCDCamera:
     def _configure_camera(self):
         self.get_sn()
         self.cooler_on()
+        self.set_frame_transfer(1)
+        self.set_readout_mode(4)
+        self.set_trigger_mode(1)
 
     def close(self):
         self.cooler_off()
@@ -358,12 +361,9 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def prepare_live(self, rd=4, aq=5, tr=1, preset=2):
-        self.set_readout_mode(rd)
-        self.set_roi()
-        self.set_trigger_mode(tr)
+    def prepare_live(self, aq=5, preset=2):
         self.set_acquisition_mode(aq)
-        self.set_frame_transfer(1)
+        self.set_roi()
         self.set_preset_mode(preset)
         self.set_exposure_time()
         self.set_gain()
@@ -426,12 +426,9 @@ class EMCCDCamera:
         else:
             return None
 
-    def prepare_data_acquisition(self, rd=4, aq=5, tr=1, preset=2):
-        self.set_readout_mode(rd)
+    def prepare_data_acquisition(self, aq=5, preset=2):
         self.set_roi()
-        self.set_trigger_mode(tr)
         self.set_acquisition_mode(aq)
-        self.set_frame_transfer(1)
         self.set_preset_mode(preset)
         self.set_exposure_time()
         self.set_gain()
