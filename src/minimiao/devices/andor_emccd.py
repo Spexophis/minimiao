@@ -4,6 +4,7 @@
 
 
 import sys
+import time
 import numpy as np
 from pyAndorSDK2 import atmcd, atmcd_errors
 from minimiao import run_threads, logger
@@ -322,8 +323,10 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def get_acquisition_timings(self):
-        ret, self.t_exposure, self.t_accumulate, self.t_kinetic = self.sdk.GetAcquisitionTimings()
+        ret, _exposure, _accumulate, _kinetic = self.sdk.GetAcquisitionTimings()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.t_exposure, self.t_accumulate, self.t_kinetic = _exposure, _accumulate, _kinetic
+            self.fps = 1 / max(self.t_kinetic, self.t_exposure)
             self.logg.info("Get Acquisition Timings exposure = {} accumulate = {} kinetic = {}".format(self.t_exposure,
                                                                                                        self.t_accumulate,
                                                                                                        self.t_kinetic))
@@ -423,6 +426,51 @@ class EMCCDCamera:
     def get_last_image(self):
         if self.data is not None:
             return self.data.get_last_element()
+        else:
+            return None
+
+    def start_snap(self):
+        ret = self.sdk.PrepareAcquisition()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            ret = self.sdk.StartAcquisition()
+            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+                self.logg.info('Start snap shot')
+            else:
+                self.logg.error(atmcd_errors.Error_Codes(ret))
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+
+    def stop_snap(self):
+        ret = self.sdk.AbortAcquisition()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info('Snap shot stopped')
+            self.free_memory()
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+
+    def get_last_snap(self, timeout=1.2):
+        deadline = time.monotonic() + timeout
+        while self.check_new_acquisition() is None:
+            if time.monotonic() >= deadline:
+                self.logg.error("Timeout waiting for new camera frame")
+                return None
+            time.sleep(0.03)
+        ret, arr = self.sdk.GetMostRecentImage16(self.img_size)
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info("Get Most Recent Image16")
+            return np.reshape(arr, (self.pixels_x, self.pixels_y))
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+            return None
+
+    def check_new_acquisition(self):
+        ret, first, last = self.sdk.GetNumberNewImages()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            num = last - first + 1
+            if num > 0:
+                return True
+            else:
+                return None
         else:
             return None
 

@@ -61,8 +61,8 @@ class TriggerSequence:
         self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
         self.standby_time = 0.03893  # s
         self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
-        self.kinetic_time = 0.05  # s
-        self.kinetic_samples = int(np.ceil(self.kinetic_time * self.sample_rate))
+        self.frame_time = 0.05  # s
+        self.frame_samples = int(np.ceil(self.frame_time * self.sample_rate))
 
     @staticmethod
     def setup_logging():
@@ -113,7 +113,7 @@ class TriggerSequence:
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
 
-    def update_camera_parameters(self, initial_time=None, exposure_time=None, standby_time=None, kinetic_time=None):
+    def update_camera_parameters(self, initial_time=None, exposure_time=None, standby_time=None, frame_rate=None):
         if initial_time is not None:
             self.initial_time = initial_time
             self.initial_samples = int(np.ceil(self.initial_time * self.sample_rate))
@@ -123,9 +123,9 @@ class TriggerSequence:
         if standby_time is not None:
             self.standby_time = standby_time
             self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
-        if kinetic_time is not None:
-            self.kinetic_time = kinetic_time
-            self.kinetic_samples = int(np.ceil(self.kinetic_time * self.sample_rate))
+        if frame_rate is not None:
+            self.frame_time = 1 / frame_rate
+            self.frame_samples = int(np.ceil(self.frame_time * self.sample_rate))
 
     def update_slm_parameters(self, total_time=None, start_time=None, on_time=None, end_time=None, delay_time=None):
         if total_time is not None:
@@ -147,26 +147,21 @@ class TriggerSequence:
     def generate_digital_triggers(self, lasers, camera):
         cam_ind = camera + 3
         digital_channels = [2, cam_ind]
-        self.cycle_samples = max(self.slm_total_samples, self.kinetic_samples) + 2
+        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
         self.cycle_time = self.cycle_samples / self.sample_rate
         digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
         digital_triggers[0, :self.trigger_pulse_samples] = 1
         digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         return digital_triggers, digital_channels
 
-    def generate_digital_triggers_for_scan(self, lasers, camera):
-        digital_triggers, chs = self.generate_digital_triggers(lasers, camera)
-        if self.standby_samples > self.return_samples:
-            cycle_samples = digital_triggers.shape[1]
-        else:
-            compensate_samples = self.return_samples - self.standby_samples
-            cycle_samples = digital_triggers.shape[1] + compensate_samples
-            compensate_sequence = np.zeros((digital_triggers.shape[0], compensate_samples))
-            digital_triggers = np.concatenate((digital_triggers, compensate_sequence), axis=1)
-        return digital_triggers, cycle_samples, chs
-
     def generate_piezo_scan(self, lasers, camera):
-        digital_triggers, cycle_samples, dig_chs = self.generate_digital_triggers_for_scan(lasers, camera)
+        cam_ind = camera + 3
+        digital_channels = [2, cam_ind]
+        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
+        self.cycle_time = self.cycle_samples / self.sample_rate
+        digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
+        digital_triggers[0, :self.trigger_pulse_samples] = 1
+        digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         pos = 1
         pz_chs = []
         for i in range(3):
@@ -183,7 +178,7 @@ class TriggerSequence:
             for i in range(n):
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
-        return digital_triggers, convert_list(piezo_sequences), dig_chs, pz_chs, pos
+        return digital_triggers, convert_list(piezo_sequences), digital_channels, pz_chs, pos
 
 
 def convert_list(arrays):

@@ -345,7 +345,7 @@ class CommandExecutor(QObject):
         self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
                                           standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
         dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
@@ -488,7 +488,7 @@ class CommandExecutor(QObject):
         self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
                                           standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
         dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
@@ -538,7 +538,7 @@ class CommandExecutor(QObject):
         self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
                                           standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          kinetic_time=self.devs.cam_set[self.cameras["imaging"]].t_kinetic)
+                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
         dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
 
@@ -546,7 +546,7 @@ class CommandExecutor(QObject):
         try:
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            self.devs.cam_set[self.cameras["imaging"]].stop_snap()
             self.devs.slm.deactivate()
             self.lasers_off()
             self.logg.info("Focus Finding Finish")
@@ -563,21 +563,18 @@ class CommandExecutor(QObject):
             data = []
             # data_calib = []
             self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_live()
+            self.devs.cam_set[self.cameras["imaging"]].start_snap()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
             self.devs.piezo.move_position(2, zps[0])
             self.devs.daq.run_triggers()
-            deadline = time.time() + 2.0
-            while self.devs.cam_set[self.cameras["imaging"]].get_last_image() is None:
-                if time.time() > deadline:
-                    raise RuntimeError("Timeout waiting for first camera frame")
-                time.sleep(0.02)
+            time.sleep(0.04)
+            temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
             for i, z in enumerate(zps):
                 self.devs.piezo.move_position(2, z)
                 time.sleep(0.06)
                 self.devs.daq.run_triggers()
                 time.sleep(0.06)
-                temp = self.devs.cam_set[self.cameras["imaging"]].get_last_image()
+                temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
                 if temp is not None:
                     data.append(temp)
                 # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
@@ -662,21 +659,16 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"DM Error: {e}")
 
-    def single_acquire(self):
-        deadline = time.time() + 2.0
-        while self.devs.cam_set[self.cameras["imaging"]].get_last_image() is None:
-            if time.time() > deadline:
-                raise RuntimeError("Timeout waiting for first camera frame")
-            time.sleep(0.02)
-
     def sensorless_iteration(self, amps):
         ims = []
         for amp in amps:
             self.devs.dfm.set_dpp(amp)
             time.sleep(0.04)
             self.devs.daq.run_triggers()
-            time.sleep(0.01)
-            ims.append(self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+            time.sleep(0.04)
+            temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
+            if temp is not None:
+                ims.append(temp)
         return ims
 
     @staticmethod
@@ -712,7 +704,8 @@ class CommandExecutor(QObject):
             mv = []
             zp = [0] * self.devs.dfm.n_zernike
             cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd]
-            self.devs.cam_set[self.cameras["imaging"]].start_live()
+            self.devs.slm.activate()
+            self.devs.cam_set[self.cameras["imaging"]].start_snap()
             time.sleep(0.04)
             self.logg.info("Sensorless AO iterations start")
             self.devs.dfm.set_dpp(cmd)
@@ -721,17 +714,20 @@ class CommandExecutor(QObject):
                 images = []
                 for i in range(8):
                     self.devs.daq.run_triggers()
-                    time.sleep(0.1)
-                    images.append(self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+                    time.sleep(0.04)
+                    temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
+                    if temp is not None:
+                        images.append(temp)
                 mts = self.image_assessment(mf, images)
                 std = np.std(mts)
                 fn = new_folder + r"\original.tiff"
-                tf.imwrite(str(fn), np.asarray(images))
+                tf.imwrite(str(fn), np.asarray(images, dtype=np.float16))
             else:
                 self.devs.daq.run_triggers()
-                time.sleep(0.1)
+                time.sleep(0.04)
+                temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
                 fn = new_folder + r"\original.tiff"
-                tf.imwrite(str(fn), self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+                tf.imwrite(str(fn), temp.astype(np.float16))
             for mode in range(mode_start, mode_stop + 1):
                 self.vw.dialog_text.setText(f"Zernike mode #{mode}")
                 labels = ["zm%0.2d_amp%.4f" % (mode, amp) for amp in amprange]
@@ -763,13 +759,14 @@ class CommandExecutor(QObject):
                 fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
                 with tf.TiffWriter(fn) as tif:
                     for img, label in zip(images, labels):
-                        tif.write(img, description=label)
+                        tif.write(img.astype(np.float16), description=label)
             self.devs.dfm.set_dpp(cmd)
             time.sleep(0.04)
             self.devs.daq.run_triggers()
-            time.sleep(0.1)
+            time.sleep(0.04)
             fn = new_folder + r"\final.tiff"
-            tf.imwrite(str(fn), self.devs.cam_set[self.cameras["imaging"]].get_last_image())
+            temp = self.devs.cam_set[self.cameras["imaging"]].get_last_snap()
+            tf.imwrite(str(fn), temp.astype(np.float16))
             self.devs.dfm.dpp_cmd.append(cmd)
             self.ao_panel.update_cmd_index()
             i = int(self.ao_panel.get_cmd_index())

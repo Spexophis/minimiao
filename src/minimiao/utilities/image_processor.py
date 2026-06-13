@@ -141,6 +141,7 @@ def get_profile(data, ax, norm=False):
 
 
 def calculate_focus_measure_with_sobel(image):
+    image = image - image.min()
     edges = filters.sobel(image)
     focus_measure = np.var(edges)
     return focus_measure
