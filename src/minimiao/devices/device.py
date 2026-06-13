@@ -1,16 +1,12 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
 
 from minimiao import logger
-from . import andor_emccd
+
 from . import cobolt_laser
-from . import fdd_slm
-from . import mcl_deck
-from . import mcl_piezo
-from . import ni_daq
-from . import phaseform_dpp
+from . import teledyne_kinetix
+from . import hamamatsu_slm
 
 
 class DeviceManager:
@@ -18,44 +14,25 @@ class DeviceManager:
         self.config = config
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
-        self.cam_set = {}
         try:
-            self.emccd = andor_emccd.EMCCDCamera(logg=self.logg)
-            self.cam_set[0] = self.emccd
+            self.camera = teledyne_kinetix.KinetixCamera(logg=self.logg, config=self.config)
         except Exception as e:
             from . import mock_cam
-            self.cam_set[0] = mock_cam.MockCamera()
-            self.logg.error(f"{e}")
-        try:
-            self.slm = fdd_slm.QXGA(logg=self.logg, config=self.config)
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.dfm = phaseform_dpp.DPP(logg=self.logg, config=self.config, path=self.data_folder)
-        except Exception as e:
+            self.camera = mock_cam.MockCamera()
             self.logg.error(f"{e}")
         try:
             self.laser = cobolt_laser.CoboltLaser(logg=self.logg, config=self.config)
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.daq = ni_daq.NIDAQ(logg=self.logg)
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.deck = mcl_deck.MCLMicroDrive(logg=self.logg)
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.piezo = mcl_piezo.MCLNanoDrive(logg=self.logg)
+            self.slm = hamamatsu_slm.HamamatsuSLM(logg=self.logg, config=self.config)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")
 
     def close(self):
         try:
-            for key in self.cam_set.keys():
-                self.cam_set[key].close()
+            self.camera.close()
         except Exception as e:
             self.logg.error(f"{e}")
         try:
@@ -66,28 +43,6 @@ class DeviceManager:
             self.slm.close()
         except Exception as e:
             self.logg.error(f"{e}")
-        try:
-            self.dfm.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.daq.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.deck.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-        try:
-            self.piezo.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
 
 if __name__ == '__main__':

@@ -1,10 +1,8 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
 
 import threading
-import time
 import traceback
 from collections import deque
 from pathlib import Path
@@ -43,9 +41,7 @@ class CameraAcquisitionThread(threading.Thread):
         self.join(timeout=timeout)
         if self.is_alive():
             self.cam.logg.error(
-                "CameraAcquisitionThread did not exit within %.1fs; "
-                "camera USB may be frozen;"
-                "hardware power-cycle may be required",
+                "CameraAcquisitionThread did not exit within %.1fs; ",
                 timeout,
             )
 
@@ -56,11 +52,11 @@ class CameraAcquisitionThread(threading.Thread):
 class CameraDataList:
 
     def __init__(
-        self,
-        max_length,
-        save_to_disk=False,
-        save_dir=None,
-        file_prefix="stack",
+            self,
+            max_length,
+            save_to_disk=False,
+            save_dir=None,
+            file_prefix="stack",
     ):
         self.max_length = max_length
         self.save_to_disk = save_to_disk
@@ -244,62 +240,6 @@ class CameraDataList:
 
     def on_update(self, callback):
         self.callback = callback
-
-
-class FFTWorker(QThread):
-    fft_ready = pyqtSignal(object)
-
-    def __init__(self, fps=10, parent=None):
-        super().__init__(parent)
-        self.fps = float(fps)
-        self._running = True
-        self._latest = None
-        self._win = None  # cached window for ROI
-
-    def stop(self):
-        self._running = False
-        self.wait(2)
-
-    def push_frame(self, frame_u16: np.ndarray):
-        if frame_u16 is None or frame_u16.ndim != 2:
-            return
-        f = frame_u16
-        self._latest = np.array(f, copy=True)
-
-    def _ensure_window(self, n: int):
-        if self._win is None or self._win.shape[0] != n:
-            w1 = np.hanning(n).astype(np.float32)
-            self._win = np.outer(w1, w1)
-
-    def run(self):
-        period = 1.0 / max(self.fps, 0.1)
-        next_t = time.perf_counter()
-
-        while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
-
-            if self._latest is None:
-                continue
-
-            img = self._latest
-            n = img.shape[0]
-            self._ensure_window(n)
-
-            ft = np.fft.fftshift(np.fft.fft2(img * self._win))
-            mag = np.log1p(np.abs(ft)).astype(np.float32)
-
-            mn = float(mag.min())
-            mx = float(mag.max())
-            if mx <= mn:
-                out = np.zeros_like(mag, dtype=np.uint16)
-            else:
-                out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
-
-            self.fft_ready.emit(out)
 
 
 class TaskWorker(QThread):

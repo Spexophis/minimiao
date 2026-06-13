@@ -1,9 +1,6 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-
-from collections import deque
 
 import numpy as np
 import pyqtgraph as pg
@@ -57,8 +54,6 @@ class LiveViewer(QWidget):
         self.h = 1024
         self.w = 1024
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
-        self.fft_mode = False
-        self.fft_worker = None
         self.view_stack.setCurrentIndex(0)
         self._setup_signal_connections()
 
@@ -105,7 +100,7 @@ class LiveViewer(QWidget):
 
         controls = QWidget()
         row = QHBoxLayout(controls)
-        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image", "FFT"])
+        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image"])
         self.QSlider_black = cw.SliderWidget(0, 65535, 0)
         self.QSpinBox_black = cw.SpinBoxWidget(0, 65535, 1, 0)
         self.QSlider_white = cw.SliderWidget(0, 65535, 65535)
@@ -167,8 +162,6 @@ class LiveViewer(QWidget):
 
     def switch_camera(self, h, w):
         self.h, self.w = h, w
-        # Disconnect the outgoing pool's slots before replacing it; without this
-        # every call adds a new connection and old pool objects accumulate.
         try:
             self.image_viewer.frameConsumed.disconnect(self.pool.release)
             self.image_viewer.frameDiscarded.disconnect(self.pool.release)
@@ -195,7 +188,7 @@ class LiveViewer(QWidget):
 
         idx = self.pool.acquire()
         if idx is None:
-            return  # drop if GUI behind
+            return
 
         dst = self.pool.buffer(idx)
         np.copyto(dst, frame, casting="no")
@@ -224,11 +217,6 @@ class LiveViewer(QWidget):
     @pyqtSlot(int)
     def on_frame_idx(self, idx: int):
         self.image_viewer.set_frame(self.pool.buffer(idx), token=idx)
-        if self.fft_mode:
-            self.fft_worker.push_frame(self.pool.buffer(idx))
-
-    def on_fft_frame(self, frame_u16):
-        self.fft_viewer.set_frame(frame_u16)
 
     def plot_trace(self, y, x=None, overlay=False):
         y = np.asarray(y)

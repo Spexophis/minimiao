@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
@@ -9,6 +8,7 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from . import custom_widgets as cw
 from . import controller_panel, ao_panel, viewer_window
+from minimiao import logger
 
 
 class MainWindow(QMainWindow):
@@ -22,12 +22,6 @@ class MainWindow(QMainWindow):
         self._set_dark_theme()
         self._setup_ui()
         self.dialog, self.dialog_text = None, None
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def closeEvent(self, event, **kwargs):
         self.aboutToClose.emit()

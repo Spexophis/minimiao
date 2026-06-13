@@ -1,20 +1,19 @@
-# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
 
 import datetime
 import getpass
-import logging
+import json
 import os
 import sys
-import json
+
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
-from .devices import device
 from . import executor, logger
-from .gui import main_window
 from .computations import computator
+from .devices import device
+from .gui import main_window
 
 
 def setup_folder():
