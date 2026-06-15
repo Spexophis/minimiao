@@ -11,7 +11,7 @@ from minimiao import logger
 from . import custom_widgets as cw
 
 
-class AOPanel(QWidget):
+class HGPanel(QWidget):
 
     def __init__(self, logg, parent=None):
         super().__init__(parent)
@@ -45,6 +45,39 @@ class AOPanel(QWidget):
 
         layout.addWidget(splitter)
         self.setLayout(layout)
+
+    def _create_cgh_panel(self):
+        group = cw.GroupWidget()
+        cgh_scroll_area, cgh_scroll_layout = cw.create_scroll_area("G")
+
+        self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
+        self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
+        self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 128)
+        self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(0, 128, 1, 1, 7)
+        self.QSpinBox_CGH_CenterX = cw.SpinBoxWidget(0, 2048, 1, 600)
+        self.QSpinBox_CGH_CenterY = cw.SpinBoxWidget(0, 2048, 1, 395)
+        self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
+        self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
+
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('CGH Computation')), 0, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Load, 2, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Pick, 3, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Iterations')), 2, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_Iteration, 2, 2, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Magnification')), 3, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_CGH_Magnification, 3, 2, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-X')), 4, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterX, 4, 2, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-Y')), 5, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(cgh_scroll_area)
+        group.setLayout(group_layout)
+        return group
 
     def _create_plot_widgets(self):
         layout_plot = QVBoxLayout()

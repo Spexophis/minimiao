@@ -24,7 +24,7 @@ class CommandExecutor(QObject):
         self.vw = cwd
         self.ctrl_panel = self.vw.ctrl_panel
         self.viewer = self.vw.viewer
-        self.ao_panel = self.vw.ao_panel
+        self.ao_panel = self.vw.hg_panel
         self.trg = cmp.trg
         self.path = path
         self.logg = logger or self.setup_logging()
@@ -89,25 +89,6 @@ class CommandExecutor(QObject):
         try:
             self.devs.camera.get_temperature()
             self.ctrl_panel.display_emccd_temperature(self.devs.camera.temperature)
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
-
-    @pyqtSlot(bool)
-    def switch_camera_cooler(self, sw: bool):
-        if sw:
-            self.switch_camera_cooler_on()
-        else:
-            self.switch_camera_cooler_off()
-
-    def switch_camera_cooler_on(self):
-        try:
-            self.devs.camera.cooler_on()
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
-
-    def switch_camera_cooler_off(self):
-        try:
-            self.devs.camera.cooler_off()
         except Exception as e:
             self.logg.error(f"CCD Camera Error: {e}")
 

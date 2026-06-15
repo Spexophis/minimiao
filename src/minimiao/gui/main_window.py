@@ -7,7 +7,7 @@ import os
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 from . import custom_widgets as cw
-from . import controller_panel, ao_panel, viewer_window
+from . import controller_panel, hg_panel, viewer_window
 from minimiao import logger
 
 
@@ -26,22 +26,22 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event, **kwargs):
         self.aboutToClose.emit()
         self.ctrl_panel.save_spinbox_values()
-        self.ao_panel.save_spinbox_values()
+        self.hg_panel.save_spinbox_values()
         super().closeEvent(event)
 
     def _setup_ui(self):
         self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
-        self.ctrl_dock = cw.DockWidget("Control Panel")
+        self.ctrl_dock = cw.DockWidget("Ctrl Panel")
         self.ctrl_dock.setWidget(self.ctrl_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.ctrl_dock)
 
         self.viewer = viewer_window.LiveViewer(self.config, self.logg)
         self.setCentralWidget(self.viewer)
 
-        self.ao_panel = ao_panel.AOPanel(self.config, self.logg)
-        self.ao_dock = cw.DockWidget("AO Panel")
-        self.ao_dock.setWidget(self.ao_panel)
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.ao_dock)
+        self.hg_panel = hg_panel.HGPanel(self.config, self.logg)
+        self.hg_dock = cw.DockWidget("HG Panel")
+        self.hg_dock.setWidget(self.hg_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.hg_dock)
 
     def _set_dark_theme(self):
         dark_stylesheet = """
