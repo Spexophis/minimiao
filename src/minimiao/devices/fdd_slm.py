@@ -175,22 +175,22 @@ class QXGA:
             self.logg.info("500us_lit_pair")
             t_total = 2 * 810.667e-6
             t_on = 2 * 499.947e-6 + 310.72e-6
-            t_end = 770.133e-6 + t_total
+            t_end = 770.133e-6 + t_total / 2
         elif "5ms_lit_pair" in slm_seq:
             self.logg.info("5ms_lit_pair")
             t_total = 2 * 5310.72e-6
             t_on = 2 * 5000.0e-6 + 310.72e-6
-            t_end = 5270.187e-6 + t_total
+            t_end = 5270.187e-6 + t_total / 2
         elif "10ms_lit_pair" in slm_seq:
             self.logg.info("10ms_lit_pair")
             t_total = 2 * 10310.72e-6
             t_on = 2 * 10000.0e-6 + 310.72e-6
-            t_end = 10270.187e-6 + t_total
+            t_end = 10270.187e-6 + t_total / 2
         elif "20ms_lit_pair" in slm_seq:
             self.logg.info("20ms_lit_pair")
             t_total = 2 * 20310.72e-6
             t_on = 2 * 20000.0e-6 + 310.72e-6
-            t_end = 20270.187e-6 + t_total
+            t_end = 20270.187e-6 + t_total / 2
         elif "5ms_dark_pair" in slm_seq:
             self.logg.info("5ms_dark_pair")
             t_total = 5310.72e-6

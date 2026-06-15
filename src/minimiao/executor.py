@@ -464,17 +464,18 @@ class CommandExecutor(QObject):
             else:
                 file_name = tim + "_" + acq_mod
             try:
-                self.prepare_acquisition()
+                pn = self.prepare_acquisition(acq_mod, acq_num)
             except Exception as e:
                 self.logg.error(f"Error preparing widefield: {e}")
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
-            self.start_acquisition(file_name, acq_num)
+            print(f"pn {pn}")
+            self.start_acquisition(file_name, pn)
         else:
             self.stop_acquisition()
 
-    def prepare_acquisition(self):
+    def prepare_acquisition(self, aqm, aqn):
         self.update_trigger_parameters("imaging")
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
@@ -489,11 +490,33 @@ class CommandExecutor(QObject):
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
                                           standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
                                           frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
+        if aqm == "2D_WideField" or "2D_SIM":
+            print(aqm)
+            dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+            pos = aqn
+            print(pos)
+        elif aqm == "3D_WideField":
+            print(aqm)
+            dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(1, self.lasers, self.cameras["imaging"])
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
+                                         analog_sequences=ptr, analog_channels=pchs,
+                                         finite=False, trg=False)
+            print(pos)
+        elif aqm == "3D_SIM":
+            print(aqm)
+            dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(aqn, self.lasers, self.cameras["imaging"])
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
+                                         analog_sequences=ptr, analog_channels=pchs,
+                                         finite=False, trg=False)
+            pos *= aqn
+            print(pos)
+        else:
+            raise Exception(f"Invalid Acquisition Mode")
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
                                   self.devs.cam_set[self.cameras["imaging"]].pixels_y)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+        return pos
 
     def start_acquisition(self, labl: str, acq_num: int):
         try:

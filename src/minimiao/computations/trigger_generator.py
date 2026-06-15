@@ -22,7 +22,7 @@ class TriggerSequence:
         # piezo scanner
         self.piezo_conv_factors = [10., 10., 10.]
         self.piezo_steps = [0.032, 0.032, 0.16]
-        self.piezo_ranges = [2.0, 2.0, 0.0]
+        self.piezo_ranges = [0.16, 0.16, 0.8]
         self.piezo_positions = [50., 50., 50.]
         self.piezo_return_time = 0.05
         self.return_samples = int(np.ceil(self.piezo_return_time * self.sample_rate))
@@ -48,11 +48,11 @@ class TriggerSequence:
         self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
         self.slm_start_time = 270.187e-6  # s
         self.slm_start_samples = round(self.slm_start_time * self.sample_rate)
-        self.slm_total_time = 0  # s
+        self.slm_total_time = 2 * 20310.72e-6  # s
         self.slm_total_samples = round(self.slm_total_time * self.sample_rate)
-        self.slm_end_time = 0  # s
+        self.slm_end_time = 20270.187e-6 + self.slm_total_time / 2  # s
         self.slm_end_samples = round(self.slm_end_time * self.sample_rate)
-        self.slm_on_time = 0  # s
+        self.slm_on_time = 2 * 20000.0e-6 + 310.72e-6  # s
         self.slm_on_samples = round(self.slm_on_time * self.sample_rate)
         # camera
         self.initial_time = 0.00159  # s
@@ -154,14 +154,17 @@ class TriggerSequence:
         digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         return digital_triggers, digital_channels
 
-    def generate_piezo_scan(self, lasers, camera):
+    def generate_piezo_scan(self, num, lasers, camera):
         cam_ind = camera + 3
         digital_channels = [2, cam_ind]
         self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
         self.cycle_time = self.cycle_samples / self.sample_rate
-        digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
-        digital_triggers[0, :self.trigger_pulse_samples] = 1
-        digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
+        stage_samples = (num - 1) * self.cycle_samples + max(self.slm_end_samples + self.return_samples, self.frame_samples)
+        digital_triggers = np.zeros((2, stage_samples), dtype=np.uint8)
+        for i in range(num):
+            start = i * self.cycle_samples
+            digital_triggers[0, start:start + self.trigger_pulse_samples] = 1
+            digital_triggers[1, start + self.slm_start_samples:start + self.slm_start_samples + self.trigger_pulse_samples] = 1
         pos = 1
         pz_chs = []
         for i in range(3):
@@ -173,7 +176,7 @@ class TriggerSequence:
         piezo_sequences = [np.empty((0,)) for _ in range(len(pz_chs))]
         for n, pch in enumerate(pz_chs):
             piezo_sequences[n] = np.repeat(self.piezo_scan_positions[pch], digital_triggers.shape[1])
-            piezo_sequences[n] = shift_array(piezo_sequences[n], max(self.standby_samples, self.return_samples),
+            piezo_sequences[n] = shift_array(piezo_sequences[n], self.return_samples,
                                              fill=piezo_sequences[n][0], direction="backward")
             for i in range(n):
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
