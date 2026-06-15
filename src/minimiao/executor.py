@@ -340,7 +340,7 @@ class CommandExecutor(QObject):
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
         self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on + 5e-6
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
         self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
@@ -483,7 +483,7 @@ class CommandExecutor(QObject):
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
         self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
+        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on + 5e-6
         self.devs.cam_set[self.cameras["imaging"]].prepare_live()
         self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
