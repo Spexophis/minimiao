@@ -470,7 +470,6 @@ class CommandExecutor(QObject):
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
-            print(f"pn {pn}")
             self.start_acquisition(file_name, pn)
         else:
             self.stop_acquisition()
@@ -490,27 +489,21 @@ class CommandExecutor(QObject):
                                           exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
                                           standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
                                           frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
-        if aqm == "2D_WideField" or "2D_SIM":
-            print(aqm)
+        if aqm == "2D_WideField" or aqm == "2D_SIM":
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
             pos = aqn
-            print(pos)
         elif aqm == "3D_WideField":
-            print(aqm)
             dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(1, self.lasers, self.cameras["imaging"])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
-            print(pos)
         elif aqm == "3D_SIM":
-            print(aqm)
             dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(aqn, self.lasers, self.cameras["imaging"])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
             pos *= aqn
-            print(pos)
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
