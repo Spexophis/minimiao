@@ -9,19 +9,16 @@ from minimiao import logger
 
 class CoboltLaser:
 
-    def __init__(self, logg=None, config=None):
+    def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
-        self.config = config or self.load_configs()
-        laser_dict = {}
-        for las, inf in self.config["Light Sources"]["Lasers"]["Cobolt"].items():
-            laser_dict[las] = inf["Serial"]
+        laser_dict = {"473": "32010"}
         self.lasers, self._h = self._initiate_lasers(laser_dict)
 
     def _initiate_lasers(self, laser_dict):
         lasers = {}
-        for laser, com_port in laser_dict.items():
+        for laser, sn in laser_dict.items():
             try:
-                lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=com_port)
+                lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=sn)
                 self.logg.info("{} Laser Connected".format(laser))
             except Exception as e:
                 self.logg.error(f"Laser Error: {e}")
@@ -40,44 +37,31 @@ class CoboltLaser:
         logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
         return logging
 
-    @staticmethod
-    def load_configs():
-        import json
-        config_file = input("Enter configuration file directory: ")
-        with open(config_file, 'r') as f:
-            cfg = json.load(f)
-        return cfg
-
     def laser_off(self, laser):
         if laser == "all":
             for key, _l in self.lasers.items():
-                _l.send_cmd('l0')
+                _l.turn_off()
         else:
             for ind, ln in enumerate(laser):
                 if self._h.get(ln, False):
-                    self.lasers[ln].send_cmd('l0')
+                    self.lasers[ln].turn_off()
 
     def laser_on(self, laser):
         if laser == "all":
             for key, _l in self.lasers.items():
-                _l.send_cmd('l1')
+                _l.turn_on()
         else:
             for ind, ln in enumerate(laser):
                 if self._h.get(ln, False):
-                    self.lasers[ln].send_cmd('l1')
+                    self.lasers[ln].turn_on()
 
-    def set_constant_power(self, laser, power):
+    def set_constant_power(self, laser: list, power: list):
         for ind, ln in enumerate(laser):
             if self._h.get(ln, False):
                 self.lasers[ln].constant_power(power[ind])
 
-    def set_constant_current(self, laser, current):
+    def set_modulation_mode(self, laser: list, pws: list):
         for ind, ln in enumerate(laser):
             if self._h.get(ln, False):
-                self.lasers[ln].constant_current(current[ind])
-
-    def set_modulation_mode(self, laser, pw):
-        for ind, ln in enumerate(laser):
-            if self._h.get(ln, False):
-                self.lasers[ln].modulation_mode(pw[ind])
-                self.lasers[ln].digital_modulation(enable=1)
+                self.lasers[ln].digital_modulation(1)
+                self.lasers[ln].modulation_mode(pws[ind])

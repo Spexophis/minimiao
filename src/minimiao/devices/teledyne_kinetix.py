@@ -2,7 +2,6 @@
 # Licensed under the MIT License.
 
 
-import numpy as np
 from pyvcam import pvc
 from pyvcam.camera import Camera
 from pyvcam import constants as pvc_consts
@@ -47,16 +46,6 @@ Clear_Mode = {
 class KinetixCamera:
     """
     Teledyne Photometrics Kinetix22 sCMOS camera.
-
-    Architecture mirrors EMCCDCamera in andor_emccd.py:
-      - CameraSettings inner class holds all configurable parameters
-      - __getattr__ delegates attribute lookups to _settings
-      - prepare_live / start_live / stop_live for display
-      - prepare_data_acquisition / start_data_acquisition / stop_data_acquisition for saving
-      - get_images() is called by CameraAcquisitionThread every 20 ms
-
-    PVCAM parameter ordering rule (must be respected on every port change):
-      readout_port → speed → gain
     """
 
     class CameraSettings:
@@ -66,22 +55,22 @@ class KinetixCamera:
             self.temp_setpoint = -10.0       # target, °C (Kinetix22 nominal: -10 °C air)
 
             # --- Exposure ---
-            self.t_exposure = 20             # ms  (cam.exp_time unit)
+            self.t_exposure = 10             # ms  (cam.exp_time unit)
 
             # --- ROI (in unbinned sensor pixels, 0-indexed) ---
             self.s1 = 0                      # serial (x) start
-            self.s2 = 5119                   # serial (x) end
+            self.s2 = 2399                   # serial (x) end
             self.p1 = 0                      # parallel (y) start
-            self.p2 = 5119                   # parallel (y) end
+            self.p2 = 2400                   # parallel (y) end
 
             # --- Binning ---
             self.s_bin = 1                   # serial binning factor
             self.p_bin = 1                   # parallel binning factor
 
             # --- Derived image dimensions (updated by set_roi) ---
-            self.pixels_x = 5120             # output image width  (serial)
-            self.pixels_y = 5120             # output image height (parallel)
-            self.img_size = 5120 * 5120
+            self.pixels_x = 2400             # output image width  (serial)
+            self.pixels_y = 2400             # output image height (parallel)
+            self.img_size = self.pixels_x * self.pixels_y
             self.ps = 6.5                    # effective pixel size, μm
 
             # --- Readout configuration ---
@@ -97,7 +86,7 @@ class KinetixCamera:
         self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.cam = None
-        self.camera_name = self.config["Detector"]["Teledyne Kinetix22 sCMOS"]["camera name"]
+        self.camera_name = 'PMPCIECam00'
         self._last_frame_count = -1
         self.data = None
         self.acq_thread = None
@@ -300,7 +289,7 @@ class KinetixCamera:
             except Exception as e:
                 self.logg.error(f"Error setting expose-out mode: {e}")
 
-    def set_exposure_time(self, t_ms=None):
+    def set_exposure_time(self, t_ms=10):
         """Set exposure time in milliseconds."""
         if t_ms is not None:
             self._settings.t_exposure = int(t_ms)
@@ -330,9 +319,8 @@ class KinetixCamera:
         except Exception as e:
             self.logg.error(f"Error reading pixel time: {e}")
 
-    def prepare_live(self, port=0, speed=0, gain=1,
-                     exp_mode=pvc_consts.TIMED_MODE,
-                     expose_out=pvc_consts.EXPOSE_OUT_ALL_ROWS):
+    def prepare_live(self, port=1, speed=0, gain=1,
+                     exp_mode=1792, expose_out=0):
         """Configure camera for live / preview acquisition."""
         self.set_readout_port(port)
         self.set_speed(speed)

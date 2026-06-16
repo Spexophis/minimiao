@@ -20,6 +20,7 @@ dependencies = [
     "pyopengl-accelerate>=3.1.10",
     "pyqt6==6.9.1",
     "pyqtgraph>=0.14.0",
+    "pyvcam>=2.3.2",
     "scikit-image>=0.25.2",
     "scikit-learn>=1.7.2",
     "tifffile>=2025.5.10",

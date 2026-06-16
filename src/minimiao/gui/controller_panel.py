@@ -33,9 +33,9 @@ class ControlPanel(QWidget):
     Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
 
-    def __init__(self, config, logg, parent=None, *args, **kwargs):
+    def __init__(self, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self.config = config
+        self.config = {"ConWidget Path": "", "Digital Timing Presets": ""}
         self.logg = logg
         self._setup_ui()
         self.load_spinbox_values()

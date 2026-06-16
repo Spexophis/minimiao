@@ -5,7 +5,7 @@
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import Qt, QEvent
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QSpinBox, QDoubleSpinBox
 
 from minimiao import logger
 from . import custom_widgets as cw
@@ -15,6 +15,7 @@ class HGPanel(QWidget):
 
     def __init__(self, logg, parent=None):
         super().__init__(parent)
+        self.config = {"HGWidget Path": ""}
         self.logg = logg or logger.setup_logging()
         self._setup_ui()
         self._target_img = None
@@ -226,3 +227,23 @@ class HGPanel(QWidget):
                     return True
 
         return super().eventFilter(obj, event)
+
+    def save_spinbox_values(self):
+        values = {}
+        for name in dir(self):
+            obj = getattr(self, name)
+            if isinstance(obj, (QSpinBox, QDoubleSpinBox)):
+                values[name] = obj.value()
+        with open(self.config["ConWidget Path"], 'w') as f:
+            json.dump(values, f, indent=4)
+
+    def load_spinbox_values(self):
+        try:
+            with open(self.config["ConWidget Path"], 'r') as f:
+                values = json.load(f)
+            for name, value in values.items():
+                widget = getattr(self, name, None)
+                if widget is not None:
+                    widget.setValue(value)
+        except FileNotFoundError:
+            pass

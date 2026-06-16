@@ -16,7 +16,6 @@ class MainWindow(QMainWindow):
 
     def __init__(self, config=None, logg=None, path=None):
         super().__init__()
-        self.config = config
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self._set_dark_theme()
@@ -30,15 +29,15 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _setup_ui(self):
-        self.ctrl_panel = controller_panel.ControlPanel(self.config, self.logg)
+        self.ctrl_panel = controller_panel.ControlPanel(self.logg)
         self.ctrl_dock = cw.DockWidget("Ctrl Panel")
         self.ctrl_dock.setWidget(self.ctrl_panel)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.ctrl_dock)
 
-        self.viewer = viewer_window.LiveViewer(self.config, self.logg)
+        self.viewer = viewer_window.LiveViewer(self.logg)
         self.setCentralWidget(self.viewer)
 
-        self.hg_panel = hg_panel.HGPanel(self.config, self.logg)
+        self.hg_panel = hg_panel.HGPanel(self.logg)
         self.hg_dock = cw.DockWidget("HG Panel")
         self.hg_dock.setWidget(self.hg_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.hg_dock)

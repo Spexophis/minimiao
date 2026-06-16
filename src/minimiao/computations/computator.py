@@ -8,8 +8,8 @@ from . import trigger_generator, pattern_generator
 
 
 class ComputationManager:
-    def __init__(self, config=None, logg=None, path=None):
-        self.config = config
+    def __init__(self, logg=None, path=None):
+
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.trg = trigger_generator.TriggerSequence(logg=self.logg)

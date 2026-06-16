@@ -4,11 +4,10 @@
 
 import datetime
 import getpass
-import json
 import os
 import sys
 
-from PyQt6.QtWidgets import QApplication, QFileDialog
+from PyQt6.QtWidgets import QApplication
 
 from . import executor, logger
 from .computations import computator
@@ -30,30 +29,9 @@ def setup_folder():
     return full_path
 
 
-def select_file_from_folder(parent, data_folder):
-    file_path, _ = QFileDialog.getOpenFileName(
-        parent,
-        "Select a File",
-        data_folder,
-        "All Files (*)"
-    )
-    return file_path if file_path else None
-
-
-def load_config(dfd):
-    with open(dfd, 'r') as f:
-        cfg = json.load(f)
-    return cfg
-
-
-def change_config(values, dfd):
-    with open(dfd, 'w') as f:
-        json.dump(values, f)
-
-
 class AppWrapper:
     def __init__(self):
-        self.app = QApplication(sys.argv)  # Create an instance of QApplication
+        self.app = QApplication(sys.argv)
         self.app.setStyleSheet("""
         QWidget { background-color: #232629; color: #f0f0f0; font-size: 14px; }
         QPushButton { background-color: #444; border: 1px solid #555; color: #f0f0f0; }
@@ -63,17 +41,9 @@ class AppWrapper:
         """)
         self.data_folder = setup_folder()
         self.error_logger = logger.setup_logger(self.data_folder)
-
-        selected_file = select_file_from_folder(None, self.data_folder)
-        if not selected_file:
-            print("No file selected. Exiting.")
-            sys.exit(0)
-
-        print(f"Selected file: {selected_file}")
-        self.configs = load_config(selected_file)
-        self.devices = device.DeviceManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
-        self.cmp = computator.ComputationManager(config=self.configs, logg=self.error_logger, path=self.data_folder)
-        self.mwd = main_window.MainWindow(config=self.configs, logg=self.error_logger, path=self.data_folder)
+        self.devices = device.DeviceManager(logg=self.error_logger, path=self.data_folder)
+        self.cmp = computator.ComputationManager(logg=self.error_logger, path=self.data_folder)
+        self.mwd = main_window.MainWindow(logg=self.error_logger, path=self.data_folder)
         self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
         self.mwd.aboutToClose.connect(self.close)
 

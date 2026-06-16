@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
@@ -8,14 +9,12 @@ from ctypes import c_int32, c_uint8, c_uint32, c_double, c_char, POINTER, create
 
 from minimiao import logger
 
+lib_path = r"C:\Users\Janos\OneDrive\Asztali gép\Hamamatsu\USB_Control_SDK\hpkSLMdaLV_stdcall_64bit\hpkSLMdaLV.dll"
 
 class HamamatsuSLM:
 
-    def __init__(self, logg=None, config=None):
+    def __init__(self, serial_number="LSH0805629", logg=None):
         self.logg = logg or logger.setup_logging()
-        self.config = config or self.load_configs()
-        lib_path = self.config["Spatial Light Modulator"]["Hamamatsu LCOS"]["api library"]
-        serial_number = self.config["Spatial Light Modulator"]["Hamamatsu LCOS"]["serial number"]
         if lib_path is not None:
             self.lib = ct.CDLL(lib_path)
             self._bind_functions()
@@ -35,14 +34,6 @@ class HamamatsuSLM:
                 self.logg.error("No serial number specified")
         else:
             self.logg.error("No lib path specified")
-
-    @staticmethod
-    def load_configs():
-        import json
-        config_file = input("Enter configuration file directory: ")
-        with open(config_file, 'r') as f:
-            cfg = json.load(f)
-        return cfg
 
     def _bind_functions(self):
         # Open_Dev

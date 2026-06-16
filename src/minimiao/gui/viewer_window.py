@@ -44,9 +44,8 @@ class FramePool(QObject):
 class LiveViewer(QWidget):
     frame_idx_signal = pyqtSignal(int)
 
-    def __init__(self, config, logg, parent=None):
+    def __init__(self, logg, parent=None):
         super().__init__(parent)
-        self.config = config
         self.logg = logg
         pg.setConfigOptions(useOpenGL=True, antialias=False)
         self._setup_ui()
