@@ -57,6 +57,7 @@ class HGPanel(QWidget):
         self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(0, 128, 1, 1, 7)
         self.QSpinBox_CGH_CenterX = cw.SpinBoxWidget(0, 2048, 1, 600)
         self.QSpinBox_CGH_CenterY = cw.SpinBoxWidget(0, 2048, 1, 395)
+        self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 180)
         self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
         self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
 
@@ -72,6 +73,7 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterX, 4, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-Y')), 5, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
+        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_SLM_Focal, 4, 2, 1, 1)
         cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
         cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
 
@@ -247,3 +249,14 @@ class HGPanel(QWidget):
                     widget.setValue(value)
         except FileNotFoundError:
             pass
+
+
+if __name__ == '__main__':
+    import sys
+    from PyQt6.QtWidgets import QApplication
+
+    app = QApplication(sys.argv)
+    win = ControlPanel()
+    win.show()
+    sys.exit(app.exec())
+
