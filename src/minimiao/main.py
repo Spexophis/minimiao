@@ -9,10 +9,25 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from . import executor, logger
-from .computations import computator
-from .devices import device
-from .gui import main_window
+try:
+    from . import executor, logger
+except ImportError:
+    from minimiao import executor, logger
+
+try:
+    from .computations import computator
+except ImportError:
+    from minimiao.computations import computator
+
+try:
+    from .devices import device
+except ImportError:
+    from minimiao.devices import device
+
+try:
+    from .gui import main_window
+except ImportError:
+    from minimiao.gui import main_window
 
 
 def setup_folder():
@@ -41,10 +56,10 @@ class AppWrapper:
         """)
         self.data_folder = setup_folder()
         self.error_logger = logger.setup_logger(self.data_folder)
-        self.devices = device.DeviceManager(logg=self.error_logger, path=self.data_folder)
-        self.cmp = computator.ComputationManager(logg=self.error_logger, path=self.data_folder)
         self.mwd = main_window.MainWindow(logg=self.error_logger, path=self.data_folder)
-        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
+        self.cmp = computator.ComputationManager(logg=self.error_logger, path=self.data_folder)
+        self.devices = device.DeviceManager(logg=self.error_logger, path=self.data_folder)
+        # self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
         self.mwd.aboutToClose.connect(self.close)
 
     def run(self):

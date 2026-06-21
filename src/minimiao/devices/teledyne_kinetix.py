@@ -82,7 +82,7 @@ class KinetixCamera:
             # --- Acquisition buffer ---
             self.buffer_frame_count = 16     # SDK circular buffer depth (frames)
 
-    def __init__(self, config=None, logg=None):
+    def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
         self._settings = self.CameraSettings()
         self.cam = None
@@ -98,12 +98,6 @@ class KinetixCamera:
         if '_settings' in self.__dict__ and hasattr(self._settings, item):
             return getattr(self._settings, item)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def _initialize_sdk(self):
         try:

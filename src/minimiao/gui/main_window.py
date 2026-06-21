@@ -2,19 +2,29 @@
 # Licensed under the MIT License.
 
 
-import sys
 import os
+import sys
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from . import custom_widgets as cw
-from . import controller_panel, hg_panel, viewer_window
+
+try:
+    from . import controller_panel, hg_panel, viewer_window
+except ImportError:
+    from minimiao.gui import controller_panel, hg_panel, viewer_window
+
+try:
+    from . import custom_widgets as cw
+except ImportError:
+    from minimiao.gui import custom_widgets as cw
+
 from minimiao import logger
 
 
 class MainWindow(QMainWindow):
     aboutToClose = pyqtSignal()
 
-    def __init__(self, config=None, logg=None, path=None):
+    def __init__(self, logg=None, path=None):
         super().__init__()
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
@@ -91,16 +101,29 @@ class MainWindow(QMainWindow):
         self.dialog_text.setText(f"Task {txt} is running, please wait...")
         self.refresh_gui()
 
+    def select_file_from_folder(self, data_folder):
+        file_path, _ = QFileDialog.getOpenFileName(self, "Select a File", data_folder, "All Files (*)")
+        return file_path if file_path else None
+
+    def get_file_name(self):
+        selected_file = self.select_file_from_folder(self.data_folder)
+        if not selected_file:
+            self.logg.error("No file selected.")
+            return None
+        else:
+            self.logg.info(f"Selected file: {selected_file}")
+            return selected_file
+
     @staticmethod
     def refresh_gui():
         QApplication.processEvents()
 
 
 if __name__ == '__main__':
-    import json
+    import sys
+    from PyQt6.QtWidgets import QApplication
+
     app = QApplication(sys.argv)
-    with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
-        cfg = json.load(f)
-    win = MainWindow(config=cfg)
+    win = MainWindow()
     win.show()
     sys.exit(app.exec())

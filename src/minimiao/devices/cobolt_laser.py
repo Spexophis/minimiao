@@ -13,12 +13,13 @@ class CoboltLaser:
         self.logg = logg or logger.setup_logging()
         laser_dict = {"473": "32010"}
         self.lasers, self._h = self._initiate_lasers(laser_dict)
+        self.laser_on("all")
 
     def _initiate_lasers(self, laser_dict):
         lasers = {}
         for laser, sn in laser_dict.items():
             try:
-                lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=sn)
+                lasers[laser] = pycobolt.Cobolt06MLD(port="COM4")
                 self.logg.info("{} Laser Connected".format(laser))
             except Exception as e:
                 self.logg.error(f"Laser Error: {e}")
@@ -30,12 +31,6 @@ class CoboltLaser:
         for key, _l in self._h.items():
             if _l:
                 del self.lasers[key]
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def laser_off(self, laser):
         if laser == "all":

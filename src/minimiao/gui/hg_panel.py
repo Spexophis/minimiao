@@ -1,19 +1,28 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
+import json
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtCore import Qt, QEvent, pyqtSlot, pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QSpinBox, QDoubleSpinBox
 
 from minimiao import logger
-from . import custom_widgets as cw
+
+try:
+    from . import custom_widgets as cw
+except ImportError:
+    from minimiao.gui import custom_widgets as cw
 
 
 class HGPanel(QWidget):
+    Signal_load_target = pyqtSignal()
+    Signal_pick_spot = pyqtSignal()
+    Signal_compute_cgh = pyqtSignal()
+    Signal_save_pattern = pyqtSignal()
 
-    def __init__(self, logg, parent=None):
+    def __init__(self, logg=None, parent=None):
         super().__init__(parent)
         self.config = {"HGWidget Path": ""}
         self.logg = logg or logger.setup_logging()
@@ -33,6 +42,9 @@ class HGPanel(QWidget):
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Vertical)
+
+        control_widget = self._create_cgh_panel()
+        splitter.addWidget(control_widget)
 
         plot_widget = QWidget()
         plot_layout = self._create_plot_widgets()
@@ -116,6 +128,29 @@ class HGPanel(QWidget):
         layout_table.addWidget(self.spot_table)
         return layout_table
 
+    def _set_signal_connections(self):
+        self.QPushButton_CGH_Load.clicked.connect(self.load_target)
+        self.QPushButton_CGH_Pick.clicked.connect(self.pick_spot)
+        self.QPushButton_CGH_Compute.clicked.connect(self.compute_cgh)
+        self.QPushButton_CGH_Save.clicked.connect(self.save_pattern)
+
+    @pyqtSlot()
+    def load_target(self):
+        self.Signal_load_target.emit()
+
+    @pyqtSlot()
+    def pick_spot(self):
+        self.Signal_pick_spot.emit()
+        self.logg.info("Start target picking")
+
+    @pyqtSlot()
+    def compute_cgh(self):
+        self.Signal_compute_cgh.emit()
+
+    @pyqtSlot()
+    def save_pattern(self):
+        self.Signal_save_pattern.emit()
+
     def set_target_image(self, img2d: np.ndarray, levels=None):
         self._target_img = img2d
         self.target_img_item.setImage(img2d, autoLevels=(levels is None))
@@ -133,7 +168,7 @@ class HGPanel(QWidget):
         self.pattern_plot.update()
 
     def start_target_picking(self):
-        print("Start picking...")
+        self.logg.info("Start picking...")
         self._picking_enabled = True
         self._picking_enabled = True
 
@@ -256,7 +291,6 @@ if __name__ == '__main__':
     from PyQt6.QtWidgets import QApplication
 
     app = QApplication(sys.argv)
-    win = ControlPanel()
+    win = HGPanel()
     win.show()
     sys.exit(app.exec())
-

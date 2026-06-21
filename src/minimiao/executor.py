@@ -24,15 +24,14 @@ class CommandExecutor(QObject):
         self.vw = cwd
         self.ctrl_panel = self.vw.ctrl_panel
         self.viewer = self.vw.viewer
-        self.ao_panel = self.vw.hg_panel
+        self.hg_panel = self.vw.hg_panel
         self.trg = cmp.trg
+        self.cgh = cmp.cgh
         self.path = path
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
         self.lasers = []
-        self.slm_seq = ""
-        self.cameras = {"imaging": 0, "wfs": 1, "focus_lock": 2}
         self.task_worker = None
 
     @staticmethod
@@ -42,234 +41,198 @@ class CommandExecutor(QObject):
         return logging
 
     def _set_signal_executions(self):
-        # Camera
-        self.ctrl_panel.Signal_check_emccd_temperature.connect(self.check_camera_temperature)
-        self.ctrl_panel.Signal_switch_emccd_cooler.connect(self.switch_camera_cooler)
-        # Cobolt Lasers
-        self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
-        # DAQ
-        self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
-        self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
         # SLM
-        self.ao_panel.Signal_set_zernike.connect(self.set_zernike)
-        self.ao_panel.Signal_set_dm.connect(self.set_dm_current)
-        self.ao_panel.Signal_set_dm_flat.connect(self.set_dm_flat)
-        self.ao_panel.Signal_update_cmd.connect(self.update_dm)
-        self.ao_panel.Signal_save_dm.connect(self.save_dm)
+        self.ctrl_panel.Signal_slm_correction.connect(self.load_slm_correction)
+        self.ctrl_panel.Signal_slm_load.connect(self.load_slm_pattern)
+        # Lasers
+        self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
+        # Trigger
+        self.ctrl_panel.Signal_trigger_reset.connect(self.reset_trigger_channels)
+        self.ctrl_panel.Signal_trigger_update.connect(self.update_trigger_sample_rate)
         # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
-        self.ctrl_panel.Signal_fft.connect(self.fft)
-        self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
-        self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
         self.svd.connect(self.save_data)
-        self.sig_plt.connect(self.viewer.plot_trace)
+        # Hologram
+        self.hg_panel.Signal_load_target.connect(self.load_cgh_target)
+        # self.hg_panel.Signal_pick_spot.connect(self.pick_focal_spots)
+        # self.hg_panel.Signal_compute_cgh.connect(self.compute_cgh_pattern)
+        # self.hg_panel.Signal_save_pattern.connect(self.save_cgh_pattern)
 
     def _initial_setup(self):
         try:
-
-            p = self.devs.deck.get_position_steps_taken(3)
-            self.ctrl_panel.display_deck_position(p)
-
-            self.reset_piezo_positions()
-
             self.laser_lists = list(self.devs.laser.lasers.keys())
-
-            for key in self.devs.slm.ord_dict.keys():
-                self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
-
-            self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
-
             self.logg.info("Finish setting up controllers")
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
 
+    def set_camera_roi(self):
+        try:
+            x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
+            self.devs.camera.bin_h, self.devs.camera.bin_v = bn, bn
+            self.devs.camera.start_h, self.devs.camera.end_h = x, x + nx - 1
+            self.devs.camera.start_v, self.devs.camera.end_v = y, y + ny - 1
+            self.devs.camera.gain = self.ctrl_panel.get_scmos_gain()
+            self.devs.camera.t_exposure = self.ctrl_panel.get_scmos_exposure()
+        except Exception as e:
+            self.logg.error(f"Camera Error: {e}")
+
     @pyqtSlot()
-    def check_camera_temperature(self):
-        try:
-            self.devs.camera.get_temperature()
-            self.ctrl_panel.display_emccd_temperature(self.devs.camera.temperature)
-        except Exception as e:
-            self.logg.error(f"CCD Camera Error: {e}")
+    def load_slm_correction(self):
+        file_name = self.vw.get_file_name()
+        if file_name is not None:
+            self.cgh.load_correction_pattern(file_name)
+            self.load_slm_pattern(file_name)
 
-    def reset_piezo_positions(self):
-        pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
-        self.set_piezo_position_x(pos_x[0], port="software")
-        self.set_piezo_position_y(pos_y[0], port="software")
-        self.set_piezo_position_z(pos_z[0], port="software")
-        self.set_piezo_position_x(pos_x[1], port="analog")
-        self.set_piezo_position_y(pos_y[1], port="analog")
-        self.set_piezo_position_z(pos_z[1], port="analog")
-        self.ctrl_panel.display_piezo_position_x(self.devs.piezo.read_position(0))
-        self.ctrl_panel.display_piezo_position_y(self.devs.piezo.read_position(1))
-        self.ctrl_panel.display_piezo_position_z(self.devs.piezo.read_position(2))
+    @pyqtSlot()
+    def load_slm_pattern(self, fn=None):
+        if fn is not None:
+            file_name = fn
+        else:
+            file_name = self.vw.get_file_name()
+        if file_name is not None:
+            self.devs.slm.load_pattern(file_name)
+            self.hg_panel.set_pattern_image(self.devs.slm.pattern)
+
+    def reset_stage_positions(self):
+        pos_x, pos_y, pos_z = self.ctrl_panel.get_stage_positions()
+        self.set_stage_position_x(pos_x[0], port="software")
+        self.set_stage_position_y(pos_y[0], port="software")
+        self.set_stage_position_z(pos_z[0], port="software")
+        self.set_stage_position_x(pos_x[1], port="analog")
+        self.set_stage_position_y(pos_y[1], port="analog")
+        self.set_stage_position_z(pos_z[1], port="analog")
+        self.ctrl_panel.display_stage_position_x(self.devs.stage.read_position(0))
+        self.ctrl_panel.display_stage_position_y(self.devs.stage.read_position(1))
+        self.ctrl_panel.display_stage_position_z(self.devs.stage.read_position(2))
 
     @pyqtSlot(str, float, float, float)
-    def set_piezo_positions_usb(self, axis: str, value_x: float, value_y: float, value_z: float):
+    def set_stage_positions_usb(self, axis: str, value_x: float, value_y: float, value_z: float):
         if axis == "x":
-            self.set_piezo_position_x(value_x, port="software")
+            self.set_stage_position_x(value_x, port="software")
         if axis == "y":
-            self.set_piezo_position_y(value_y, port="software")
+            self.set_stage_position_y(value_y, port="software")
         if axis == "z":
-            self.set_piezo_position_z(value_z, port="software")
+            self.set_stage_position_z(value_z, port="software")
 
     @pyqtSlot(str, float, float, float)
-    def set_piezo_positions(self, axis: str, value_x: float, value_y: float, value_z: float):
+    def set_stage_positions(self, axis: str, value_x: float, value_y: float, value_z: float):
         if axis == "x":
-            self.set_piezo_position_x(value_x, port="analog")
+            self.set_stage_position_x(value_x, port="analog")
         if axis == "y":
-            self.set_piezo_position_y(value_y, port="analog")
+            self.set_stage_position_y(value_y, port="analog")
         if axis == "z":
-            self.set_piezo_position_z(value_z, port="analog")
+            self.set_stage_position_z(value_z, port="analog")
 
-    def set_piezo_position_x(self, pos_x, port="analog"):
+    def set_stage_position_x(self, pos_x, port="analog"):
         try:
             if port == "software":
-                self.devs.piezo.move_position(0, pos_x)
-                QTimer.singleShot(100, lambda: self._update_piezo_display_x())
+                self.devs.stage.move_position(0, pos_x)
+                QTimer.singleShot(100, lambda: self._update_stage_display_x())
             else:
-                self.devs.daq.set_piezo_position([pos_x / 10.], [0])
-                QTimer.singleShot(100, lambda: self._update_piezo_display_x())
+                self.devs.trigger.set_stage_position([pos_x / 10.], [0])
+                QTimer.singleShot(100, lambda: self._update_stage_display_x())
         except Exception as e:
-            self.logg.error(f"MCL Piezo Error: {e}")
+            self.logg.error(f" stage Error: {e}")
 
-    def _update_piezo_display_x(self):
+    def _update_stage_display_x(self):
         try:
-            position = self.devs.piezo.read_position(0)
-            self.ctrl_panel.display_piezo_position_x(position)
+            position = self.devs.stage.read_position(0)
+            self.ctrl_panel.display_stage_position_x(position)
         except Exception as e:
-            self.logg.error(f"MCL Piezo Read Error: {e}")
+            self.logg.error(f" stage Read Error: {e}")
 
-    def set_piezo_position_y(self, pos_y, port="analog"):
+    def set_stage_position_y(self, pos_y, port="analog"):
         try:
             if port == "software":
-                self.devs.piezo.move_position(1, pos_y)
-                QTimer.singleShot(100, lambda: self._update_piezo_display_y())
+                self.devs.stage.move_position(1, pos_y)
+                QTimer.singleShot(100, lambda: self._update_stage_display_y())
             else:
-                self.devs.daq.set_piezo_position([pos_y / 10.], [1])
-                QTimer.singleShot(100, lambda: self._update_piezo_display_y())
+                self.devs.trigger.set_stage_position([pos_y / 10.], [1])
+                QTimer.singleShot(100, lambda: self._update_stage_display_y())
         except Exception as e:
-            self.logg.error(f"MCL Piezo Error: {e}")
+            self.logg.error(f" stage Error: {e}")
 
-    def _update_piezo_display_y(self):
+    def _update_stage_display_y(self):
         try:
-            position = self.devs.piezo.read_position(1)
-            self.ctrl_panel.display_piezo_position_y(position)
+            position = self.devs.stage.read_position(1)
+            self.ctrl_panel.display_stage_position_y(position)
         except Exception as e:
-            self.logg.error(f"MCL Piezo Read Error: {e}")
+            self.logg.error(f" stage Read Error: {e}")
 
-    def set_piezo_position_z(self, pos_z, port="analog"):
+    def set_stage_position_z(self, pos_z, port="analog"):
         try:
             if port == "software":
-                self.devs.piezo.move_position(2, pos_z)
-                QTimer.singleShot(100, lambda: self._update_piezo_display_z())
+                self.devs.stage.move_position(2, pos_z)
+                QTimer.singleShot(100, lambda: self._update_stage_display_z())
             else:
-                self.devs.daq.set_piezo_position([pos_z / 10.], [2])
-                QTimer.singleShot(100, lambda: self._update_piezo_display_z())
+                self.devs.trigger.set_stage_position([pos_z / 10.], [2])
+                QTimer.singleShot(100, lambda: self._update_stage_display_z())
         except Exception as e:
-            self.logg.error(f"MCL Piezo Error: {e}")
+            self.logg.error(f" stage Error: {e}")
 
-    def _update_piezo_display_z(self):
+    def _update_stage_display_z(self):
         try:
-            position = self.devs.piezo.read_position(2)
-            self.ctrl_panel.display_piezo_position_z(position)
+            position = self.devs.stage.read_position(2)
+            self.ctrl_panel.display_stage_position_z(position)
         except Exception as e:
-            self.logg.error(f"MCL Piezo Read Error: {e}")
+            self.logg.error(f" stage Read Error: {e}")
 
-    def update_piezo_scanning(self):
-        axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
-        pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
+    def update_stage_scanning(self):
+        axis_lengths, step_sizes = self.ctrl_panel.get_stage_scan_parameters()
+        pos_x, pos_y, pos_z = self.ctrl_panel.get_stage_positions()
         positions = [pos_x[1], pos_y[1], pos_z[1]]
-        return_time, line_time = self.ctrl_panel.get_piezo_scan_time()
-        self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
+        return_time, line_time = self.ctrl_panel.get_stage_scan_time()
+        self.trg.update_stage_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
 
     @pyqtSlot(list, bool, float)
     def set_laser(self, laser: list, sw: bool, pw: float):
         if sw:
             try:
                 self.devs.laser.set_constant_power(laser, [pw])
-                self.devs.laser.laser_on(laser)
             except Exception as e:
                 self.logg.error(f"Cobolt Laser Error: {e}")
         else:
             try:
-                self.devs.laser.laser_off(laser)
+                self.devs.laser.set_modulation_mode(laser, [pw])
             except Exception as e:
                 self.logg.error(f"Cobolt Laser Error: {e}")
 
-    def set_lasers(self, lasers):
-        pw = self.ctrl_panel.get_cobolt_laser_power("488_1")
-        try:
-            self.devs.laser.set_modulation_mode(["488_1"], [pw])
-            self.devs.laser.laser_on(["488_1"])
-        except Exception as e:
-            self.logg.error(f"Cobolt Laser Error: {e}")
-
-    def lasers_off(self):
-        try:
-            self.devs.laser.laser_off("all")
-        except Exception as e:
-            self.logg.error(f"Cobolt Laser Error: {e}")
-
-    def set_camera_roi(self, key="imaging"):
-        try:
-            if self.cameras[key] == 0:
-                x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
-                self.devs.cam_set[0].bin_h, self.devs.cam_set[0].bin_v = bn, bn
-                self.devs.cam_set[0].start_h, self.devs.cam_set[0].end_h = x, x + nx - 1
-                self.devs.cam_set[0].start_v, self.devs.cam_set[0].end_v = y, y + ny - 1
-                self.devs.cam_set[0].gain = self.ctrl_panel.get_emccd_gain()
-                self.devs.cam_set[0].t_exposure = self.ctrl_panel.get_emccd_exposure()
-            elif self.cameras[key] == 1:
-                x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
-                self.devs.cam_set[1].set_roi(bn, bn, x, nx, y, ny)
-            else:
-                self.logg.error(f"Camera Error: Invalid camera")
-        except Exception as e:
-            self.logg.error(f"Camera Error: {e}")
-
     @pyqtSlot(int)
-    def update_daq_sample_rate(self, sr: int):
+    def update_trigger_sample_rate(self, sr: int):
         self.trg.update_sampling_rate(sr * 1000)
-        self.devs.daq.sample_rate = sr * 1000
+        self.devs.trigger.sample_rate = sr * 1000
 
     @pyqtSlot()
-    def reset_daq_channels(self):
-        self.devs.daq.stop_triggers()
+    def reset_trigger_channels(self):
+        self.devs.trigger.stop_triggers()
 
     def update_digital_triggers(self):
         digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
         self.trg.update_digital_parameters(digital_starts, digital_ends)
 
-    def update_trigger_parameters(self, cam_key):
+    def update_trigger_parameters(self):
         """Ensure that the camera acquisition is fully set up before executing this function."""
         try:
             self.update_digital_triggers()
-            self.update_piezo_scanning()
+            self.update_stage_scanning()
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
 
     def prepare_video(self, vd_mod):
-        self.update_trigger_parameters("imaging")
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
-                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
-                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
-        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
-                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+        self.update_trigger_parameters()
+        self.set_camera_roi()
+        self.devs.camera.prepare_live()
+        self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
+                                          exposure_time=self.devs.camera.t_exposure,
+                                          standby_time=self.devs.camera.t_readout,
+                                          frame_rate=self.devs.camera.fps)
+        # dtr, chs = self.trg.generate_digital_triggers()
+        self.viewer.switch_camera(self.devs.camera.pixels_x,
+                                  self.devs.camera.pixels_y)
+        self.ctrl_panel.display_scmos_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
+        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
@@ -278,8 +241,7 @@ class CommandExecutor(QObject):
                 self.prepare_video(md)
             except Exception as e:
                 self.logg.error(f"Error preparing imaging video: {e}")
-                self.devs.daq.stop_triggers()
-                self.lasers_off()
+                # self.devs.trigger.stop_triggers()
                 return
             self.start_video()
         else:
@@ -287,10 +249,9 @@ class CommandExecutor(QObject):
 
     def start_video(self):
         try:
-            self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_live()
-            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
-            self.devs.daq.run_triggers()
+            self.devs.camera.start_live()
+            self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
+            # self.devs.trigger.run_triggers()
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
@@ -299,13 +260,11 @@ class CommandExecutor(QObject):
 
     def stop_video(self):
         try:
-            self.devs.daq.stop_triggers()
-            time.sleep(0.04)
-            self.devs.cam_set[self.cameras["imaging"]].stop_live()
+            # self.devs.trigger.stop_triggers()
+            # time.sleep(0.04)
+            self.devs.camera.stop_live()
             self.logg.info(r"Live Video Stopped")
-            self.devs.slm.deactivate()
-            self.lasers_off()
-            self.reset_piezo_positions()
+            # self.reset_stage_positions()
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
 
@@ -336,40 +295,31 @@ class CommandExecutor(QObject):
                 self.prepare_acquisition()
             except Exception as e:
                 self.logg.error(f"Error preparing widefield: {e}")
-                self.devs.daq.stop_triggers()
-                self.lasers_off()
+                # self.devs.trigger.stop_triggers()
                 return
             self.start_acquisition(file_name, acq_num)
         else:
             self.stop_acquisition()
 
     def prepare_acquisition(self):
-        self.update_trigger_parameters("imaging")
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
-                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
-                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
-        self.viewer.switch_camera(self.devs.cam_set[self.cameras["imaging"]].pixels_x,
-                                  self.devs.cam_set[self.cameras["imaging"]].pixels_y)
-        self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+        self.update_trigger_parameters()
+        self.set_camera_roi()
+        self.devs.camera.prepare_live()
+        self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
+                                          exposure_time=self.devs.camera.t_exposure,
+                                          standby_time=self.devs.camera.t_readout,
+                                          frame_rate=self.devs.camera.fps)
+        # dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
+        self.viewer.switch_camera(self.devs.camera.pixels_x,
+                                  self.devs.camera.pixels_y)
+        self.ctrl_panel.display_scmos_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
+        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
     def start_acquisition(self, labl: str, acq_num: int):
         try:
-            self.devs.slm.activate()
-            self.devs.cam_set[self.cameras["imaging"]].start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
-            self.devs.cam_set[self.cameras["imaging"]].data.on_update(self.viewer.on_camera_update_from_thread)
-            self.devs.daq.run_triggers()
+            self.devs.camera.start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
+            self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
+            # self.devs.trigger.run_triggers()
         except Exception as e:
             self.stop_acquisition()
             self.logg.error(f"Error start acquisition: {e}")
@@ -377,47 +327,44 @@ class CommandExecutor(QObject):
 
     def stop_acquisition(self):
         try:
-            self.devs.daq.stop_triggers()
-            time.sleep(0.04)
-            self.devs.cam_set[self.cameras["imaging"]].stop_data_acquisition()
-            self.lasers_off()
-            self.devs.slm.deactivate()
-            self.reset_piezo_positions()
+            # self.devs.trigger.stop_triggers()
+            # time.sleep(0.04)
+            self.devs.camera.stop_data_acquisition()
+            # self.reset_stage_positions()
         except Exception as e:
             self.logg.error(f"Error stop acquisition: {e}")
 
     @pyqtSlot(str)
     def save_data(self, fd: str):
-        with pd.ExcelWriter(str(fd + r"_metadata.xlsx"), engine="openpyxl") as writer:
-            for i, arr in enumerate(self.trg.piezo_scan_positions):
-                df_pos = pd.DataFrame(arr, columns=[f"axis_{i}"])
-                df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
+        pass
 
-    def prepare_task(self, single=True):
-        self.update_trigger_parameters("imaging")
-        self.lasers = self.ctrl_panel.get_lasers()
-        self.set_lasers(self.lasers)
-        self.slm_seq = self.ctrl_panel.get_slm_sequence()
-        slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
-        self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
-        self.cameras["imaging"] = self.ctrl_panel.get_imaging_camera()
-        self.set_camera_roi("imaging")
-        self.devs.cam_set[self.cameras["imaging"]].t_exposure = slm_on
-        self.devs.cam_set[self.cameras["imaging"]].prepare_live()
-        self.trg.update_camera_parameters(initial_time=self.devs.cam_set[self.cameras["imaging"]].t_clean,
-                                          exposure_time=self.devs.cam_set[self.cameras["imaging"]].t_exposure,
-                                          standby_time=self.devs.cam_set[self.cameras["imaging"]].t_readout,
-                                          frame_rate=self.devs.cam_set[self.cameras["imaging"]].fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
+    def load_cgh_target(self):
+        file_name = self.vw.get_file_name()
+        if file_name is not None:
+            self.cgh.load_mask(file_name)
+            self.hg_panel.set_target_image(self.cgh.cell_mask)
 
-    def finish_task(self):
-        try:
-            self.devs.daq.stop_triggers()
-            time.sleep(0.04)
-            self.devs.cam_set[self.cameras["imaging"]].stop_snap()
-            self.devs.slm.deactivate()
-            self.lasers_off()
-            self.logg.info("Focus Finding Finish")
-        except Exception as e:
-            self.logg.error(f"Error Stopping Focus Finding: {e}")
+    # def pick_focal_spots
+    # def compute_cgh_pattern
+    # def save_cgh_pattern
+
+    # def prepare_task(self, single=True):
+    #     self.update_trigger_parameters()
+    #     self.set_camera_roi()
+    #     self.devs.camera.t_exposure = slm_on
+    #     self.devs.camera.prepare_live()
+    #     self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
+    #                                       exposure_time=self.devs.camera.t_exposure,
+    #                                       standby_time=self.devs.camera.t_readout,
+    #                                       frame_rate=self.devs.camera.fps)
+        # dtr, chs = self.trg.generate_digital_triggers()
+        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
+
+    # def finish_task(self):
+    #     try:
+    #         self.devs.trigger.stop_triggers()
+    #         time.sleep(0.04)
+    #         self.devs.camera.stop_snap()
+    #         self.logg.info("Focus Finding Finish")
+    #     except Exception as e:
+    #         self.logg.error(f"Error Stopping Focus Finding: {e}")

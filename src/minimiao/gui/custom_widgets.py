@@ -2,15 +2,10 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
+import os
 
 from PyQt6 import QtWidgets, QtGui, QtCore
-
-
-class ToolBarWidget(QtWidgets.QToolBar):
-    def __init__(self):
-        super().__init__()
-        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
-        self.setStyleSheet('QToolBar {background-color: #121212; color: white;}')
+from PyQt6.QtWidgets import QFileDialog
 
 
 class DockWidget(QtWidgets.QDockWidget):
@@ -160,8 +155,7 @@ class SpinBoxWidget(QtWidgets.QSpinBox):
         self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
         self.setMinimumWidth(self.sizeHint().width())
         self.setMinimumHeight(self.sizeHint().height())
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
         self.setMaximumWidth(max_value_width + 32)
 
@@ -223,8 +217,7 @@ class DoubleSpinBoxWidget(QtWidgets.QDoubleSpinBox):
         self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
         self.setMinimumWidth(self.sizeHint().width())
         self.setMinimumHeight(self.sizeHint().height())
-        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
-                           QtWidgets.QSizePolicy.Policy.Fixed)
+        self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
         max_value_width = self.fontMetrics().horizontalAdvance(str(self.maximum()))
         self.setMaximumWidth(max_value_width + 32)
 
@@ -408,6 +401,7 @@ class ComboBoxWidget(QtWidgets.QComboBox):
         self.setMinimumHeight(minlen)
         self.setMaximumWidth(maxlen)
 
+
 class LineEditWidget(QtWidgets.QLineEdit):
     def __init__(self):
         super().__init__()
@@ -574,3 +568,135 @@ def create_dialog(labtex=False, interrupt=False):
         return dialogue, label
     else:
         return dialogue
+
+
+class TableWidget(QtWidgets.QTableWidget):
+
+    def __init__(self, headers: list, n_rows=2):
+        super().__init__()
+        n_cols = len(headers)
+        self.setColumnCount(n_cols)
+        self.setRowCount(n_rows)
+        if headers is not None:
+            self.setHorizontalHeaderLabels(headers)
+            self.horizontalHeader().setStretchLastSection(True)
+            self.horizontalHeader().setSectionResizeMode(QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.setMinimumHeight(128)
+        self.setMaximumHeight(256)
+
+        self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
+        self.setStyleSheet('''
+            QTableWidget {
+                background-color: #1E1E1E;
+                color: #FFFFFF;
+                gridline-color: #333333;
+                border: 1px solid #333333;
+            }
+            QTableWidget::item:selected {
+                background-color: #4169e1;
+            }
+            QHeaderView::section {
+                background-color: #121212;
+                color: #FFFFFF;
+                padding: 4px;
+                border: 1px solid #333333;
+            }
+        ''')
+
+    def set_cell(self, row, col, value):
+        if isinstance(value, int):
+            text = str(value)
+        elif isinstance(value, float):
+            text = f"{value:.2f}"
+        elif isinstance(value, str):
+            text = value
+        else:
+            return
+
+        item = QtWidgets.QTableWidgetItem(text)
+        item.setTextAlignment(QtCore.Qt.AlignmentFlag.AlignCenter)
+        self.setItem(row, col, item)
+
+    def add_row(self, values: list = None):
+        row_index = self.rowCount()
+        self.insertRow(row_index)
+
+        if values is not None:
+            for col, value in enumerate(values):
+                if col < self.columnCount():
+                    self.set_cell(row_index, col, value)
+
+    def fill_row(self, row_index: int, values: list):
+        if len(values) != self.columnCount():
+            return
+
+        if row_index >= self.rowCount():
+            self.setRowCount(row_index + 1)
+
+        for col, value in enumerate(values):
+            if col < self.columnCount():
+                self.set_cell(row_index, col, value)
+
+    def fill_column(self, col_index: int, values: list, header: str = None):
+        if len(values) != self.rowCount():
+            return
+
+        if col_index >= self.columnCount():
+            old_count = self.columnCount()
+            self.setColumnCount(col_index + 1)
+
+            for i in range(old_count, col_index + 1):
+                if i == col_index and header is not None:
+                    self.setHorizontalHeaderItem(i, QtWidgets.QTableWidgetItem(header))
+                else:
+                    self.setHorizontalHeaderItem(i, QtWidgets.QTableWidgetItem(f"Col {i}"))
+        elif header is not None:
+            self.setHorizontalHeaderItem(col_index, QtWidgets.QTableWidgetItem(header))
+
+        for row, value in enumerate(values):
+            self.set_cell(row, col_index, value)
+
+    def get_cell(self, row: int, col: int):
+        if row >= self.rowCount() or col >= self.columnCount():
+            return None
+        item = self.item(row, col)
+        if item is None:
+            return None
+
+        text = item.text()
+
+        try:
+            return int(text)
+        except ValueError:
+            pass
+
+        try:
+            return float(text)
+        except ValueError:
+            pass
+
+        return text
+
+    def get_row(self, row: int):
+        if row == -1:
+            return [self.get_row(r) for r in range(self.rowCount())]
+
+        if row >= self.rowCount():
+            return None
+
+        return [self.get_cell(row, col) for col in range(self.columnCount())]
+
+    def get_column(self, col: int):
+        if col >= self.columnCount():
+            return None
+        return [self.get_cell(row, col) for row in range(self.rowCount())]
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key.Key_Delete:
+            selected = self.selectedItems()
+            if selected:
+                self.removeRow(selected[0].row())
+        else:
+            super().keyPressEvent(event)
