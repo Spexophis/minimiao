@@ -121,12 +121,19 @@ class KinetixCamera:
         self.set_temperature()
 
     def close(self):
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()
+            self.data = None
         try:
             if self.cam is not None and self.cam.is_open:
                 self.cam.close()
                 self.logg.info("Kinetix camera closed")
         except Exception as e:
             self.logg.error(f"Error closing Kinetix camera: {e}")
+        self.cam = None
         try:
             pvc.uninit_pvcam()
         except Exception as e:

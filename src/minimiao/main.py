@@ -58,8 +58,8 @@ class AppWrapper:
         self.error_logger = logger.setup_logger(self.data_folder)
         self.mwd = main_window.MainWindow(logg=self.error_logger, path=self.data_folder)
         self.cmp = computator.ComputationManager(logg=self.error_logger, path=self.data_folder)
-        # self.devices = device.DeviceManager(logg=self.error_logger)
-        # self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
+        self.devices = device.DeviceManager(logg=self.error_logger)
+        self.cmd_exc = executor.CommandExecutor(self.devices, self.mwd, self.cmp, self.data_folder, self.error_logger)
         self.mwd.aboutToClose.connect(self.close)
 
     def run(self):
@@ -71,7 +71,8 @@ class AppWrapper:
             sys.exit(1)
 
     def close(self):
-        self.devices.close()
+        if self.devices is not None:
+            self.devices.close()
         self.app.exit()
 
 

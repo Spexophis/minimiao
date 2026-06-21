@@ -48,6 +48,12 @@ class DeviceManager:
         self.logg.info("Finish initiating devices")
 
     def close(self):
+        # SLM DLL must be explicitly unloaded (FreeLibrary) before PVCAM pvc.uninit_pvcam().
+        if self.slm:
+            try:
+                self.slm.close()
+            except Exception as e:
+                self.logg.error(f"SLM close failed: {e}")
 
         if self.camera:
             try:
@@ -61,28 +67,7 @@ class DeviceManager:
             except Exception as e:
                 self.logg.error(f"Laser close failed: {e}")
 
-        if self.slm:
-            try:
-                self.slm.close()
-            except Exception as e:
-                self.logg.error(f"SLM close failed: {e}")
 
-"""
-INFO: Kinetix camera opened: PMPCIECam00
-INFO: Kinetix Serial Number: A24F723013
-INFO: Sensor size: 2400 (ser) x 2400 (par)
-INFO: Temperature setpoint: -10.0 °C
-ERROR: No responce recieved for sn?
-INFO: 473 Laser Connected
-INFO: Turning on laser
-INFO: Connected to SLM: LSH0805629
-INFO: Head Temperature: 30.25, Controller Temperature: 58.814001464843784
-INFO: Finish initiating devices
-INFO: Kinetix camera closed
-INFO: Turning off laser
-INFO: SLM Closed
-
-Process finished with exit code -1073741819 (0xC0000005)"""
 
 
 if __name__ == '__main__':
