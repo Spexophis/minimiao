@@ -5,9 +5,19 @@
 from minimiao import logger
 
 try:
-    from . import cobolt_laser, teledyne_kinetix, hamamatsu_slm
+    from . import cobolt_laser
 except ImportError:
-    from minimiao.devices import cobolt_laser, teledyne_kinetix, hamamatsu_slm
+    from minimiao.devices import cobolt_laser
+
+try:
+    from . import teledyne_kinetix
+except ImportError:
+    from minimiao.devices import teledyne_kinetix
+
+try:
+    from . import hamamatsu_slm
+except ImportError:
+    from minimiao.devices import hamamatsu_slm
 
 
 class DeviceManager:
@@ -57,6 +67,24 @@ class DeviceManager:
             except Exception as e:
                 self.logg.error(f"SLM close failed: {e}")
 
+"""
+INFO: Kinetix camera opened: PMPCIECam00
+INFO: Kinetix Serial Number: A24F723013
+INFO: Sensor size: 2400 (ser) x 2400 (par)
+INFO: Temperature setpoint: -10.0 °C
+ERROR: No responce recieved for sn?
+INFO: 473 Laser Connected
+INFO: Turning on laser
+INFO: Connected to SLM: LSH0805629
+INFO: Head Temperature: 30.25, Controller Temperature: 58.814001464843784
+INFO: Finish initiating devices
+INFO: Kinetix camera closed
+INFO: Turning off laser
+INFO: SLM Closed
+
+Process finished with exit code -1073741819 (0xC0000005)"""
+
 
 if __name__ == '__main__':
     device_manager = DeviceManager()
+    device_manager.close()

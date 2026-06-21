@@ -19,7 +19,7 @@ class CoboltLaser:
         lasers = {}
         for laser, sn in laser_dict.items():
             try:
-                lasers[laser] = pycobolt.Cobolt06MLD(port="COM4")
+                lasers[laser] = pycobolt.Cobolt06MLD(serialnumber=sn)
                 self.logg.info("{} Laser Connected".format(laser))
             except Exception as e:
                 self.logg.error(f"Laser Error: {e}")
