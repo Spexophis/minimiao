@@ -378,8 +378,6 @@ class CommandExecutor(QObject):
             self.run_resolft_scan(acq_num)
         elif acq_mod == "Point Scan 2D" and scan.lower().startswith("point"):
             self.run_point_scan(acq_num)
-        elif acq_mod == "Static Point" and scan.lower().startswith("static"):
-            self.run_static_point(acq_num)
         else:
             self.logg.error(f"Invalid video mode")
 
@@ -412,6 +410,15 @@ class CommandExecutor(QObject):
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
         except Exception as e:
             self.logg.error(f"Error writing piezo scanning data: {e}")
+        try:
+            if self.devs.daq.pmt_data is not None:
+                pmt_raw = np.array(self.devs.daq.pmt_data.data_list)
+                np.save(str(fd + r"_" + scan + r"_pmt_voltages.npy"), pmt_raw)
+            if self.rec.live_pmt is not None:
+                pmt_img = np.array(self.rec.live_pmt).astype(np.float32)
+                tf.imwrite(str(fd + r"_" + scan + r"_pmt_image.tif"), data=pmt_img, compression='zlib')
+        except Exception as e:
+            self.logg.error(f"Error writing PMT data: {e}")
         self.devs.daq.mpd_data = None
 
     def prepare_resolft_scan(self, tim):
