@@ -175,6 +175,93 @@ class PhotonCountList:
         self.callback = callback
 
 
+class PMTThread(threading.Thread):
+
+    def __init__(self, daq, interval=0.004):
+        threading.Thread.__init__(self)
+        self.daq = daq
+        self.interval = interval
+        self.started = False
+        self.running = False
+        self.paused = False
+        self.lock = threading.Lock()
+        self.condition = threading.Condition(self.lock)
+
+    def run(self):
+        self.started = True
+        self.running = True
+        while self.running:
+            with self.condition:
+
+                while self.paused and self.running:
+                    self.condition.wait()
+
+                if not self.running:
+                    break
+
+                self.condition.wait(timeout=self.interval)
+
+                if not self.running:
+                    break
+
+                if not self.paused and self.running:
+                    self.daq.get_pmt_voltages()
+
+    def pause(self):
+        with self.condition:
+            self.paused = True
+
+    def resume(self):
+        with self.condition:
+            self.paused = False
+            self.condition.notify()
+
+    def stop(self):
+        with self.condition:
+            self.running = False
+            self.paused = False
+            self.condition.notify()
+        self.join()
+
+    def trigger(self):
+        """Manually trigger an immediate count"""
+        with self.condition:
+            self.condition.notify()
+
+
+class PMTList:
+
+    def __init__(self, max_length):
+        self.data_list = deque(maxlen=max_length)
+        self.ind_list = deque(maxlen=max_length)
+        self.read_start = 0
+        self.read_end = 0
+        self.read_len = max_length
+        self.callback = None
+        self.request = None
+        self.lock = threading.Lock()
+
+    def add_element(self, elements: list, num: int):
+        with self.lock:
+            d = np.asarray(elements, dtype=np.float64)
+            self.read_start = self.read_end % self.read_len
+            self.read_end = (self.read_end + num) % self.read_len
+            self.data_list.extend(elements)
+            if self.read_start <= self.read_end:
+                indices = np.arange(self.read_start, self.read_end)
+            else:
+                indices = np.concatenate((np.arange(self.read_start, self.read_len), np.arange(self.read_end)))
+            self.ind_list.extend(indices.tolist())
+            if self.callback is not None:
+                self.callback(d, list(indices))
+
+    def get_elements(self):
+        return np.array(self.data_list) if self.data_list else None
+
+    def on_update(self, callback):
+        self.callback = callback
+
+
 class PSLiveWorker(QThread):
     psr_ready = pyqtSignal(object, object)
     psr_new = pyqtSignal()

@@ -33,7 +33,7 @@ class NIDAQ:
         self.duty_cycle = float(0.5)
         self.mode = None
         self.analog_output_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2"]
-        self.analog_input_channels = ["Dev1/ai1", "Dev1/ai2", "Dev1/ai3"]
+        self.analog_input_channels = ["Dev1/ai0", "Dev1/ai1", "Dev1/ai2"]
         self.analog_reader = None
         self.analog_data = None
         self.galvo_channels = ["Dev1/ao0", "Dev1/ao1"]
@@ -165,7 +165,7 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_analog_sequences(self, analog_sequences, analog_channels, reader=False):
+    def write_analog_sequences(self, analog_sequences, analog_channels, reader_channels=None):
         if analog_sequences.ndim > 1:
             n_channels, n_samples = analog_sequences.shape
         else:
@@ -185,15 +185,15 @@ class NIDAQ:
             self.tasks["analog"].export_signals.export_signal(Signal.SAMPLE_CLOCK, "/Dev1/PFI1")
             self.tasks["analog"].write(analog_sequences, auto_start=False)
             self._active["analog"] = True
-            if reader:
+            if reader_channels is not None:
                 self.tasks["analog_in"] = nidaqmx.Task("analog_in")
-                self.analog_data = np.zeros(analog_sequences.shape)
-                for analog_channel in analog_channels:
-                    self.tasks["analog_in"].ai_channels.add_ai_voltage_chan(self.analog_input_channels[analog_channel],
+                self.analog_data = np.zeros((len(reader_channels), n_samples))
+                for reader_channel in reader_channels:
+                    self.tasks["analog_in"].ai_channels.add_ai_voltage_chan(self.analog_input_channels[reader_channel],
                                                                             min_val=-10., max_val=10.)
                 self.tasks["analog_in"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
                                                                    sample_mode=self.mode, samps_per_chan=n_samples)
-                if analog_sequences.ndim > 1:
+                if len(analog_channels) > 1:
                     self.analog_reader = AnalogMultiChannelReader(self.tasks["analog_in"].in_stream)
                 else:
                     self.analog_reader = AnalogSingleChannelReader(self.tasks["analog_in"].in_stream)
@@ -235,15 +235,16 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
-    def write_triggers(self, analog_sequences=None, analog_channels=None, digital_sequences=None, digital_channels=None,
-                       rd=False, finite=True):
+    def write_triggers(self, analog_sequences=None, analog_channels=None,
+                       digital_sequences=None, digital_channels=None,
+                       reader_channels=None, finite=True):
         if finite:
             self.mode = AcquisitionType.FINITE
         else:
             self.mode = AcquisitionType.CONTINUOUS
         try:
             if analog_sequences is not None:
-                self.write_analog_sequences(analog_sequences, analog_channels, rd)
+                self.write_analog_sequences(analog_sequences, analog_channels, reader_channels)
             if digital_sequences is not None:
                 self.write_digital_sequences(digital_sequences, digital_channels)
         except nidaqmx.DaqWarning as e:
@@ -318,6 +319,9 @@ class NIDAQ:
         edg_num, count_data = self.mpd_data.get_elements()
         return count_data
 
+    def get_pmt_voltages(self):
+        self.analog_reader.read_many_sample(data=self.analog_data, number_of_samples_per_channel=READ_ALL_AVAILABLE)
+    
     def start_triggers(self):
         try:
             if self._active["digital"]:

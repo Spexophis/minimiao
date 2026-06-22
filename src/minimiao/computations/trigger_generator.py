@@ -23,23 +23,23 @@ class TriggerSequence:
         # galvo scanner
         self.galvo_ramp_time = 300  # ~300 us
         self.galvo_ramp_time_samples = round(self.galvo_ramp_time * 1e-6 * self.sample_rate)
-        self.galvo_step_response = 325  # ~325 us
+        self.galvo_step_response = 400  # ~325 us
         self.galvo_step_response_samples = round(self.galvo_step_response * 1e-6 * self.sample_rate)
-        self.galvo_return_time = 510  # ~500 us
+        self.galvo_return_time = 300  # ~500 us
         self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
-        self.galvo_origins = [0.1, -0.1]  # V
-        self.galvo_ranges = [0.25601, 0.36352]  # V
+        self.galvo_origins = [0.0, -0.1]  # V
+        self.galvo_ranges = [0.000, 0.17751]  # V
         self.galvo_offsets = [-0.0, 0.0]  # V
         self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
         self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
-        self.dot_steps = [0.002, 0.00285]  # volts
+        self.dot_steps = [0.001, 0.00142]  # volts
         self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
                         zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
         # piezo scanner
         self.piezo_conv_factors = [10.]
-        self.piezo_steps = [0.16]
-        self.piezo_ranges = [3.2]
+        self.piezo_steps = [0.08]
+        self.piezo_ranges = [2.0]
         self.piezo_positions = [50.]
         self.piezo_return_time = 0.04  # ~50 ms
         self.piezo_return_samples = int(np.ceil(self.piezo_return_time * self.sample_rate))
@@ -218,6 +218,11 @@ class TriggerSequence:
         gates = np.tile(gates, self.galvo_scan_pos[pch])
         return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, gates, dwl
 
+    def generate_piezo_resolft_scan(self, lasers, detectors):
+        digital_triggers, galvo_sequences, dig_chs, gv_chs, pos, gates, dwl = self.generate_galvo_resolft_scan(lasers, detectors)
+
+        return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, gates, dwl
+
     def generate_galvo_resolft_static(self, lasers, detectors):
         digital_triggers, dig_chs, cycle_samples, gates, dwl = self.generate_digital_triggers_for_galvo_scan(lasers, detectors)
         pos = 16
@@ -247,11 +252,9 @@ class TriggerSequence:
         gates = [gate_ttl for _ in range(len(detect_ind))]
         return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
 
-    def generate_axial_scan(self, lasers, detectors, point_scan=True):
-        if point_scan:
-            digital_triggers, galvo_sequences, dchs, gchs, pos, detect_gates = self.generate_galvo_point_scan(lasers, detectors)
-        else:
-            digital_triggers, galvo_sequences, dchs, gchs, pos, detect_gates, dwl = self.generate_galvo_resolft_scan(lasers, detectors)
+    def generate_galvo_axial_scan(self, lasers, detectors):
+        digital_triggers, galvo_sequences, digital_channels, gv_chs, pos, gates = self.generate_galvo_point_scan(lasers, detectors)
+        return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
 
 
 def convert_list(arrays):
