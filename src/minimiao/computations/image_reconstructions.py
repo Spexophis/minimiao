@@ -80,12 +80,12 @@ class ImgRecon:
             self.point_scan_dwell_samples)
 
     def prepare_point_scan_live_recon(self, n=2):
-        self.live_counts = [np.zeros(self._scan_gate_len, dtype=np.uint32) for _ in range(n)]
-        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32) for _ in
+        self.live_counts = [np.zeros(self._scan_gate_len, dtype=np.float32) for _ in range(n)]
+        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.float32) for _ in
                          range(n)]
         self._reshape_buffer = [
             np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples),
-                     dtype=np.uint32) for _ in range(n)]
+                     dtype=np.float32) for _ in range(n)]
 
     def point_scan_live_recon(self, photon_counts, ind_list, ind, bi_direction: bool = False):
         with self.lock:
