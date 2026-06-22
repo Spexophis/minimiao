@@ -85,6 +85,8 @@ class LiveViewer(QWidget):
     def _create_plot_0_widget(self):
         layout_plot_0 = QGridLayout()
 
+        self.QComboBox_plot_selection_0 = cw.ComboBoxWidget(list_items=["MPD #0", "PMT", "Empty"], length=80)
+
         self.graph_plot_0 = pg.PlotWidget()
         self.graph_plot_0.setAspectLocked(True)
         self.graph_plot_0.setLabel('left', 'Y Position', units='v')
@@ -108,7 +110,7 @@ class LiveViewer(QWidget):
         pi_0.setClipToView(True)
         pi_0.enableAutoRange(x=False)
 
-        layout_plot_0.addWidget(cw.LabelWidget(str('MPD #0')), 0, 0)
+        layout_plot_0.addWidget(self.QComboBox_plot_selection_0, 0, 0)
         layout_plot_0.addWidget(self.graph_plot_0, 1, 0)
         layout_plot_0.addWidget(self.data_plot_0, 1, 1)
 
@@ -120,7 +122,7 @@ class LiveViewer(QWidget):
     def _create_plot_1_widget(self):
         layout_plot_1 = QGridLayout()
 
-        self.QComboBox_plot_selection = cw.ComboBoxWidget(list_items=["MPD #1", "PMT"], length=80)
+        self.QComboBox_plot_selection_1 = cw.ComboBoxWidget(list_items=["MPD #1", "PMT", "Empty"], length=80)
 
         self.graph_plot_1 = pg.PlotWidget()
         self.graph_plot_1.setAspectLocked(True)
@@ -145,7 +147,7 @@ class LiveViewer(QWidget):
         pi_1.setClipToView(True)
         pi_1.enableAutoRange(x=False)
 
-        layout_plot_1.addWidget(self.QComboBox_plot_selection, 0, 0)
+        layout_plot_1.addWidget(self.QComboBox_plot_selection_1, 0, 0)
         layout_plot_1.addWidget(self.graph_plot_1, 1, 0)
         layout_plot_1.addWidget(self.data_plot_1, 1, 1)
 
@@ -189,8 +191,9 @@ class LiveViewer(QWidget):
 
         return metric_widget
 
-    def set_plot_1(self, n):
-        self.QComboBox_plot_selection.setCurrentIndex(n)
+    def set_plots(self, ps):
+        self.QComboBox_plot_selection_0.setCurrentIndex(ps[0])
+        self.QComboBox_plot_selection_1.setCurrentIndex(ps[1])
 
     def plot_trace(self,
                    y,

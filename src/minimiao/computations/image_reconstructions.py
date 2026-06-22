@@ -14,8 +14,6 @@ class ImgRecon:
     def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
 
-        self.mode = 1  # 0 - confocal; 1 - resolft
-
         self._scan_gate_len = 1024
         self._point_scan_gate_mask = np.zeros(self._scan_gate_len, dtype=bool)
         self._off_gate_len = 1024
@@ -81,16 +79,13 @@ class ImgRecon:
         self._expected = int(self.point_scan_n_lines) * int(self.point_scan_n_pixels) * int(
             self.point_scan_dwell_samples)
 
-    def prepare_point_scan_live_recon(self):
-        self.live_counts = [np.zeros(self._scan_gate_len, dtype=np.uint32),
-                            np.zeros(self._scan_gate_len, dtype=np.uint32)]
-        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32),
-                         np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32)]
+    def prepare_point_scan_live_recon(self, n=2):
+        self.live_counts = [np.zeros(self._scan_gate_len, dtype=np.uint32) for _ in range(n)]
+        self.live_rec = [np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels), dtype=np.uint32) for _ in
+                         range(n)]
         self._reshape_buffer = [
             np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples),
-                     dtype=np.uint32),
-            np.zeros((self.point_scan_n_lines, self.point_scan_n_pixels, self.point_scan_dwell_samples),
-                     dtype=np.uint32)]
+                     dtype=np.uint32) for _ in range(n)]
 
     def point_scan_live_recon(self, photon_counts, ind_list, ind, bi_direction: bool = False):
         with self.lock:

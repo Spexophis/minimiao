@@ -193,52 +193,80 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plot_1(dn)
+        self.viewer.set_plots(dn)
+        gate_channel = []
+        counter_channel = []
+        reader_channel = None
+        nch = 0
+        if dn[0] == 0:
+            gate_channel.append(0)
+            counter_channel.append(0)
+            nch += 1
+        if dn[0] == 1:
+            reader_channel = [0]
+            nch += 1
+        if dn[1] == 0:
+            gate_channel.append(1)
+            counter_channel.append(1)
+            nch += 1
+        if dn[1] == 1:
+            counter_channel.append(2)
+            nch += 1
         if vd_mod == "RESOLFT Scan":
-            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, gate_channel)
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch,
-                                         reader_channels=None, finite=finite)
-            self.devs.daq.photon_counter_mode = 1
-            self.devs.daq.psr = self.rec
-            self.rec.mode = 1
-            self.viewer.psr_mode = True
-            self.viewer.psr_fn = 1
+                                         reader_channels=reader_channel, finite=finite)
         elif vd_mod == "Point Scan":
-            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, gate_channel)
             pdw = 1
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch,
-                                         reader_channels=None, finite=finite)
-            self.devs.daq.photon_counter_mode = 1
-            self.devs.daq.psr = self.rec
-            self.rec.mode = 0
-            self.viewer.psr_mode = True
-            self.viewer.psr_fn = 1
+                                         reader_channels=reader_channel, finite=finite)
         elif vd_mod == "Point Scan 3D":
-            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, gate_channel)
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch,
-                                         reader_channels=None, finite=finite)
-            self.devs.daq.photon_counter_mode = 1
-            self.devs.daq.psr = self.rec
-            self.rec.mode = 1
-            self.viewer.psr_mode = True
-            self.viewer.psr_fn = 1
+                                         reader_channels=reader_channel, finite=finite)
         else:
             raise Exception(f"Invalid video mode {vd_mod} for MPD")
+        self.viewer.psr_mode = True
+        self.viewer.psr_fn = 1
         self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
-        self.rec.prepare_point_scan_live_recon()
+        self.rec.prepare_point_scan_live_recon(2)
         self.devs.daq.photon_counter_length = dtr.shape[1]
-        self.devs.daq.prepare_photon_counter(self.detector[dn])
+
+        if len(counter_channel) > 0:
+            self.devs.daq.prepare_photon_counter(counter_channel)
+            # Build slot map: hardware counter index → display slot index
+            mpd_slot_map = []
+            if dn[0] == 0:
+                mpd_slot_map.append(0)  # spot 0 is MPD → display slot 0
+            if dn[1] in (0, 1):
+                mpd_slot_map.append(1)  # spot 1 is MPD or PMT_photon → display slot 1
+
+            def _mpd_recon(counts, ind_list, ind):
+                self.rec.point_scan_live_recon(counts, ind_list, mpd_slot_map[ind])
+
+            self.devs.daq.mpd_data.on_update(_mpd_recon)
+        else:
+            self.devs.daq.clear_photon_counter()
+
+        if reader_channel is not None:
+            self.devs.daq.pmt_data.on_update(
+                lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
+            )
+
         self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
                                              dt_s=1 / self.devs.daq.sample_rate,
                                              px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
         if getattr(self.viewer, "psr_worker", None) is None:
-            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, self.devs.daq.mpd_data,
-                                                              fps=10, parent=self.viewer)
+            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec,
+                                                              self.devs.daq.mpd_data,
+                                                              self.devs.daq.pmt_data,
+                                                              dn=dn, fps=10, parent=self.viewer)
             self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
             self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
             self.viewer.psr_worker.start()
@@ -391,14 +419,12 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plot_1(dn)
+        self.viewer.set_plots(dn)
         dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                      digital_sequences=dtr, digital_channels=dch,
                                      reader_channels=[0, 1, 2], finite=True)
-        self.devs.daq.photon_counter_mode = 1
-        self.devs.daq.psr = self.rec
-        self.rec.mode = 1
+        self.devs.daq.mpd_data.on_update(self.rec.point_scan_live_recon)
         self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
@@ -444,7 +470,7 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plot_1(dn)
+        self.viewer.set_plots(dn)
         dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
         pdw = 1
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
@@ -514,9 +540,8 @@ class CommandExecutor(QObject):
             axis_origins, axis_lengths, step_sizes = self.ctrl_panel.get_piezo_scan_parameters()
             return_time = self.ctrl_panel.get_piezo_scan_time()
             self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, axis_origins, return_time)
-
             dn = self.ctrl_panel.get_detector()
-            self.viewer.set_plot_1(dn)
+            self.viewer.set_plots(dn)
             if vd_mod == "RESOLFT Scan":
                 dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
                 self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
@@ -627,7 +652,7 @@ class CommandExecutor(QObject):
             self.set_lasers(self.lasers)
             self.update_trigger_parameters()
             dn = self.ctrl_panel.get_detector()
-            self.viewer.set_plot_1(dn)
+            self.viewer.set_plots(dn)
             dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                          digital_sequences=dtr, digital_channels=dch, finite=True)
@@ -644,7 +669,7 @@ class CommandExecutor(QObject):
             self.set_lasers(self.lasers)
             self.update_trigger_parameters()
             dn = self.ctrl_panel.get_detector()
-            self.viewer.set_plot_1(dn)
+            self.viewer.set_plots(dn)
             dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
             pdw = 1
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,

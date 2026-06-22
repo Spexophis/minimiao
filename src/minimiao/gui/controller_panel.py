@@ -211,7 +211,8 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QComboBox_imaging_detector_selection = cw.ComboBoxWidget(list_items=["MPD_0 + MPD_1", "MPD_0 + PMT"])
+        self.QComboBox_imaging_detector_0 = cw.ComboBoxWidget(list_items=["MPD_0", "PMT_0", "None"])
+        self.QComboBox_imaging_detector_1 = cw.ComboBoxWidget(list_items=["MPD_1", "PMT_1", "None"])
         self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan", "Point Scan", "Point Scan 3D"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
@@ -221,7 +222,8 @@ class ControlPanel(QWidget):
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
 
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Detector')), 0, 0, 1, 1)
-        acq_scroll_layout.addWidget(self.QComboBox_imaging_detector_selection, 1, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_imaging_detector_0, 1, 0, 1, 1)
+        acq_scroll_layout.addWidget(self.QComboBox_imaging_detector_1, 2, 0, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Live Modes')), 0, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_live_modes, 1, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_save_live_timing_presets, 2, 1, 1, 1)
@@ -350,7 +352,7 @@ class ControlPanel(QWidget):
         self.Signal_daq_reset.emit()
 
     def get_detector(self):
-        return self.QComboBox_imaging_detector_selection.currentIndex()
+        return [self.QComboBox_imaging_detector_0.currentIndex(), self.QComboBox_imaging_detector_1.currentIndex()]
 
     def get_digital_parameters(self):
         digital_starts = [self.QDoubleSpinBox_ttl_start_on_405.value(),

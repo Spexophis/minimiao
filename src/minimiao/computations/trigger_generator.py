@@ -28,11 +28,11 @@ class TriggerSequence:
         self.galvo_return_time = 300  # ~500 us
         self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
         self.galvo_origins = [0.0, -0.1]  # V
-        self.galvo_ranges = [0.000, 0.17751]  # V
+        self.galvo_ranges = [0.1, 0.2]  # V
         self.galvo_offsets = [-0.0, 0.0]  # V
         self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
         self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
-        self.dot_steps = [0.001, 0.00142]  # volts
+        self.dot_steps = [0.02, 0.04]  # volts
         self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
                         zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
@@ -148,22 +148,31 @@ class TriggerSequence:
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
 
     def generate_digital_triggers(self, lasers, detectors):
-        detect_ind = [detector + 3 for detector in detectors]
         digital_channels = lasers.copy()
-        digital_channels.extend(detect_ind)
+        if len(detectors) == 0:
+            detect_ind = []
+            gate_ind = [5]
+        else:
+            detect_ind = [detector + 3 for detector in detectors]
+            digital_channels.extend(detect_ind)
         cycle_samples = max([self.digital_ends[i] for i in digital_channels])
         laser_triggers = np.zeros((len(lasers), cycle_samples), dtype=np.uint8)
         for ln, ch in enumerate(lasers):
             laser_triggers[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
         pixel_dwell_samples = self.digital_ends[3] - self.digital_starts[3]
-        detector_triggers = np.zeros((len(detect_ind), cycle_samples), dtype=np.uint8)
-        detector_trigger = np.sum(laser_triggers, axis=0)
-        detector_triggers[0] = detector_trigger
-        detector_triggers[1] = detector_trigger
-        digital_triggers = np.vstack((laser_triggers, detector_triggers))
-        detector_gates = np.zeros((len(detect_ind), cycle_samples), dtype=np.uint8)
-        for ln, ch in enumerate(detect_ind):
-            detector_gates[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
+        if len(detect_ind) > 0:
+            detector_triggers = np.zeros((len(detect_ind), cycle_samples), dtype=np.uint8)
+            detector_trigger = np.sum(laser_triggers, axis=0)
+            detector_triggers[:] = detector_trigger
+            digital_triggers = np.vstack((laser_triggers, detector_triggers))
+            detector_gates = np.zeros((len(detect_ind), cycle_samples), dtype=np.uint8)
+            for ln, ch in enumerate(detect_ind):
+                detector_gates[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
+        else:
+            digital_triggers = laser_triggers
+            detector_gates = np.zeros((len(gate_ind), cycle_samples), dtype=np.uint8)
+            for ln, ch in enumerate(gate_ind):
+                detector_gates[ln, self.digital_starts[ch]:self.digital_ends[ch]] = 1
         return digital_triggers, digital_channels, detector_gates, pixel_dwell_samples
 
     def generate_digital_triggers_for_galvo_scan(self, lasers, detectors):

@@ -43,12 +43,8 @@ class NIDAQ:
         self.photon_counter_channels = ["/Dev1/ctr0", "/Dev1/ctr1"]
         self.photon_counter_terminals = ["/Dev1/PFI0", "/Dev1/PFI12", "/Dev1/PFI3"]
         self.pmt_data = None
+        self.pmt_thread = None
         self._photon_counter_length = int(2 ** 16)
-        self.photon_counter_mode = 0
-        self.psr = None
-
-    def __del__(self):
-        pass
 
     def close(self):
         for device in self.devices:
@@ -66,7 +62,7 @@ class NIDAQ:
 
     def _configure(self):
         try:
-            tasks = {"analog": None, "digital": None, "analog_in": None, "photon_counters": [], "pmt_reader": None}
+            tasks = {"analog_out": None, "digital_out": None, "analog_in": None, "photon_counters": []}
             _active = {key: False for key in tasks.keys()}
             _running = {key: False for key in tasks.keys()}
             return tasks, _active, _running
@@ -175,16 +171,16 @@ class NIDAQ:
             self.logg.error("WARNING: Length of n_channels and indices differ, skipping piezo sequences update.")
             return
         try:
-            self.tasks["analog"] = nidaqmx.Task("analog")
+            self.tasks["analog_out"] = nidaqmx.Task("analog_out")
             for analog_channel in analog_channels:
-                self.tasks["analog"].ao_channels.add_ao_voltage_chan(self.analog_output_channels[analog_channel],
+                self.tasks["analog_out"].ao_channels.add_ao_voltage_chan(self.analog_output_channels[analog_channel],
                                                                      min_val=-10., max_val=10.)
-            self.tasks["analog"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+            self.tasks["analog_out"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                             sample_mode=self.mode, samps_per_chan=n_samples)
-            self.tasks["analog"].out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
-            self.tasks["analog"].export_signals.export_signal(Signal.SAMPLE_CLOCK, "/Dev1/PFI1")
-            self.tasks["analog"].write(analog_sequences, auto_start=False)
-            self._active["analog"] = True
+            self.tasks["analog_out"].out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
+            self.tasks["analog_out"].export_signals.export_signal(Signal.SAMPLE_CLOCK, "/Dev1/PFI1")
+            self.tasks["analog_out"].write(analog_sequences, auto_start=False)
+            self._active["analog_out"] = True
             if reader_channels is not None:
                 self.tasks["analog_in"] = nidaqmx.Task("analog_in")
                 self.analog_data = np.zeros((len(reader_channels), n_samples))
@@ -193,10 +189,14 @@ class NIDAQ:
                                                                             min_val=-10., max_val=10.)
                 self.tasks["analog_in"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
                                                                    sample_mode=self.mode, samps_per_chan=n_samples)
-                if len(analog_channels) > 1:
+                if len(reader_channels) > 1:
                     self.analog_reader = AnalogMultiChannelReader(self.tasks["analog_in"].in_stream)
                 else:
                     self.analog_reader = AnalogSingleChannelReader(self.tasks["analog_in"].in_stream)
+                if 0 in reader_channels:
+                    self.pmt_data = run_threads.PMTList(n_samples)
+                    if self.mode == nidaqmx.constants.AcquisitionType.CONTINUOUS:
+                        self.pmt_thread = run_threads.PMTThread(self)
                 self._active["analog_in"] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
@@ -218,15 +218,15 @@ class NIDAQ:
             self.logg.error("WARNING: Length of n_channels and indices differ, skipping digital sequences update.")
             return
         try:
-            self.tasks["digital"] = nidaqmx.Task("digital")
+            self.tasks["digital_out"] = nidaqmx.Task("digital_out")
             for digital_channel in digital_channels:
-                self.tasks["digital"].do_channels.add_do_chan(self.digital_output_channels[digital_channel],
+                self.tasks["digital_out"].do_channels.add_do_chan(self.digital_output_channels[digital_channel],
                                                               line_grouping=LineGrouping.CHAN_PER_LINE)
-            self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
+            self.tasks["digital_out"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
                                                              sample_mode=self.mode, samps_per_chan=n_samples)
-            self.tasks["digital"].timing.samp_clk_active_edge = Edge.RISING
-            self.tasks["digital"].write(digital_sequences == 1.0, auto_start=False)
-            self._active["digital"] = True
+            self.tasks["digital_out"].timing.samp_clk_active_edge = Edge.RISING
+            self.tasks["digital_out"].write(digital_sequences == 1.0, auto_start=False)
+            self._active["digital_out"] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
@@ -262,7 +262,7 @@ class NIDAQ:
             tsk_name = f"photon_counter_{i}"
             self.tasks["photon_counters"].append(nidaqmx.Task(tsk_name))
             self.acq_threads.append(run_threads.PhotonCountThread(self, i))
-        self.mpd_data = run_threads.PhotonCountList(self.photon_counter_length)
+        self.mpd_data = run_threads.PhotonCountList(len(cl), self.photon_counter_length)
         for n, tsk in enumerate(self.tasks["photon_counters"]):
             c = tsk.ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channels[n],
                                                         edge=Edge.RISING)
@@ -272,9 +272,12 @@ class NIDAQ:
                                            active_edge=Edge.RISING, sample_mode=self.mode,
                                            samps_per_chan=self.photon_counter_length)
             tsk.in_stream.input_buf_size = self.photon_counter_length
-        if self.photon_counter_mode:
-            self.mpd_data.on_update(self.psr.point_scan_live_recon)
         self._active["photon_counters"] = True
+
+    def clear_photon_counter(self):
+        self.acq_threads = []
+        self.mpd_data = None
+        self._active["photon_counters"] = False
 
     def start_photon_count(self):
         for acq in self.acq_threads:
@@ -319,28 +322,55 @@ class NIDAQ:
         edg_num, count_data = self.mpd_data.get_elements()
         return count_data
 
+    def start_pmt_read(self):
+        if self.pmt_thread:
+            if self.pmt_thread.started:
+                self.pmt_thread.resume()
+                self.logg.info("PMT reading resumed")
+            else:
+                self.pmt_thread.start()
+                self.logg.info("PMT reading started")
+
+    def stop_pmt_read(self):
+        if self.pmt_thread:
+            self.pmt_thread.stop()
+            self.pmt_thread = None
+        self.logg.info("PMT reading stopped")
+
     def get_pmt_voltages(self):
-        self.analog_reader.read_many_sample(data=self.analog_data, number_of_samples_per_channel=READ_ALL_AVAILABLE)
-    
+        try:
+            avail = self.tasks["analog_in"].in_stream.avail_samp_per_chan
+            if avail > 0:
+                if isinstance(self.analog_reader, AnalogMultiChannelReader):
+                    tmp = np.empty((self.analog_data.shape[0], avail), dtype=np.float64)
+                    self.analog_reader.read_many_sample(tmp, number_of_samples_per_channel=avail, timeout=0.)
+                    pmt_ch = - tmp[0]
+                else:
+                    pmt_ch = np.empty(avail, dtype=np.float64)
+                    self.analog_reader.read_many_sample(pmt_ch, number_of_samples_per_channel=avail, timeout=0.)
+                    pmt_ch = - pmt_ch
+                self.pmt_data.add_element(pmt_ch.tolist(), avail)
+        except nidaqmx.DaqWarning as e:
+            self.logg.error("PMT read error %s: %s", e.error_code, e)
+
     def start_triggers(self):
         try:
-            if self._active["digital"]:
-                self.tasks["digital"].start()
-                self._running["digital"] = True
+            if self._active["digital_out"]:
+                self.tasks["digital_out"].start()
+                self._running["digital_out"] = True
             if self._active["photon_counters"]:
                 for task in self.tasks["photon_counters"]:
                     task.start()
                 self._running["photon_counters"] = True
-            if self._active["pmt_reader"]:
-                self.tasks["pmt_reader"].start()
-                self._running["pmt_reader"] = True
-            self.start_photon_count()
+                self.start_photon_count()
             if self._active["analog_in"]:
                 self.tasks["analog_in"].start()
                 self._running["analog_in"] = True
-            if self._active["analog"]:
-                self.tasks["analog"].start()
-                self._running["analog"] = True
+                if self.pmt_thread is not None:
+                    self.start_pmt_read()
+            if self._active["analog_out"]:
+                self.tasks["analog_out"].start()
+                self._running["analog_out"] = True
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
 
@@ -350,8 +380,8 @@ class NIDAQ:
             if self.mode == AcquisitionType.FINITE:
                 try:
                     self.logg.info("Trigger is running")
-                    if self._active["analog"] and self._running["analog"]:
-                        self.tasks["analog"].wait_until_done(WAIT_INFINITELY)
+                    if self._active["analog_out"] and self._running["analog_out"]:
+                        self.tasks["analog_out"].wait_until_done(WAIT_INFINITELY)
                     if self._active["analog_in"] and self._running["analog_in"]:
                         self.tasks["analog_in"].wait_until_done(WAIT_INFINITELY)
                         self.analog_reader.read_many_sample(data=self.analog_data,
@@ -359,10 +389,8 @@ class NIDAQ:
                     if self._active["photon_counters"] and self._running["photon_counters"]:
                         for task in self.tasks["photon_counters"]:
                             task.wait_until_done(WAIT_INFINITELY)
-                    if self._active["pmt_reader"] and self._running["pmt_reader"]:
-                        self.tasks["pmt_reader"].wait_until_done(WAIT_INFINITELY)
-                    if self._active["digital"] and self._running["digital"]:
-                        self.tasks["digital"].wait_until_done(WAIT_INFINITELY)
+                    if self._active["digital_out"] and self._running["digital_out"]:
+                        self.tasks["digital_out"].wait_until_done(WAIT_INFINITELY)
                     self.logg.info("Trigger finished")
                 except nidaqmx.DaqWarning as e:
                     self.logg.warning("DaqWarning caught as exception: %s", e)
@@ -376,9 +404,9 @@ class NIDAQ:
 
     def stop_triggers(self, _close=True):
         try:
-            if self._active["analog"] and self._running["analog"]:
-                self.tasks["analog"].stop()
-                self._running["analog"] = False
+            if self._active["analog_out"] and self._running["analog_out"]:
+                self.tasks["analog_out"].stop()
+                self._running["analog_out"] = False
             if self._active["analog_in"] and self._running["analog_in"]:
                 self.tasks["analog_in"].stop()
                 self._running["analog_in"] = False
@@ -386,12 +414,9 @@ class NIDAQ:
                 for task in self.tasks["photon_counters"]:
                     task.stop()
                 self._running["photon_counters"] = False
-            if self._active["pmt_reader"] and self._running["pmt_reader"]:
-                self.tasks["pmt_reader"].stop()
-                self._running["pmt_reader"] = False
-            if self._active["digital"] and self._running["digital"]:
-                self.tasks["digital"].stop()
-                self._running["digital"] = False
+            if self._active["digital_out"] and self._running["digital_out"]:
+                self.tasks["digital_out"].stop()
+                self._running["digital_out"] = False
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
         if _close:
@@ -399,10 +424,10 @@ class NIDAQ:
 
     def close_triggers(self):
         try:
-            if self._active["analog"]:
-                self.tasks["analog"].close()
-                self.tasks["analog"] = None
-                self._active["analog"] = False
+            if self._active["analog_out"]:
+                self.tasks["analog_out"].close()
+                self.tasks["analog_out"] = None
+                self._active["analog_out"] = False
             if self._active["analog_in"]:
                 self.tasks["analog_in"].close()
                 self.tasks["analog_in"] = None
@@ -413,13 +438,9 @@ class NIDAQ:
                     task.close()
                     task = None
                 self._active["photon_counters"] = False
-            if self._active["pmt_reader"]:
-                self.tasks["pmt_reader"].close()
-                self.tasks["pmt_reader"] = None
-                self._active["pmt_reader"] = False
-            if self._active["digital"]:
-                self.tasks["digital"].close()
-                self.tasks["digital"] = None
-                self._active["digital"] = False
+            if self._active["digital_out"]:
+                self.tasks["digital_out"].close()
+                self.tasks["digital_out"] = None
+                self._active["digital_out"] = False
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)

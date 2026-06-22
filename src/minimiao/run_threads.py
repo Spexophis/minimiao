@@ -11,70 +11,6 @@ import numpy as np
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 
-class CameraAcquisitionThread(threading.Thread):
-    def __init__(self, cam, interval=0.001):
-        super().__init__()
-        self.cam = cam
-        self.running = False
-        self.lock = threading.Lock()
-        self.condition = threading.Condition(self.lock)
-        self.interval = interval
-
-    def run(self):
-        self.running = True
-        while self.running:
-            with self.condition:
-                self.condition.wait(timeout=self.interval)
-
-                if not self.running:
-                    break
-
-                # Acquire images while holding the lock
-                self.cam.get_images()
-
-    def stop(self):
-        with self.condition:
-            self.running = False
-            self.condition.notify()  # Wake up thread immediately
-        self.join()
-
-    def trigger(self):
-        """Manually trigger an immediate acquisition"""
-        with self.condition:
-            self.condition.notify()
-
-
-class CameraDataList:
-
-    def __init__(self, max_length):
-        self.data_list = deque(maxlen=max_length)
-        self.ind_list = deque(maxlen=max_length)
-        self.callback = None
-        self._lock = threading.Lock()
-
-    def add_element(self, elements, ids=None):
-        with self._lock:
-            self.data_list.extend(elements)
-            if ids is not None:
-                self.ind_list.extend(list(range(ids[0], ids[1] + 1)))
-            last = self.data_list[-1] if self.data_list else None
-        if self.callback is not None and last is not None:
-            self.callback(last)  # passes ndarray
-
-    def get_elements(self):
-        return np.array(self.data_list) if self.data_list else None
-
-    def get_last_element(self, copy=False):
-        with self._lock:
-            if not self.data_list:
-                return None
-            arr = self.data_list[-1]
-        return arr.copy() if copy else arr  # no copy for display
-
-    def on_update(self, callback):
-        self.callback = callback
-
-
 class PhotonCountThread(threading.Thread):
 
     def __init__(self, daq, ind, interval=0.004):
@@ -132,15 +68,15 @@ class PhotonCountThread(threading.Thread):
 
 class PhotonCountList:
 
-    def __init__(self, max_length):
-        self.data_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
+    def __init__(self, n, max_length):
+        self.data_lists = [deque(maxlen=max_length)] * n
         for data_list in self.data_lists:
             data_list.extend([0])
-        self.count_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
-        self.ind_lists = [deque(maxlen=max_length), deque(maxlen=max_length)]
-        self.count_starts = [1, 1]
-        self.count_ends = [1, 1]
-        self.count_lens = [max_length, max_length]
+        self.count_lists = [deque(maxlen=max_length)] * n
+        self.ind_lists = [deque(maxlen=max_length)] * n
+        self.count_starts = [1] * n
+        self.count_ends = [1] * n
+        self.count_lens = [max_length] * n
         self.callback = None
         self.request = None
         self.lock = threading.Lock()
@@ -253,7 +189,7 @@ class PMTList:
                 indices = np.concatenate((np.arange(self.read_start, self.read_len), np.arange(self.read_end)))
             self.ind_list.extend(indices.tolist())
             if self.callback is not None:
-                self.callback(d, list(indices))
+                self.callback(d, list(indices), 0)
 
     def get_elements(self):
         return np.array(self.data_list) if self.data_list else None
@@ -265,11 +201,14 @@ class PMTList:
 class PSLiveWorker(QThread):
     psr_ready = pyqtSignal(object, object)
     psr_new = pyqtSignal()
+    pmt_ready = pyqtSignal(object)
 
-    def __init__(self, reco, mpd_dat=None, fps=10, parent=None):
+    def __init__(self, reco, mpd_dat=None, pmt_dat=None, dn=None, fps=10, parent=None):
         super().__init__(parent)
         self.mpd_dat = mpd_dat
+        self.pmt_dat = pmt_dat
         self.reco = reco
+        self.dn = dn or [2, 2]  # default: both empty
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
         self._lock = threading.Lock()
@@ -288,6 +227,7 @@ class PSLiveWorker(QThread):
         """Release references to large data objects"""
         with self._lock:
             self.mpd_dat = None
+            self.pmt_dat = None
             self.reco = None
 
     def run(self):
@@ -295,11 +235,27 @@ class PSLiveWorker(QThread):
             while self._running:
                 self.msleep(self.period_ms)
                 with self._lock:
-                    if self.mpd_dat is None or self.reco is None:
+                    if self.reco is None:
                         break
-                    img_copy = self.reco.live_rec
-                    counts_copy = self.mpd_dat.count_lists
-                self.psr_ready.emit(img_copy, counts_copy)
+                    img_copy = self.reco.live_rec   # [slot0_img, slot1_img]
+
+                    # Build [slot0_counts, slot1_counts]
+                    _empty = deque([0])
+                    # Slot 0
+                    if self.dn[0] == 0 and self.mpd_dat is not None:
+                        slot0 = self.mpd_dat.count_lists[0]
+                    elif self.dn[0] == 1 and self.pmt_dat is not None:
+                        slot0 = self.pmt_dat.data_list
+                    else:
+                        slot0 = _empty
+                    # Slot 1 — hardware counter index is 1 if spot0 is MPD, else 0
+                    mpd_idx1 = 1 if self.dn[0] == 0 else 0
+                    if self.dn[1] in (0, 1) and self.mpd_dat is not None:
+                        slot1 = self.mpd_dat.count_lists[mpd_idx1]
+                    else:
+                        slot1 = _empty
+
+                self.psr_ready.emit(img_copy, [slot0, slot1])
                 self.psr_new.emit()
         except Exception as e:
             import logging
