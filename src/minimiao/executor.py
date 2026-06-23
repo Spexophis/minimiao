@@ -422,7 +422,7 @@ class CommandExecutor(QObject):
 
         gate_channel = []
         counter_channel = []
-        reader_channel = None
+        reader_channel = []
         if dn[0] == 0:
             gate_channel.append(0)
             counter_channel.append(0)
@@ -433,10 +433,7 @@ class CommandExecutor(QObject):
             counter_channel.append(1)
         if dn[1] == 1:
             counter_channel.append(2)
-        if reader_channel is not None:
-            reader_channel.extend([1, 2])
-        else:
-            reader_channel = [1, 2]
+        reader_channel.extend([1, 2])
 
         dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, gate_channel)
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
@@ -448,6 +445,7 @@ class CommandExecutor(QObject):
                                        n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
+
         if dtr.ndim == 1:
             self.devs.daq.photon_counter_length = dtr.shape[0]
         if dtr.ndim == 2:
@@ -468,7 +466,7 @@ class CommandExecutor(QObject):
         else:
             self.devs.daq.clear_photon_counter()
 
-        if 0 in reader_channel:
+        if reader_channel is not None:
             self.devs.daq.pmt_data.on_update(
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
@@ -514,9 +512,10 @@ class CommandExecutor(QObject):
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
         self.viewer.set_plots(dn)
+
         gate_channel = []
         counter_channel = []
-        reader_channel = None
+        reader_channel = []
         if dn[0] == 0:
             gate_channel.append(0)
             counter_channel.append(0)
@@ -527,21 +526,20 @@ class CommandExecutor(QObject):
             counter_channel.append(1)
         if dn[1] == 1:
             counter_channel.append(2)
-        if reader_channel is not None:
-            reader_channel.extend([1, 2])
-        else:
-            reader_channel = [1, 2]
+        reader_channel.extend([1, 2])
 
         dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, gate_channel)
         pdw = 1
         self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
                                      digital_sequences=dtr, digital_channels=dch,
                                      reader_channels=reader_channel, finite=True)
+
         self.rec.point_scan_gate_mask = gts[0]
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1],
                                        n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
         self.rec.prepare_point_scan_live_recon()
+
         if dtr.ndim == 1:
             self.devs.daq.photon_counter_length = dtr.shape[0]
         if dtr.ndim == 2:
@@ -562,7 +560,7 @@ class CommandExecutor(QObject):
         else:
             self.devs.daq.clear_photon_counter()
 
-        if 0 in reader_channel:
+        if reader_channel is not None:
             self.devs.daq.pmt_data.on_update(
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )

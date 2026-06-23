@@ -7,10 +7,10 @@ import warnings
 
 import nidaqmx
 import numpy as np
-from nidaqmx.constants import Signal, Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY,  DataTransferActiveTransferMode, READ_ALL_AVAILABLE
+from nidaqmx.constants import Signal, Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY, \
+    DataTransferActiveTransferMode, READ_ALL_AVAILABLE
 from nidaqmx.error_codes import DAQmxWarnings
 from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
-from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
 from nidaqmx.system import System
 
 from minimiao import run_threads, logger
@@ -174,9 +174,9 @@ class NIDAQ:
             self.tasks["analog_out"] = nidaqmx.Task("analog_out")
             for analog_channel in analog_channels:
                 self.tasks["analog_out"].ao_channels.add_ao_voltage_chan(self.analog_output_channels[analog_channel],
-                                                                     min_val=-10., max_val=10.)
+                                                                         min_val=-10., max_val=10.)
             self.tasks["analog_out"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
-                                                            sample_mode=self.mode, samps_per_chan=n_samples)
+                                                                sample_mode=self.mode, samps_per_chan=n_samples)
             self.tasks["analog_out"].out_stream.regen_mode = nidaqmx.constants.RegenerationMode.ALLOW_REGENERATION
             self.tasks["analog_out"].export_signals.export_signal(Signal.SAMPLE_CLOCK, "/Dev1/PFI1")
             self.tasks["analog_out"].write(analog_sequences, auto_start=False)
@@ -221,9 +221,9 @@ class NIDAQ:
             self.tasks["digital_out"] = nidaqmx.Task("digital_out")
             for digital_channel in digital_channels:
                 self.tasks["digital_out"].do_channels.add_do_chan(self.digital_output_channels[digital_channel],
-                                                              line_grouping=LineGrouping.CHAN_PER_LINE)
+                                                                  line_grouping=LineGrouping.CHAN_PER_LINE)
             self.tasks["digital_out"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
-                                                             sample_mode=self.mode, samps_per_chan=n_samples)
+                                                                 sample_mode=self.mode, samps_per_chan=n_samples)
             self.tasks["digital_out"].timing.samp_clk_active_edge = Edge.RISING
             self.tasks["digital_out"].write(digital_sequences == 1.0, auto_start=False)
             self._active["digital_out"] = True
@@ -386,6 +386,9 @@ class NIDAQ:
                         self.tasks["analog_in"].wait_until_done(WAIT_INFINITELY)
                         self.analog_reader.read_many_sample(data=self.analog_data,
                                                             number_of_samples_per_channel=READ_ALL_AVAILABLE)
+                        if self.pmt_data is not None:
+                            pmt_ch = -self.analog_data[0]
+                            self.pmt_data.add_element(pmt_ch.tolist(), pmt_ch.shape[0])
                     if self._active["photon_counters"] and self._running["photon_counters"]:
                         for task in self.tasks["photon_counters"]:
                             task.wait_until_done(WAIT_INFINITELY)

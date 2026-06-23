@@ -69,14 +69,14 @@ class PhotonCountThread(threading.Thread):
 class PhotonCountList:
 
     def __init__(self, n, max_length):
-        self.data_lists = [deque(maxlen=max_length)] * n
+        self.data_lists = [deque(maxlen=max_length) for _ in range(n)]
         for data_list in self.data_lists:
             data_list.extend([0])
-        self.count_lists = [deque(maxlen=max_length)] * n
-        self.ind_lists = [deque(maxlen=max_length)] * n
-        self.count_starts = [1] * n
-        self.count_ends = [1] * n
-        self.count_lens = [max_length] * n
+        self.count_lists = [deque(maxlen=max_length) for _ in range(n)]
+        self.ind_lists = [deque(maxlen=max_length) for _ in range(n)]
+        self.count_starts = [1 for _ in range(n)]
+        self.count_ends = [1 for _ in range(n)]
+        self.count_lens = [max_length for _ in range(n)]
         self.callback = None
         self.request = None
         self.lock = threading.Lock()
@@ -89,7 +89,7 @@ class PhotonCountList:
             counts = np.diff(np.insert(d, 0, self.data_lists[ind][-1])).astype(np.uint32)
             self.count_lists[ind].extend(counts.tolist())
             self.data_lists[ind].extend(elements)
-            if self.count_starts[ind] <= self.count_ends[ind]:
+            if self.count_starts[ind] < self.count_ends[ind]:
                 indices = np.arange(self.count_starts[ind], self.count_ends[ind])
             else:
                 indices = np.concatenate(
@@ -183,7 +183,7 @@ class PMTList:
             self.read_start = self.read_end % self.read_len
             self.read_end = (self.read_end + num) % self.read_len
             self.data_list.extend(elements)
-            if self.read_start <= self.read_end:
+            if self.read_start < self.read_end:
                 indices = np.arange(self.read_start, self.read_end)
             else:
                 indices = np.concatenate((np.arange(self.read_start, self.read_len), np.arange(self.read_end)))
