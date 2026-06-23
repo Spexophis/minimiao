@@ -254,11 +254,15 @@ class TriggerSequence:
             raise Exception("Error: zero piezo scan step")
         galvo_sequences = [np.empty((0,)) for _ in range(len(gv_chs))]
         galvo_sequences[0], galvo_sequences[1], gate_ttl = self.galvo.build_scan()
-        detect_ind = [detector + 3 for detector in detectors]
         digital_channels = lasers.copy()
-        digital_channels.extend(detect_ind)
+        if len(detectors) == 0:
+            gate_ind = [5]
+        else:
+            gate_ind = detectors.copy()
+            detect_ind = [detector + 3 for detector in detectors]
+            digital_channels.extend(detect_ind)
         digital_triggers = [gate_ttl for _ in range(len(digital_channels))]
-        gates = [gate_ttl for _ in range(len(detect_ind))]
+        gates = [gate_ttl for _ in range(len(gate_ind))]
         return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
 
     def generate_galvo_axial_scan(self, lasers, detectors):

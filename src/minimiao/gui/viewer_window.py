@@ -308,27 +308,27 @@ class LiveViewer(QWidget):
                              img_1_sobel, img_1_lap)
 
     def display_metrics(self,
-                        img_0_max: int | None, img_0_min: int | None, img_0_avg: float | None,
+                        img_0_max: float | None, img_0_min: float | None, img_0_avg: float | None,
                         img_0_sobel: float | None, img_0_lap: float | None,
-                        img_1_max: int | None, img_1_min: int | None, img_1_avg: float | None,
+                        img_1_max: float | None, img_1_min: float | None, img_1_avg: float | None,
                         img_1_sobel: float | None, img_1_lap: float | None):
         if img_0_max is not None:
-            self.lcdNumber_img_0_max.display(img_0_max)
+            self.lcdNumber_img_0_max.display(float(img_0_max))
         if img_0_min is not None:
-            self.lcdNumber_img_0_min.display(img_0_min)
+            self.lcdNumber_img_0_min.display(float(img_0_min))
         if img_0_avg is not None:
-            self.lcdNumber_img_0_avg.display(img_0_avg)
+            self.lcdNumber_img_0_avg.display(float(img_0_avg))
         if img_0_sobel is not None:
-            self.lcdNumber_img_0_sobel.display(img_0_sobel)
+            self.lcdNumber_img_0_sobel.display(float(img_0_sobel))
         if img_0_lap is not None:
-            self.lcdNumber_img_0_laplacian.display(img_0_lap)
+            self.lcdNumber_img_0_laplacian.display(float(img_0_lap))
         if img_1_max is not None:
-            self.lcdNumber_img_1_max.display(img_1_max)
+            self.lcdNumber_img_1_max.display(float(img_1_max))
         if img_1_min is not None:
-            self.lcdNumber_img_1_min.display(img_1_min)
+            self.lcdNumber_img_1_min.display(float(img_1_min))
         if img_1_avg is not None:
-            self.lcdNumber_img_1_avg.display(img_1_avg)
+            self.lcdNumber_img_1_avg.display(float(img_1_avg))
         if img_1_sobel is not None:
-            self.lcdNumber_img_1_sobel.display(img_1_sobel)
+            self.lcdNumber_img_1_sobel.display(float(img_1_sobel))
         if img_1_lap is not None:
-            self.lcdNumber_img_1_laplacian.display(img_1_lap)
+            self.lcdNumber_img_1_laplacian.display(float(img_1_lap))

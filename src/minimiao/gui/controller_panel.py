@@ -170,12 +170,12 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_ttl_stop_off_488 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
         self.QDoubleSpinBox_ttl_start_read_488 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
         self.QDoubleSpinBox_ttl_stop_read_488 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_cmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_cmos = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
         self.QDoubleSpinBox_ttl_start_mpd_h = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
         self.QDoubleSpinBox_ttl_stop_mpd_h = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
         self.QDoubleSpinBox_ttl_start_mpd_v = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
         self.QDoubleSpinBox_ttl_stop_mpd_v = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
+        self.QDoubleSpinBox_ttl_start_pmt = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
+        self.QDoubleSpinBox_ttl_stop_pmt = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
 
         daq_scroll_layout.addWidget(cw.LabelWidget(str('Sample Rate / KS/s')), 0, 0, 1, 1)
         daq_scroll_layout.addWidget(self.QPushButton_reset_daq, 0, 1, 1, 1)
@@ -198,9 +198,9 @@ class ControlPanel(QWidget):
         daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#5 - MPD_1')), 0, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_mpd_v, 1, 8, 1, 1)
         daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_mpd_v, 2, 8, 1, 1)
-        daq_scroll_layout.addWidget(cw.LabelWidget(str('DO#6 - CMOS')), 0, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_cmos, 1, 9, 1, 1)
-        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_cmos, 2, 9, 1, 1)
+        daq_scroll_layout.addWidget(cw.LabelWidget(str('PMT')), 0, 9, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_pmt, 1, 9, 1, 1)
+        daq_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_pmt, 2, 9, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(daq_scroll_area)
@@ -360,13 +360,13 @@ class ControlPanel(QWidget):
                           self.QDoubleSpinBox_ttl_start_read_488.value(),
                           self.QDoubleSpinBox_ttl_start_mpd_h.value(),
                           self.QDoubleSpinBox_ttl_start_mpd_v.value(),
-                          self.QDoubleSpinBox_ttl_start_cmos.value()]
+                          self.QDoubleSpinBox_ttl_start_pmt.value()]
         digital_ends = [self.QDoubleSpinBox_ttl_stop_on_405.value(),
                         self.QDoubleSpinBox_ttl_stop_off_488.value(),
                         self.QDoubleSpinBox_ttl_stop_read_488.value(),
                         self.QDoubleSpinBox_ttl_stop_mpd_h.value(),
                         self.QDoubleSpinBox_ttl_stop_mpd_v.value(),
-                        self.QDoubleSpinBox_ttl_stop_cmos.value()]
+                        self.QDoubleSpinBox_ttl_stop_pmt.value()]
         return digital_starts, digital_ends
 
     @pyqtSlot()
@@ -453,12 +453,12 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_ttl_stop_off_488.setValue(values.get("QDoubleSpinBox_ttl_stop_off_488", 0))
         self.QDoubleSpinBox_ttl_start_read_488.setValue(values.get("QDoubleSpinBox_ttl_start_read_488", 0))
         self.QDoubleSpinBox_ttl_stop_read_488.setValue(values.get("QDoubleSpinBox_ttl_stop_read_488", 0))
-        self.QDoubleSpinBox_ttl_start_cmos.setValue(values.get("QDoubleSpinBox_ttl_start_cmos", 0))
-        self.QDoubleSpinBox_ttl_stop_cmos.setValue(values.get("QDoubleSpinBox_ttl_stop_cmos", 0))
         self.QDoubleSpinBox_ttl_start_mpd_h.setValue(values.get("QDoubleSpinBox_ttl_start_mpd_h", 0))
         self.QDoubleSpinBox_ttl_stop_mpd_h.setValue(values.get("QDoubleSpinBox_ttl_stop_mpd_h", 0))
         self.QDoubleSpinBox_ttl_start_mpd_v.setValue(values.get("QDoubleSpinBox_ttl_start_mpd_v", 0))
         self.QDoubleSpinBox_ttl_stop_mpd_v.setValue(values.get("QDoubleSpinBox_ttl_stop_mpd_v", 0))
+        self.QDoubleSpinBox_ttl_start_pmt.setValue(values.get("QDoubleSpinBox_ttl_start_pmt", 0))
+        self.QDoubleSpinBox_ttl_stop_pmt.setValue(values.get("QDoubleSpinBox_ttl_stop_pmt", 0))
 
     @pyqtSlot(str)
     def save_digital_timing_preset(self, m: str):
@@ -476,12 +476,12 @@ class ControlPanel(QWidget):
                 "QDoubleSpinBox_ttl_stop_off_488": self.QDoubleSpinBox_ttl_stop_off_488.value(),
                 "QDoubleSpinBox_ttl_start_read_488": self.QDoubleSpinBox_ttl_start_read_488.value(),
                 "QDoubleSpinBox_ttl_stop_read_488": self.QDoubleSpinBox_ttl_stop_read_488.value(),
-                "QDoubleSpinBox_ttl_start_cmos": self.QDoubleSpinBox_ttl_start_cmos.value(),
-                "QDoubleSpinBox_ttl_stop_cmos": self.QDoubleSpinBox_ttl_stop_cmos.value(),
                 "QDoubleSpinBox_ttl_start_mpd_h": self.QDoubleSpinBox_ttl_start_mpd_h.value(),
                 "QDoubleSpinBox_ttl_stop_mpd_h": self.QDoubleSpinBox_ttl_stop_mpd_h.value(),
                 "QDoubleSpinBox_ttl_start_mpd_v": self.QDoubleSpinBox_ttl_start_mpd_v.value(),
                 "QDoubleSpinBox_ttl_stop_mpd_v": self.QDoubleSpinBox_ttl_stop_mpd_v.value(),
+                "QDoubleSpinBox_ttl_start_pmt": self.QDoubleSpinBox_ttl_start_pmt.value(),
+                "QDoubleSpinBox_ttl_stop_pmt": self.QDoubleSpinBox_ttl_stop_pmt.value(),
             }
             with open(self.config["Digital Timing Presets"], 'w') as f:
                 json.dump(self.digital_timing_presets, f, indent=4)
