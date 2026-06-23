@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 class PhotonCountThread(threading.Thread):
 
-    def __init__(self, daq, ind, interval=0.004):
+    def __init__(self, daq, ind, interval=0.001):
         threading.Thread.__init__(self)
         self.daq = daq
         self.ind = ind
@@ -113,7 +113,7 @@ class PhotonCountList:
 
 class PMTThread(threading.Thread):
 
-    def __init__(self, daq, interval=0.004):
+    def __init__(self, daq, interval=0.001):
         threading.Thread.__init__(self)
         self.daq = daq
         self.interval = interval
@@ -208,7 +208,7 @@ class PSLiveWorker(QThread):
         self.mpd_dat = mpd_dat
         self.pmt_dat = pmt_dat
         self.reco = reco
-        self.dn = dn or [2, 2]  # default: both empty
+        self.dn = dn or [2, 2]
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
         self._running = True
         self._lock = threading.Lock()
@@ -217,7 +217,7 @@ class PSLiveWorker(QThread):
         """Stop worker thread gracefully"""
         self._running = False
 
-        if not self.wait(2000):
+        if not self.wait(1000):
             self.terminate()
             self.wait(1000)
 

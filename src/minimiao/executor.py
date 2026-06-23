@@ -173,7 +173,7 @@ class CommandExecutor(QObject):
 
     @pyqtSlot()
     def reset_daq_channels(self):
-        self.devs.daq.stop_triggers()
+        self.devs.daq.reset_daq()
 
     def update_digital_timings(self):
         digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
@@ -466,7 +466,7 @@ class CommandExecutor(QObject):
         else:
             self.devs.daq.clear_photon_counter()
 
-        if reader_channel is not None:
+        if 0 in reader_channel and self.devs.daq.pmt_data is not None:
             self.devs.daq.pmt_data.on_update(
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
@@ -560,7 +560,7 @@ class CommandExecutor(QObject):
         else:
             self.devs.daq.clear_photon_counter()
 
-        if reader_channel is not None:
+        if 0 in reader_channel and self.devs.daq.pmt_data is not None:
             self.devs.daq.pmt_data.on_update(
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
@@ -728,41 +728,70 @@ class CommandExecutor(QObject):
             self.logg.error(f"DM Error: {e}")
 
     def prepare_sensorless_iteration(self, md):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.update_trigger_parameters()
+        dn = self.ctrl_panel.get_detector()
+        self.viewer.set_plots(dn)
+
+        gate_channel = []
+        counter_channel = []
+        reader_channel = None
+        if dn[0] == 0:
+            gate_channel.append(0)
+            counter_channel.append(0)
+        if dn[0] == 1:
+            reader_channel = [0]
+        if dn[1] == 0:
+            gate_channel.append(1)
+            counter_channel.append(1)
+        if dn[1] == 1:
+            counter_channel.append(2)
+
         if md == "RESOLFT Scan":
-            self.lasers = self.ctrl_panel.get_lasers()
-            self.set_lasers(self.lasers)
-            self.update_trigger_parameters()
-            dn = self.ctrl_panel.get_detector()
-            self.viewer.set_plots(dn)
-            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, self.detector[dn])
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_galvo_resolft_scan(self.lasers, gate_channel)
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
-                                         digital_sequences=dtr, digital_channels=dch, finite=True)
-            self.devs.daq.photon_counter_mode = 1
-            self.devs.daq.psr = self.rec
-            self.rec.mode = 1
-            self.rec.point_scan_gate_mask = gts[0]
-            self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
-                                           dwell_samples=pdw)
-            self.devs.daq.photon_counter_length = dtr.shape[1]
-            self.devs.daq.prepare_photon_counter(self.detector[dn])
-        if md == "Point Scan":
-            self.lasers = self.ctrl_panel.get_lasers()
-            self.set_lasers(self.lasers)
-            self.update_trigger_parameters()
-            dn = self.ctrl_panel.get_detector()
-            self.viewer.set_plots(dn)
-            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, self.detector[dn])
+                                         digital_sequences=dtr, digital_channels=dch,
+                                         reader_channels=reader_channel, finite=True)
+        elif md == "Point Scan":
+            dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, gate_channel)
             pdw = 1
             self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
-                                         digital_sequences=dtr, digital_channels=dch, finite=True)
-            self.devs.daq.photon_counter_mode = 1
-            self.devs.daq.psr = self.rec
-            self.rec.mode = 0
-            self.rec.point_scan_gate_mask = gts[0]
-            self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1], n_pixels=self.trg.galvo_scan_pos[0],
-                                           dwell_samples=pdw)
+                                         digital_sequences=dtr, digital_channels=dch,
+                                         reader_channels=reader_channel, finite=True)
+        else:
+            raise Exception(f"Invalid mode {md}")
+
+        self.rec.point_scan_gate_mask = gts[0]
+        self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1],
+                                       n_pixels=self.trg.galvo_scan_pos[0],
+                                       dwell_samples=pdw)
+        self.rec.prepare_point_scan_live_recon()
+
+        if dtr.ndim == 1:
+            self.devs.daq.photon_counter_length = dtr.shape[0]
+        if dtr.ndim == 2:
             self.devs.daq.photon_counter_length = dtr.shape[1]
-            self.devs.daq.prepare_photon_counter(self.detector[dn])
+        if len(counter_channel) > 0:
+            self.devs.daq.prepare_photon_counter(counter_channel)
+            # Build slot map: hardware counter index → display slot index
+            mpd_slot_map = []
+            if dn[0] == 0:
+                mpd_slot_map.append(0)  # spot 0 is MPD → display slot 0
+            if dn[1] in (0, 1):
+                mpd_slot_map.append(1)  # spot 1 is MPD or PMT_photon → display slot 1
+
+            def _mpd_recon(counts, ind_list, ind):
+                self.rec.point_scan_live_recon(counts, ind_list, mpd_slot_map[ind])
+
+            self.devs.daq.mpd_data.on_update(_mpd_recon)
+        else:
+            self.devs.daq.clear_photon_counter()
+
+        if reader_channel is not None:
+            self.devs.daq.pmt_data.on_update(
+                lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
+            )
 
     def sensorless_iteration(self, dms, src):
         ims = []

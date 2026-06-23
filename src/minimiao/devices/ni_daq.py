@@ -47,8 +47,7 @@ class NIDAQ:
         self._photon_counter_length = int(2 ** 16)
 
     def close(self):
-        for device in self.devices:
-            device.reset_device()
+        self.reset_daq()
 
     def _initialize(self):
         try:
@@ -73,6 +72,10 @@ class NIDAQ:
                     e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
+
+    def reset_daq(self):
+        for device in self.devices:
+            device.reset_device()
 
     @property
     def photon_counter_length(self) -> int:

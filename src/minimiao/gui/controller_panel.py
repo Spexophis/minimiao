@@ -161,7 +161,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         daq_scroll_area, daq_scroll_layout = cw.create_scroll_area("G")
 
-        self.QSpinBox_daq_sample_rate = cw.SpinBoxWidget(0, 80, 1, 80)
+        self.QSpinBox_daq_sample_rate = cw.SpinBoxWidget(0, 1000, 1, 80)
         self.QPushButton_plot_trigger = cw.PushButtonWidget("Plot Triggers")
         self.QPushButton_reset_daq = cw.PushButtonWidget("Reset")
         self.QDoubleSpinBox_ttl_start_on_405 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
