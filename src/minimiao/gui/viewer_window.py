@@ -114,7 +114,7 @@ class LiveViewer(QWidget):
         self.graph_plot_0.addItem(self.graph_img_item_0)
         self.graph_plot_0.invertY(True)
 
-        self.color_bar_0 = pg.ColorBarItem(interactive=False, colorMap='viridis')
+        self.color_bar_0 = pg.ColorBarItem(interactive=False, colorMap=pg.ColorMap([0.0, 1.0], [[0,0,0,255],[255,255,255,255]]))
         self.color_bar_0.setImageItem(self.graph_img_item_0, insert_in=self.graph_plot_0.getPlotItem())
 
         self.data_plot_0 = pg.PlotWidget()
@@ -165,7 +165,7 @@ class LiveViewer(QWidget):
         self.graph_plot_1.addItem(self.graph_img_item_1)
         self.graph_plot_1.invertY(True)
 
-        self.color_bar_1 = pg.ColorBarItem(interactive=False, colorMap='viridis')
+        self.color_bar_1 = pg.ColorBarItem(interactive=False, colorMap=pg.ColorMap([0.0, 1.0], [[0,0,0,255],[255,255,255,255]]))
         self.color_bar_1.setImageItem(self.graph_img_item_1, insert_in=self.graph_plot_1.getPlotItem())
 
         self.data_plot_1 = pg.PlotWidget()
@@ -207,8 +207,8 @@ class LiveViewer(QWidget):
         grp.addButton(rb_y)
         grp.setExclusive(True)
 
-        spin_center = cw.SpinBoxWidget(range_min=0, range_max=63, step=1, value=32)
-        spin_width = cw.SpinBoxWidget(range_min=1, range_max=16, step=1, value=1)
+        spin_center = cw.SpinBoxWidget(range_min=0, range_max=1024, step=1, value=1)
+        spin_width = cw.SpinBoxWidget(range_min=1, range_max=32, step=1, value=1)
 
         layout.addWidget(cw.LabelWidget("Axis:"))
         layout.addWidget(rb_x)
@@ -241,7 +241,7 @@ class LiveViewer(QWidget):
         self.lcdNumber_img_0_laplacian = cw.LCDNumberWidget()
         self.lcdNumber_img_1_sobel = cw.LCDNumberWidget()
         self.lcdNumber_img_1_laplacian = cw.LCDNumberWidget()
-        self.btn_metrics_enable = cw.PushButtonWidget("Metrics ON", checkable=True, checked=True)
+        self.btn_metrics_enable = cw.PushButtonWidget("Metrics ON", checkable=True, checked=False)
 
         layout_metric.addWidget(cw.LabelWidget('Sobel', align=2), 0, 0)
         layout_metric.addWidget(self.lcdNumber_img_0_sobel, 0, 1)
@@ -263,22 +263,41 @@ class LiveViewer(QWidget):
         self.btn_profile_0.setText("Line Profile" if checked else "Photon Trace")
         self.profile_controls_0.setVisible(checked)
         if not checked:
-            # Restore trace curve
-            self.data_plot_0.clear()
-            self.data_curve_0 = self.data_plot_0.plot()
-            self.data_curve_0.setDownsampling(auto=True, method="peak")
-            self.data_curve_0.setSkipFiniteCheck(True)
-            self.data_plot_0.getPlotItem().enableAutoRange(x=False)
+            self._restore_trace(0)
 
     def _on_profile_toggled_1(self, checked):
         self.btn_profile_1.setText("Line Profile" if checked else "Photon Trace")
         self.profile_controls_1.setVisible(checked)
         if not checked:
-            self.data_plot_1.clear()
-            self.data_curve_1 = self.data_plot_1.plot()
-            self.data_curve_1.setDownsampling(auto=True, method="peak")
-            self.data_curve_1.setSkipFiniteCheck(True)
-            self.data_plot_1.getPlotItem().enableAutoRange(x=False)
+            self._restore_trace(1)
+
+    def _restore_trace(self, idx):
+        """Rebuild the photon-count trace curve and immediately populate it with current data."""
+        xt = self.photon_pool.xt
+        counts = np.array(self.photon_pool.buf_0 if idx == 0 else self.photon_pool.buf_1)
+        plot_widget = self.data_plot_0 if idx == 0 else self.data_plot_1
+
+        plot_widget.clear()
+        plot_widget.showGrid(x=True, y=True)
+        plot_widget.setLabel('bottom', '')
+        plot_widget.setLabel('left', '')
+
+        curve = plot_widget.plot()
+        curve.setDownsampling(auto=True, method="peak")
+        curve.setSkipFiniteCheck(True)
+
+        pi = plot_widget.getPlotItem()
+        pi.setClipToView(True)
+        pi.enableAutoRange(x=False)
+        # Set the x range to the full time axis so the axis is not frozen
+        pi.setXRange(float(xt[0]), float(xt[-1]), padding=0)
+
+        curve.setData(xt, counts)
+
+        if idx == 0:
+            self.data_curve_0 = curve
+        else:
+            self.data_curve_1 = curve
 
     def _compute_line_profile(self, img, axis_x, center, width):
         """Return (positions, profile) for the selected axis and averaging window."""
@@ -393,9 +412,18 @@ class LiveViewer(QWidget):
         self.graph_img_item_0.setImage(img_0, autoLevels=(levels is None))
         if levels is not None:
             self.graph_img_item_0.setLevels(levels)
+            self.color_bar_0.setLevels(low=levels[0], high=levels[1])
+        else:
+            lo, hi = float(img_0.min()), float(img_0.max())
+            self.color_bar_0.setLevels(low=lo, high=hi)
+
         self.graph_img_item_1.setImage(img_1, autoLevels=(levels is None))
         if levels is not None:
             self.graph_img_item_1.setLevels(levels)
+            self.color_bar_1.setLevels(low=levels[0], high=levels[1])
+        else:
+            lo, hi = float(img_1.min()), float(img_1.max())
+            self.color_bar_1.setLevels(low=lo, high=hi)
 
     def on_psr_frame(self):
         counts_0 = np.array(self.photon_pool.buf_0)
