@@ -1,7 +1,6 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-
 from minimiao import logger
 
 try:
@@ -15,9 +14,9 @@ except ImportError:
     from minimiao.devices import teledyne_kinetix
 
 try:
-    from . import hamamatsu_slm
+    from . import slm_proxy
 except ImportError:
-    from minimiao.devices import hamamatsu_slm
+    from minimiao.devices import slm_proxy
 
 
 class DeviceManager:
@@ -41,14 +40,14 @@ class DeviceManager:
             self.logg.error(f"Laser init failed: {e}")
 
         try:
-            self.slm = hamamatsu_slm.HamamatsuSLM(logg=self.logg)
+            self.slm = slm_proxy.HamamatsuSLMProxy(logg=self.logg)
         except Exception as e:
             self.logg.error(f"SLM init failed: {e}")
 
         self.logg.info("Finish initiating devices")
 
     def close(self):
-        # SLM DLL must be explicitly unloaded (FreeLibrary) before PVCAM pvc.uninit_pvcam().
+
         if self.slm:
             try:
                 self.slm.close()
@@ -66,8 +65,6 @@ class DeviceManager:
                 self.laser.close()
             except Exception as e:
                 self.logg.error(f"Laser close failed: {e}")
-
-
 
 
 if __name__ == '__main__':

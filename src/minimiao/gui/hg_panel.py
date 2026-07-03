@@ -65,11 +65,11 @@ class HGPanel(QWidget):
 
         self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
         self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
-        self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 128)
+        self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 32)
         self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(0, 128, 1, 1, 7)
         self.QSpinBox_CGH_CenterX = cw.SpinBoxWidget(0, 2048, 1, 600)
         self.QSpinBox_CGH_CenterY = cw.SpinBoxWidget(0, 2048, 1, 395)
-        self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 180)
+        self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 320)
         self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
         self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
 
@@ -77,6 +77,8 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
         cgh_scroll_layout.addWidget(self.QPushButton_CGH_Load, 2, 0, 1, 1)
         cgh_scroll_layout.addWidget(self.QPushButton_CGH_Pick, 3, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Iterations')), 2, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_Iteration, 2, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Magnification')), 3, 1, 1, 1)
@@ -85,9 +87,8 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterX, 4, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-Y')), 5, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
-        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_SLM_Focal, 4, 2, 1, 1)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Focal Length')), 6, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_SLM_Focal, 6, 2, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(cgh_scroll_area)
@@ -150,6 +151,14 @@ class HGPanel(QWidget):
     @pyqtSlot()
     def save_pattern(self):
         self.Signal_save_pattern.emit()
+
+    def get_cgh_parameters(self):
+        n  = self.QSpinBox_CGH_Iteration.value()
+        m = self.QDoubleSpinBox_CGH_Magnification.value()
+        f = self.QDoubleSpinBox_SLM_Focal.value()
+        c0 = self.QSpinBox_CGH_CenterX.value()
+        c1 = self.QSpinBox_CGH_CenterY.value()
+        return n, m, (c0, c1)
 
     def set_target_image(self, img2d: np.ndarray, levels=None):
         self._target_img = img2d

@@ -78,8 +78,8 @@ class ControlPanel(QWidget):
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
         self.QPushButton_SLM_Load = cw.PushButtonWidget('Load Pattern')
         self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(0, 1024, 1, 0)
-        self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(0, 1024, 1, 0)
-        self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(0, 1024, 1, 0)
+        self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -120)
+        self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -60)
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('Hamamatsu SLM')))
         slm_scroll_layout.addRow(cw.FrameWidget())

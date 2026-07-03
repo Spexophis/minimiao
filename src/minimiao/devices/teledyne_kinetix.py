@@ -133,7 +133,7 @@ class KinetixCamera:
                 self.logg.info("Kinetix camera closed")
         except Exception as e:
             self.logg.error(f"Error closing Kinetix camera: {e}")
-        self.cam = None
+        self.cam = None  # drop reference before uninit so Camera.__del__ fires while SDK is still live
         try:
             pvc.uninit_pvcam()
         except Exception as e:
