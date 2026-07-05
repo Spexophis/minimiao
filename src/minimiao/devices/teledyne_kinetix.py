@@ -61,7 +61,7 @@ class KinetixCamera:
             self.s1 = 0                      # serial (x) start
             self.s2 = 2399                   # serial (x) end
             self.p1 = 0                      # parallel (y) start
-            self.p2 = 2400                   # parallel (y) end
+            self.p2 = 2399                   # parallel (y) end
 
             # --- Binning ---
             self.s_bin = 1                   # serial binning factor
@@ -70,7 +70,6 @@ class KinetixCamera:
             # --- Derived image dimensions (updated by set_roi) ---
             self.pixels_x = 2400             # output image width  (serial)
             self.pixels_y = 2400             # output image height (parallel)
-            self.img_size = self.pixels_x * self.pixels_y
             self.ps = 6.5                    # effective pixel size, μm
 
             # --- Readout configuration ---
@@ -92,7 +91,7 @@ class KinetixCamera:
         self.acq_thread = None
         self._initialize_sdk()
         if self.cam is not None:
-            self._configure_camera()
+            self.get_sn()
 
     def __getattr__(self, item):
         if '_settings' in self.__dict__ and hasattr(self._settings, item):
@@ -114,11 +113,6 @@ class KinetixCamera:
         except Exception as e:
             self.logg.error(f"Error initializing Kinetix camera: {e}")
             self.cam = None
-
-    def _configure_camera(self):
-        self.get_sn()
-        self.get_sensor_size()
-        self.set_temperature()
 
     def close(self):
         if self.acq_thread is not None:
@@ -145,20 +139,6 @@ class KinetixCamera:
             self.logg.info(f"Kinetix Serial Number: {sn}")
         except Exception as e:
             self.logg.error(f"Error reading serial number: {e}")
-
-    def get_sensor_size(self):
-        """Query the full sensor dimensions and update settings."""
-        try:
-            # sensor_size = (serial_size, parallel_size) = (width, height)
-            ser_size, par_size = self.cam.sensor_size
-            self._settings.pixels_x = ser_size
-            self._settings.pixels_y = par_size
-            self._settings.s2 = ser_size - 1
-            self._settings.p2 = par_size - 1
-            self._settings.img_size = ser_size * par_size
-            self.logg.info(f"Sensor size: {ser_size} (ser) x {par_size} (par)")
-        except Exception as e:
-            self.logg.error(f"Error reading sensor size: {e}")
 
     def get_temperature(self):
         """Read current sensor temperature (°C)."""
@@ -243,19 +223,12 @@ class KinetixCamera:
         so binning must be committed to the camera BEFORE calling set_roi().
         """
         try:
-            w = self._settings.s2 - self._settings.s1 + 1
-            h = self._settings.p2 - self._settings.p1 + 1
-            self.cam.reset_rois()
-            # Binning must be set first — set_roi() inherits it from the first ROI
             self.cam.binning = (self._settings.s_bin, self._settings.p_bin)
-            self.cam.set_roi(self._settings.s1, self._settings.p1, w, h)
-            self._settings.pixels_x = w // self._settings.s_bin
-            self._settings.pixels_y = h // self._settings.p_bin
-            self._settings.img_size = self._settings.pixels_x * self._settings.pixels_y
+            self.cam.set_roi(self._settings.s1, self._settings.p1, self._settings.pixels_x, self._settings.pixels_y)
             self._settings.ps = 6.5 * self._settings.s_bin
             self.logg.info(
-                f"ROI: s1={self._settings.s1} s2={self._settings.s2} "
-                f"p1={self._settings.p1} p2={self._settings.p2} "
+                f"ROI: s1={self._settings.s1}"
+                f"p1={self._settings.p1}"
                 f"bin={self._settings.s_bin}x{self._settings.p_bin} "
                 f"→ {self._settings.pixels_x}x{self._settings.pixels_y} px"
             )

@@ -2,8 +2,6 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-
-import atexit
 import numpy as np
 from PIL import Image
 import ctypes as ct
@@ -17,12 +15,9 @@ class HamamatsuSLM:
 
     def __init__(self, serial_number="LSH0805629", logg=None):
         self.logg = logg or logger.setup_logging()
-        self.lib = None
-        self.bid = None
         if lib_path is not None:
             self.lib = ct.CDLL(lib_path)
             self._bind_functions()
-            atexit.register(self._unload_dll)
             if lib_path is not None:
                 self.serial_number = serial_number
                 self.bid = self.open()
@@ -97,23 +92,12 @@ class HamamatsuSLM:
             return None
 
     def close(self):
-        if self.bid is not None:
-            bid_list = (c_uint8 * 1)(self.bid)
-            ret = self.lib.Close_Dev(bid_list, 1)
-            self.bid = None
-            if ret == 1:
-                self.logg.info(f"SLM Closed")
-            else:
-                self.logg.error(f"Error when closing SLM")
-        self._unload_dll()
-
-    def _unload_dll(self):
-        # Explicitly FreeLibrary the SLM DLL so its DllMain DLL_PROCESS_DETACH
-        # runs now (while PVCAM is still live), not later during OS process exit
-        if self.lib is not None and self.lib._handle:
-            handle = self.lib._handle
-            self.lib._handle = 0  # prevent ctypes double-free
-            ct.windll.kernel32.FreeLibrary(handle)
+        bid_list = (c_uint8 * 1)(self.bid)
+        ret = self.lib.Close_Dev(bid_list, 1)
+        if ret == 1:
+            self.logg.info(f"SLM Closed")
+        else:
+            self.logg.error(f"Error when closing SLM")
 
     def get_serial(self, bid, char_size=11):
         buf = create_string_buffer(char_size)

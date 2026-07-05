@@ -7,6 +7,8 @@ from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image
+import tifffile as tf
+from pathlib import Path
 
 from minimiao import logger
 
@@ -70,7 +72,7 @@ class CGH:
         self.cell_mask = None
         self.itn = 64
         self.phase_slm = None
-        self.phase_total = np.zeros((512, 512), dtype=np.uint8)
+        self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
 
     def load_correction_pattern(self, file):
         correct_pattern = Image.open(file)
@@ -84,9 +86,16 @@ class CGH:
         self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y = offset
 
     def load_mask(self, fnd):
-        img = Image.open(fnd)
-        if img.mode != "1":
-            img = img.convert("L")
+        ext = Path(fnd).suffix.lower()
+        if ext == ".bmp":
+            img = Image.open(fnd)
+            if img.mode != "1":
+                img = img.convert("L")
+        elif ext in (".tif", ".tiff"):
+            img = tf.imread(fnd)
+        else:
+            self.logg.error("Invalid file type")
+            return
         self.cell_mask = np.asarray(img)
 
     def load_spots_picked(self, spots_picked):
@@ -94,11 +103,95 @@ class CGH:
 
     def build_target_from_spots(self, spots_sample):
         target_amp = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.float32)
-        for (xx, yy, zz, ii) in spots_sample:
-                target_amp[round(yy), round(xx)] = ii
+        for (yy, xx, zz, ii) in spots_sample:
+                target_amp[self.holo_sys.phase_ny - round(yy), self.holo_sys.phase_nx - round(xx)] = ii
         return target_amp
 
+    def gerchberg_saxton_multiplane(self, targets, defocus_phases, plane_weights=None,
+                                    weighted_gs=True, initial_phase=None):
+        """
+        Multi-plane weighted Gerchberg-Saxton phase retrieval.
+
+        A single common SLM phase pattern is optimized to reproduce M target
+        intensity patterns simultaneously, each at its own axial plane. Each
+        iteration: propagate the common phase to every plane, apply that
+        plane's (weighted) amplitude constraint, undo the per-plane defocus,
+        and coherently sum the M corrected fields back at the SLM plane.
+
+        Parameters
+        ----------
+        targets : list of np.ndarray
+            Target intensity for each plane, shape (phase_ny, phase_nx).
+        defocus_phases : list of np.ndarray
+            Per-plane defocus phase (radians), e.g. generate_defocus_phase(z_m).
+            Use a zero array for the nominal in-focus plane.
+        plane_weights : list of float, optional
+            Relative energy budget per plane before summation (default: equal).
+        weighted_gs : bool
+            Apply per-pixel weighting within each plane's target mask.
+        initial_phase : ndarray, optional
+            Initial SLM phase guess.
+
+        Returns
+        -------
+        phase_slm : ndarray
+            Common SLM phase (radians, wrapped) reproducing all M planes.
+        """
+        assert len(targets) == len(defocus_phases)
+        M = len(targets)
+        size = targets[0].shape
+        source = np.ones(size, dtype=complex)
+
+        if plane_weights is None:
+            plane_weights = [1.0] * M
+
+        sqrt_targets = [np.sqrt(t) for t in targets]
+        target_masks = [t != 0 for t in targets]
+
+        if initial_phase is not None:
+            phase_slm = initial_phase
+        else:
+            np.random.seed(1)
+            phase_slm = np.random.uniform(-np.pi, np.pi, size)
+
+        if weighted_gs:
+            weights = [np.ones(size, dtype=float) for _ in range(M)]
+
+        for k in range(self.itn):
+            u_merged = np.zeros(size, dtype=complex)
+
+            for m in range(M):
+                # forward: SLM phase + this plane's defocus, then propagate
+                u_m = source * np.exp(1j * (phase_slm + defocus_phases[m]))
+                v_m = np.fft.fftshift(np.fft.fft2(u_m))
+
+                amplitude = np.abs(v_m)
+                phase = np.angle(v_m)
+                signal = self.normalize(amplitude ** 2)
+
+                mask = target_masks[m]
+                if weighted_gs:
+                    weights[m][mask] *= np.sqrt(targets[m][mask] / np.maximum(signal[mask], 1e-10))
+                    v_corrected = weights[m] * sqrt_targets[m] * np.exp(1j * phase)
+                else:
+                    v_corrected = sqrt_targets[m] * np.exp(1j * phase)
+
+                # back-propagate to SLM plane and undo this plane's defocus
+                u_back = np.fft.ifft2(np.fft.ifftshift(v_corrected))
+                u_back = u_back * np.exp(-1j * defocus_phases[m])
+
+                u_merged += plane_weights[m] * u_back
+
+                self.logg.info((k, m, self.eval_performances(signal, targets[m])))
+
+            phase_slm = np.angle(u_merged)
+
+        return phase_slm
+
     def compute_cgh(self, trg=True):
+        self.compute_cgh_multiplane(trg=trg)
+
+    def compute_cgh_plane(self, trg=True):
         spots_sample = []
         for (x0, y0, z0, I0) in self.spots_xy:
             x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
@@ -114,6 +207,52 @@ class CGH:
                                          self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
         if trg:
             self.add_trigger_pattern()
+
+    def compute_cgh_multiplane(self, z_bin=1e-6, plane_weights=None, trg=True):
+        """
+        Multi-plane version of compute_cgh(). Groups self.spots_xy by z
+        (binned to z_bin meters) and runs iterative multi-plane weighted GS.
+        """
+        groups = {}
+        for (x0, y0, z0, I0) in self.spots_xy:
+            key = round(z0 / z_bin)
+            groups.setdefault(key, []).append((x0, y0, I0))
+
+        targets, defocus_phases = [], []
+        for key, spots in groups.items():
+            z_offset = key * z_bin
+            spots_sample = []
+            for (x0, y0, I0) in spots:
+                x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
+                y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
+                if self.holo_sys.phase_nx > x1 > 0 and self.holo_sys.phase_ny > y1 > 0:
+                    spots_sample.append((x1, y1, 0, I0))
+            targets.append(self.build_target_from_spots(spots_sample))
+            defocus_phases.append(self.generate_defocus_phase(z_offset))
+
+        phase_spots = self.gerchberg_saxton_multiplane(targets, defocus_phases, plane_weights)
+        phase_fresnel_lens = self.generate_fresnel_lens_phase()
+        phase_total = (phase_spots + phase_fresnel_lens) % (2.0 * np.pi)
+        phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
+        self.phase_slm = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
+                                         self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
+        if trg:
+            self.add_trigger_pattern()
+
+    def generate_defocus_phase(self, delta_z: float) -> np.ndarray:
+        """
+        Exact (non-paraxial) defocus phase for an axial offset delta_z from the
+        nominal focal plane (referenced to f_fresnel), on the same SLM-plane
+        grid as generate_fresnel_lens_phase.
+        """
+        x = (np.arange(self.holo_sys.phase_nx) - self.holo_sys.phase_nx / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
+        y = (np.arange(self.holo_sys.phase_ny) - self.holo_sys.phase_ny / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
+        X, Y = np.meshgrid(x, y)
+        k = 2.0 * np.pi / self.holo_sys.wavelength
+        f = self.holo_sys.f_fresnel
+        rho2 = X ** 2 + Y ** 2
+        phi = k * delta_z * (np.sqrt(np.clip(1.0 - rho2 / f ** 2, 0.0, None)) - 1.0)
+        return np.mod(phi, 2.0 * np.pi)
 
     def generate_fresnel_lens_phase(self):
         """
@@ -148,46 +287,42 @@ class CGH:
         --------
         field_slm : ndarray
             Complex field at SLM plane
-        performances : list
-            Performance metrics for each iteration
         """
         size = target.shape
-        performances = []
-        # Pre-allocate arrays
         source = np.ones(size, dtype=complex)
         sqrt_target = np.sqrt(target)
         target_mask = target != 0
-        # Initialize phase
+
         if initial_phase is not None:
             phase_slm = initial_phase
         else:
             np.random.seed(1)
             phase_slm = np.random.uniform(-np.pi, np.pi, size)
-        # Initialize weights for weighted GS
+
         if weighted_gs:
             weights = np.ones(size, dtype=float)
-        # Main iteration loop
+
         for k in range(self.itn):
-            # Forward propagation
+
             u = source * np.exp(1j * phase_slm)
             v = np.fft.fftshift(np.fft.fft2(u))
-            # Extract amplitude and phase
+
             amplitude = np.abs(v)
             phase = np.angle(v)
-            # Calculate normalized intensity
+
             I = amplitude ** 2
             signal = self.normalize(I)
-            # Apply constraint in Fourier plane
+
             if weighted_gs:
-                # Update weights only where target is non-zero
+
                 weights[target_mask] *= np.sqrt(target[target_mask] / np.maximum(signal[target_mask], 1e-10))
                 v = weights * sqrt_target * np.exp(1j * phase)
             else:
                 v = sqrt_target * np.exp(1j * phase)
-            # Backward propagation
+
             u = np.fft.ifft2(np.fft.ifftshift(v))
             phase_slm = np.angle(u)
-            # Store performance metrics
+
             self.logg.info(self.eval_performances(signal, target))
         return phase_slm
 
@@ -230,27 +365,22 @@ class CGH:
         a_h, a_w = a.shape[:2]
         b_h, b_w = b.shape[:2]
 
-        # Calculate center position in b
         center_y = (b_h - a_h) // 2 + offset_y
         center_x = (b_w - a_w) // 2 + offset_x
 
-        # Source (a) range
         src_y_start = max(0, -center_y)
         src_x_start = max(0, -center_x)
         src_y_end = min(a_h, b_h - center_y)
         src_x_end = min(a_w, b_w - center_x)
 
-        # Check if there's anything to copy
         if src_y_start >= src_y_end or src_x_start >= src_x_end:
             return b
 
-        # Destination (b) range
         dst_y_start = max(0, center_y)
         dst_x_start = max(0, center_x)
         dst_y_end = dst_y_start + (src_y_end - src_y_start)
         dst_x_end = dst_x_start + (src_x_end - src_x_start)
 
-        # Add a to b
         b[dst_y_start:dst_y_end, dst_x_start:dst_x_end] += a[src_y_start:src_y_end, src_x_start:src_x_end]
 
         return b

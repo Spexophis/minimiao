@@ -1,5 +1,6 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
+import sys
 
 from minimiao import logger
 
@@ -9,9 +10,9 @@ except ImportError:
     from minimiao.devices import cobolt_laser
 
 try:
-    from . import teledyne_kinetix
+    from . import kinetix_camera_proxy
 except ImportError:
-    from minimiao.devices import teledyne_kinetix
+    from minimiao.devices import kinetix_camera_proxy
 
 try:
     from . import slm_proxy
@@ -30,7 +31,7 @@ class DeviceManager:
         self.slm = None
 
         try:
-            self.camera = teledyne_kinetix.KinetixCamera(logg=self.logg)
+            self.camera = kinetix_camera_proxy.KinetixCameraProxy(logg=self.logg)
         except Exception as e:
             self.logg.error(f"Camera init failed: {e}")
 

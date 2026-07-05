@@ -57,12 +57,12 @@ class ControlPanel(QWidget):
         scmos_scroll_area, scmos_scroll_layout = cw.create_scroll_area()
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
 
-        self.QSpinBox_scmos_coordinate_x = cw.SpinBoxWidget(0, 2400, 1, 1)
-        self.QSpinBox_scmos_coordinate_y = cw.SpinBoxWidget(0, 2400, 1, 1)
-        self.QSpinBox_scmos_coordinate_nx = cw.SpinBoxWidget(0, 2400, 1, 1024)
-        self.QSpinBox_scmos_coordinate_ny = cw.SpinBoxWidget(0, 2400, 1, 1024)
+        self.QSpinBox_scmos_coordinate_x = cw.SpinBoxWidget(0, 2400, 1, 0)
+        self.QSpinBox_scmos_coordinate_y = cw.SpinBoxWidget(0, 2400, 1, 0)
+        self.QSpinBox_scmos_coordinate_nx = cw.SpinBoxWidget(0, 2400, 1, 2400)
+        self.QSpinBox_scmos_coordinate_ny = cw.SpinBoxWidget(0, 2400, 1, 2400)
         self.QSpinBox_scmos_coordinate_bin = cw.SpinBoxWidget(0, 512, 1, 1)
-        self.QDoubleSpinBox_scmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
+        self.QDoubleSpinBox_scmos_t_exposure = cw.DoubleSpinBoxWidget(0, 1000, 1, 3, 20)
         self.QLCDNumber_scmos_frame_rate = cw.LCDNumberWidget(25, 4)
 
         scmos_scroll_layout.addRow(cw.LabelWidget(str('sCMOS')))
@@ -72,19 +72,21 @@ class ControlPanel(QWidget):
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Nx')), self.QSpinBox_scmos_coordinate_nx)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_scmos_coordinate_ny)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Bin')), self.QSpinBox_scmos_coordinate_bin)
-        scmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_scmos_t_exposure)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / ms')), self.QDoubleSpinBox_scmos_t_exposure)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_scmos_frame_rate)
 
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
         self.QPushButton_SLM_Load = cw.PushButtonWidget('Load Pattern')
+        self.QLineEdit_SLM_Pattern = cw.LineEditWidget(True)
         self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(0, 1024, 1, 0)
-        self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -120)
-        self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -60)
+        self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -130)
+        self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -50)
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('Hamamatsu SLM')))
         slm_scroll_layout.addRow(cw.FrameWidget())
         slm_scroll_layout.addRow(self.QPushButton_SLM_Correction)
         slm_scroll_layout.addRow(self.QPushButton_SLM_Load)
+        slm_scroll_layout.addRow(self.QLineEdit_SLM_Pattern)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Slot')), self.QSpinBox_SLM_Slot)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset X')), self.QSpinBox_SLM_OffsetX)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset Y')), self.QSpinBox_SLM_OffsetY)
@@ -294,6 +296,10 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def load_slm_pattern(self):
         self.Signal_slm_load.emit()
+
+    def display_loaded_pattern(self, filename=None):
+        if filename is not None:
+            self.QLineEdit_SLM_Pattern.setText(str(filename))
 
     def get_slm_parameters(self):
         ox = self.QSpinBox_SLM_OffsetX.value()

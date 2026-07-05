@@ -4,230 +4,188 @@
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
+from PyQt6.QtCore import Qt, QEvent
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter
 
-from . import custom_widgets as cw
-from . import gl_viewer
-
-
-class FramePool(QObject):
-    def __init__(self, shape=(2048, 2048), dtype=np.uint16, n_buffers=4):
-        super().__init__()
-        self._buffers = [np.empty(shape, dtype=dtype) for _ in range(n_buffers)]
-        self._free = list(range(n_buffers))
-        self._in_use = set()
-        self._m = QMutex()
-
-    def acquire(self):
-        """Reserve a buffer index for writing. Returns idx or None if none free."""
-        with QMutexLocker(self._m):
-            if not self._free:
-                return None
-            idx = self._free.pop()
-            self._in_use.add(idx)
-            return idx
-
-    def buffer(self, idx: int) -> np.ndarray:
-        return self._buffers[idx]
-
-    @pyqtSlot(object)
-    def release(self, token):
-        """Return a buffer to the free list after viewer consumed/discarded it."""
-        idx = int(token)
-        with QMutexLocker(self._m):
-            if idx in self._in_use:
-                self._in_use.remove(idx)
-                self._free.append(idx)
+try:
+    from . import custom_widgets as cw
+except ImportError:
+    from minimiao.gui import custom_widgets as cw
 
 
 class LiveViewer(QWidget):
-    frame_idx_signal = pyqtSignal(int)
 
     def __init__(self, logg, parent=None):
         super().__init__(parent)
         self.logg = logg
-        pg.setConfigOptions(useOpenGL=True, antialias=False)
         self._setup_ui()
-        self._overlay_n = 0
-        self.h = 1024
-        self.w = 1024
-        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
-        self.view_stack.setCurrentIndex(0)
-        self._setup_signal_connections()
+
+        self.live_worker = None
+
+        self._target_img = None
+        self._picking_enabled = False
+        self._picking_n = None
+        self.target_points = []
+
+        self.image_plot.scene().sigMouseClicked.connect(self._on_target_mouse_clicked)
+        self.image_plot.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
+        self.image_plot.installEventFilter(self)
+
+        self.target_spots_item = pg.ScatterPlotItem(size=8, pen=pg.mkPen(width=2))
+        self.image_plot.addItem(self.target_spots_item)
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Vertical)
 
-        image_widget = QWidget()
-        image_layout = self._create_image_widgets()
-        image_widget.setLayout(image_layout)
+        image_widget = self._create_image_widgets()
         splitter.addWidget(image_widget)
 
-        plot_widget = QWidget()
-        plot_layout = self._create_plot_widgets()
-        plot_widget.setLayout(plot_layout)
-        splitter.addWidget(plot_widget)
+        table_widget = self._create_table_widget()
+        splitter.addWidget(table_widget)
 
         layout.addWidget(splitter)
         self.setLayout(layout)
 
-    def _setup_signal_connections(self):
-        self.QSlider_black.valueChanged.connect(self.on_black_change)
-        self.QSlider_white.valueChanged.connect(self.on_white_change)
-        self.QPushButton_contrast_auto.clicked.connect(self.auto_contrast)
-        self.QPushButton_contrast_manual.clicked.connect(self.manual_contrast)
-        self.image_viewer.mousePixelChanged.connect(self.on_mouse)
-        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-        self.frame_idx_signal.connect(self.on_frame_idx, Qt.ConnectionType.QueuedConnection)
-        self.QComboBox_viewer_selection.currentIndexChanged.connect(self.switch_viewer)
-
     def _create_image_widgets(self):
-        layout_view = QVBoxLayout()
-        layout_view.setContentsMargins(4, 4, 4, 4)
+        layout_image = QVBoxLayout()
 
-        self.image_viewer = gl_viewer.GLGray16Viewer(use_pbo=True)  # camera frames (big, fast)
-        self.image_viewer.set_levels(0, 65535, 1.0)
+        self.image_plot = pg.PlotWidget()
+        self.image_plot.setAspectLocked(True)
+        self.image_plot.getPlotItem().hideAxis("left")
+        self.image_plot.getPlotItem().hideAxis("bottom")
 
-        self.fft_viewer = gl_viewer.GLGray16Viewer(use_pbo=False)  # FFT frames (smaller; PBO not needed)
+        self.graph_img_item = pg.ImageItem(axisOrder="row-major")
+        self.image_plot.addItem(self.graph_img_item)
+        self.image_plot.invertY(True)
 
-        self.view_stack = QStackedWidget()
-        self.view_stack.addWidget(self.image_viewer)  # index 0
-        self.view_stack.addWidget(self.fft_viewer)  # index 1
+        layout_image.addWidget(self.image_plot, stretch=1)
 
-        controls = QWidget()
-        row = QHBoxLayout(controls)
-        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image"])
-        self.QSlider_black = cw.SliderWidget(0, 65535, 0)
-        self.QSpinBox_black = cw.SpinBoxWidget(0, 65535, 1, 0)
-        self.QSlider_white = cw.SliderWidget(0, 65535, 65535)
-        self.QSpinBox_white = cw.SpinBoxWidget(0, 65535, 1, 65535)
-        self.QPushButton_contrast_manual = cw.PushButtonWidget("Set")
-        self.QPushButton_contrast_auto = cw.PushButtonWidget("Auto Set")
-        row.addWidget(self.QComboBox_viewer_selection)
-        row.addWidget(cw.LabelWidget("Min"))
-        row.addWidget(cw.LabelWidget("0"))
-        row.addWidget(self.QSlider_black)
-        row.addWidget(self.QSpinBox_black)
-        row.addWidget(cw.LabelWidget("Max"))
-        row.addWidget(self.QSlider_white)
-        row.addWidget(self.QSpinBox_white)
-        row.addWidget(cw.LabelWidget("65535"))
-        row.addWidget(self.QPushButton_contrast_manual)
-        row.addWidget(self.QPushButton_contrast_auto)
+        image_widget = QWidget()
+        image_widget.setLayout(layout_image)
 
-        self.QLabel_cursor = cw.LabelWidget("x:-  y:-  v:-")
+        return image_widget
 
-        layout_view.addWidget(controls)
-        layout_view.addWidget(self.view_stack, stretch=1)
-        layout_view.addWidget(self.QLabel_cursor)
-        return layout_view
+    def _create_table_widget(self):
+        layout_table = QVBoxLayout()
 
-    def _create_plot_widgets(self):
-        layout_plot = QHBoxLayout()
+        self.spot_table = cw.TableWidget(headers=['X', 'Y', 'Z', 'Intensity'], n_rows=2)
 
-        self.graph_plot = pg.PlotWidget()
-        self.graph_plot.setAspectLocked(True)
-        self.graph_plot.getPlotItem().hideAxis("left")
-        self.graph_plot.getPlotItem().hideAxis("bottom")
+        layout_table.addWidget(cw.LabelWidget("Spot Coordinates"))
+        layout_table.addWidget(self.spot_table)
 
-        self.graph_img_item = pg.ImageItem(axisOrder="row-major")  # numpy (H,W)
-        self.graph_plot.addItem(self.graph_img_item)
-        self.graph_plot.invertY(True)
+        table_widget = QWidget()
+        table_widget.setLayout(layout_table)
 
-        self.data_plot = pg.PlotWidget()
-        self.data_plot.showGrid(x=True, y=True)
+        return table_widget
 
-        self.data_curve = self.data_plot.plot()
-
-        self.data_curve.setDownsampling(auto=True, method="peak")
-        self.data_curve.setSkipFiniteCheck(True)
-
-        pi = self.data_plot.getPlotItem()
-        pi.setClipToView(True)
-        pi.enableAutoRange(x=False)
-
-        layout_plot.addWidget(self.graph_plot, stretch=1)
-        layout_plot.addWidget(self.data_plot, stretch=1)
-        return layout_plot
-
-    def on_mouse(self, ix, iy, val):
-        if ix < 0:
-            self.QLabel_cursor.setText("x:-  y:-  v:-")
-        else:
-            self.QLabel_cursor.setText(f"x:{ix}  y:{iy}  v:{val}")
-
-    def switch_camera(self, h, w):
-        self.h, self.w = h, w
-        try:
-            self.image_viewer.frameConsumed.disconnect(self.pool.release)
-            self.image_viewer.frameDiscarded.disconnect(self.pool.release)
-        except (TypeError, RuntimeError):
-            pass
-        self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
-        self.image_viewer.frameConsumed.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-        self.image_viewer.frameDiscarded.connect(self.pool.release, Qt.ConnectionType.QueuedConnection)
-
-    @pyqtSlot(int)
-    def switch_viewer(self, ind: int):
-        self.view_stack.setCurrentIndex(ind)
+    def set_graph_image(self, img: np.ndarray, levels=None):
+        self._target_img = img
+        self.graph_img_item.setImage(img, autoLevels=(levels is None))
+        h, w = img.shape[:2]
+        self.image_plot.setLimits(xMin=0, xMax=w, yMin=0, yMax=h)
+        self.image_plot.setRange(xRange=(0, w), yRange=(0, h), padding=0)
 
     def on_camera_update_from_thread(self, frame: np.ndarray):
         """Runs in camera thread. Do NOT touch Qt widgets here."""
         if frame is None:
             return
+        else:
+            self.set_graph_image(frame)
 
-        # normalize shape/dtype
-        if frame.ndim == 3 and frame.shape[-1] == 1:
-            frame = frame[..., 0]
-        if frame.dtype != np.uint16:
-            frame = frame.astype(np.uint16, copy=False)
+    def start_target_picking(self):
+        self.logg.info("Start picking...")
+        self._picking_enabled = True
+        self._picking_enabled = True
 
-        idx = self.pool.acquire()
-        if idx is None:
+        self.target_points = []
+        self._update_target_spots_overlay()
+
+        self.image_plot.setFocus()
+        self.image_plot.setCursor(Qt.CursorShape.CrossCursor)
+
+        self._update_pick_status()
+
+    def finish_target_picking(self):
+        self._picking_enabled = False
+        self.image_plot.unsetCursor()
+        self._update_pick_status(done=True)
+
+    def cancel_target_picking(self):
+        self._picking_enabled = False
+        self.image_plot.unsetCursor()
+        self._update_pick_status(cancelled=True)
+
+    def get_target_spots(self):
+        return self.spot_table.get_row(-1)
+
+    def _update_pick_status(self, done=False, cancelled=False):
+        n = len(getattr(self, "target_points", []))
+        if cancelled:
+            title = "Picking cancelled"
+        elif done:
+            title = f"Picked {n} spot(s)"
+        elif self._picking_enabled:
+            title = f"Picking: {n} spot(s)  |  Left-click add, Backspace undo, Enter finish, Esc cancel"
+        else:
+            title = f"Spots: {n}"
+        self.image_plot.getPlotItem().setTitle(title)
+
+    def _on_target_mouse_clicked(self, ev):
+        if not self._picking_enabled or self._target_img is None:
             return
 
-        dst = self.pool.buffer(idx)
-        np.copyto(dst, frame, casting="no")
-
-        # send only index to GUI thread
-        self.frame_idx_signal.emit(idx)
-
-    @pyqtSlot(int)
-    def on_black_change(self, value: int):
-        self.QSpinBox_black.setValue(value)
-
-    @pyqtSlot(int)
-    def on_white_change(self, value: int):
-        self.QSpinBox_white.setValue(value)
-
-    @pyqtSlot()
-    def manual_contrast(self):
-        self.image_viewer.set_levels(self.QSpinBox_black.value(), self.QSpinBox_white.value())
-
-    @pyqtSlot()
-    def auto_contrast(self):
-        b, w = self.image_viewer.auto_levels()
-        self.QSlider_black.setValue(b)
-        self.QSlider_white.setValue(w)
-
-    @pyqtSlot(int)
-    def on_frame_idx(self, idx: int):
-        self.image_viewer.set_frame(self.pool.buffer(idx), token=idx)
-
-    def plot_trace(self, y, x=None, overlay=False):
-        y = np.asarray(y)
-        if y.size == 0:
+        # right-click = finish (optional)
+        if ev.button() == Qt.MouseButton.RightButton:
+            self.finish_target_picking()
             return
-        if not overlay:
-            self.data_plot.clear()
-            self._overlay_n = 0
-        if x is None:
-            x = np.arange(y.size)
-        self.data_plot.enableAutoRange(x=True)
-        color = pg.intColor(self._overlay_n, hues=12)  # 12 distinct-ish hues, repeats after 12
-        pen = pg.mkPen(color=color, width=1.)
-        self._overlay_n += 1
-        self.data_plot.plot(x, y, pen=pen)
+
+        if ev.button() != Qt.MouseButton.LeftButton:
+            return
+
+        vb = self.image_plot.getPlotItem().vb
+        if not vb.sceneBoundingRect().contains(ev.scenePos()):
+            return
+
+        p = vb.mapSceneToView(ev.scenePos())
+        x, y = float(p.x()), float(p.y())
+
+        h, w = self._target_img.shape[:2]
+        if not (0 <= x < w and 0 <= y < h):
+            return
+
+        u = int(round(x))
+        v = int(round(y))
+        self.target_points.append((u, v))
+        self.spot_table.fill_row(len(self.target_points) - 1, [u, v, 0.0, 1.0])
+        self._update_target_spots_overlay()
+        self._update_pick_status()
+
+    def _update_target_spots_overlay(self):
+        if not self.target_points:
+            self.target_spots_item.setData([], [])
+            return
+        xs = [p[0] for p in self.target_points]
+        ys = [p[1] for p in self.target_points]
+        self.target_spots_item.setData(xs, ys)
+
+    def eventFilter(self, obj, event):
+        if obj is self.image_plot and self._picking_enabled:
+            if event.type() == QEvent.Type.KeyPress:
+                key = event.key()
+
+                if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                    self.finish_target_picking()
+                    return True
+
+                if key == Qt.Key.Key_Backspace:
+                    if self.target_points:
+                        self.target_points.pop()
+                        self._update_target_spots_overlay()
+                    return True
+
+                if key == Qt.Key.Key_Escape:
+                    self.cancel_target_picking()
+                    return True
+
+        return super().eventFilter(obj, event)

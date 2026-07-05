@@ -34,8 +34,8 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event, **kwargs):
         self.aboutToClose.emit()
-        self.ctrl_panel.save_spinbox_values()
-        self.hg_panel.save_spinbox_values()
+        # self.ctrl_panel.save_spinbox_values()
+        # self.hg_panel.save_spinbox_values()
         super().closeEvent(event)
 
     def _setup_ui(self):
@@ -100,6 +100,16 @@ class MainWindow(QMainWindow):
         self.dialog.show()
         self.dialog_text.setText(f"Task {txt} is running, please wait...")
         self.refresh_gui()
+
+    def get_file_dialog(self, sw="Save File"):
+        file_dialog = cw.FileDialogWidget(name=sw, file_filter="All Files (*)", default_dir=self.data_folder)
+        if file_dialog.exec() == QFileDialog.DialogCode.Accepted:
+            selected_file = file_dialog.selectedFiles()
+            if selected_file:
+                return os.path.basename(selected_file[0])
+            else:
+                return None
+        return None
 
     def select_file_from_folder(self, data_folder):
         file_path, _ = QFileDialog.getOpenFileName(self, "Select a File", data_folder, "All Files (*)")

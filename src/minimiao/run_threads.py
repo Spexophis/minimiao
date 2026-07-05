@@ -242,6 +242,38 @@ class CameraDataList:
         self.callback = callback
 
 
+class ImgLiveWorker(QThread):
+    img_ready = pyqtSignal(object)
+
+    def __init__(self, data=None, fps=10, parent=None):
+        super().__init__(parent)
+        self.data = data
+        self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))
+        self._running = True
+        self._lock = threading.Lock()
+
+    def stop(self):
+        """Stop worker thread gracefully"""
+        self._running = False
+
+        if not self.wait(1000):
+            self.terminate()
+            self.wait(1000)
+
+    def run(self):
+        try:
+            while self._running:
+                self.msleep(self.period_ms)
+                with self._lock:
+                    if self.data is None:
+                        break
+                    img_copy = self.data.get_last_element()
+                self.img_ready.emit(img_copy)
+        except Exception as e:
+            import logging
+            logging.error(f"PSLiveWorker error: {e}")
+
+
 class TaskWorker(QThread):
     error = pyqtSignal(tuple)
 

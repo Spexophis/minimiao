@@ -403,7 +403,7 @@ class ComboBoxWidget(QtWidgets.QComboBox):
 
 
 class LineEditWidget(QtWidgets.QLineEdit):
-    def __init__(self):
+    def __init__(self, rd=False):
         super().__init__()
         self.setFont(QtGui.QFont("Arial", 10, QtGui.QFont.Weight.Bold))
         self.setStyleSheet('''
@@ -412,6 +412,8 @@ class LineEditWidget(QtWidgets.QLineEdit):
                 color: white;
             }
         ''')
+        if rd:
+            self.setReadOnly(True)
 
 
 class TextEditWidget(QtWidgets.QTextEdit):
