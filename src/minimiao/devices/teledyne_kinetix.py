@@ -223,6 +223,7 @@ class KinetixCamera:
         so binning must be committed to the camera BEFORE calling set_roi().
         """
         try:
+            self.cam.reset_rois()
             self.cam.binning = (self._settings.s_bin, self._settings.p_bin)
             self.cam.set_roi(self._settings.s1, self._settings.p1, self._settings.pixels_x, self._settings.pixels_y)
             self._settings.ps = 6.5 * self._settings.s_bin

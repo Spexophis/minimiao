@@ -80,11 +80,12 @@ class LiveViewer(QWidget):
         return table_widget
 
     def set_graph_image(self, img: np.ndarray, levels=None):
+        old_shape = None if self._target_img is None else self._target_img.shape
         self._target_img = img
         self.graph_img_item.setImage(img, autoLevels=(levels is None))
-        h, w = img.shape[:2]
-        self.image_plot.setLimits(xMin=0, xMax=w, yMin=0, yMax=h)
-        self.image_plot.setRange(xRange=(0, w), yRange=(0, h), padding=0)
+
+        if old_shape != img.shape:
+            self.image_plot.getViewBox().autoRange()
 
     def on_camera_update_from_thread(self, frame: np.ndarray):
         """Runs in camera thread. Do NOT touch Qt widgets here."""
@@ -154,8 +155,8 @@ class LiveViewer(QWidget):
         if not (0 <= x < w and 0 <= y < h):
             return
 
-        u = int(round(x))
-        v = int(round(y))
+        u = int(np.clip(np.floor(x), 0, w - 1))
+        v = int(np.clip(np.floor(y), 0, h - 1))
         self.target_points.append((u, v))
         self.spot_table.fill_row(len(self.target_points) - 1, [u, v, 0.0, 1.0])
         self._update_target_spots_overlay()

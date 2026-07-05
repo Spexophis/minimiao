@@ -69,7 +69,7 @@ class CommandExecutor(QObject):
     def set_camera_roi(self):
         try:
             x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
-            self.devs.camera.s_bin, self.devs.camera.s_bin = bn, bn
+            self.devs.camera.s_bin, self.devs.camera.p_bin = bn, bn
             self.devs.camera.s1, self.devs.camera.pixels_x = x, nx
             self.devs.camera.p1, self.devs.camera.pixels_y = y, ny
             self.devs.camera.t_exposure = self.ctrl_panel.get_scmos_exposure()

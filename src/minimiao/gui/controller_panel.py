@@ -211,11 +211,10 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         laser_473_scroll_area, laser_473_scroll_layout = cw.create_scroll_area()
 
-        self.QRadioButton_laser_473 = cw.RadioButtonWidget('473 nm')
         self.QDoubleSpinBox_laserpower_473 = cw.DoubleSpinBoxWidget(0, 200, 0.1, 1, 0.0)
         self.QPushButton_laser_473 = cw.PushButtonWidget('ON', checkable=True)
 
-        laser_473_scroll_layout.addRow(self.QRadioButton_laser_473, self.QDoubleSpinBox_laserpower_473)
+        laser_473_scroll_layout.addRow(self.QDoubleSpinBox_laserpower_473)
         laser_473_scroll_layout.addRow(self.QPushButton_laser_473)
 
         group_layout = QHBoxLayout(group)
@@ -264,6 +263,7 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_stage_y_usb.valueChanged.connect(self.set_stage_y_usb)
         self.QDoubleSpinBox_stage_z_usb.valueChanged.connect(self.set_stage_z_usb)
         self.QPushButton_laser_473.clicked.connect(self.set_laser_473)
+        self.QDoubleSpinBox_laserpower_473.valueChanged.connect(self.pw_laser_473)
         self.QSpinBox_trigger_sample_rate.valueChanged.connect(self.update_trigger)
         self.QPushButton_reset_trigger.clicked.connect(self.reset_trigger)
         self.QPushButton_video.clicked.connect(self.run_video)
@@ -369,18 +369,11 @@ class ControlPanel(QWidget):
         power = self.QDoubleSpinBox_laserpower_473.value()
         self.Signal_set_laser.emit(["473"], checked, power)
 
-    def get_lasers(self):
-        lasers = []
-        if self.QRadioButton_laser_473.isChecked():
-            lasers.append(0)
-        return lasers
-
-    def get_cobolt_laser_power(self, laser):
-        if laser == "473":
-            return [self.QDoubleSpinBox_laserpower_473.value()]
-        if "all" == laser:
-            return [self.QDoubleSpinBox_laserpower_473.value()]
-        return None
+    @pyqtSlot(float)
+    def pw_laser_473(self, power: float):
+        checked = self.QPushButton_laser_473.isChecked()
+        power = self.QDoubleSpinBox_laserpower_473.value()
+        self.Signal_set_laser.emit(["473"], checked, power)
 
     @pyqtSlot(int)
     def update_trigger(self, sample_rate: int):
