@@ -10,8 +10,9 @@ from minimiao import logger
 
 class TriggerSequence:
 
-    def __init__(self, dev, sample_rate=80e3, logg=None):
-        self.galvo = dev
+    def __init__(self, galvo, piezo, sample_rate=80e3, logg=None):
+        self.galvo = galvo
+        self.piezo = piezo
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
@@ -227,22 +228,6 @@ class TriggerSequence:
         gates = np.tile(gates, self.galvo_scan_pos[pch])
         return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, gates, dwl
 
-    def generate_piezo_resolft_scan(self, lasers, detectors):
-        digital_triggers, galvo_sequences, dig_chs, gv_chs, pos, gates, dwl = self.generate_galvo_resolft_scan(lasers, detectors)
-
-        return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, gates, dwl
-
-    def generate_galvo_resolft_static(self, lasers, detectors):
-        digital_triggers, dig_chs, cycle_samples, gates, dwl = self.generate_digital_triggers_for_galvo_scan(lasers, detectors)
-        pos = 16
-        gv_chs = [0, 1]
-        galvo_sequences = np.ones((2, digital_triggers.shape[1]))
-        galvo_sequences[0] *= self.galvo_origins[0]
-        galvo_sequences[1] *= self.galvo_origins[1]
-        galvo_sequences = np.tile(galvo_sequences, pos)
-        digital_triggers = np.tile(digital_triggers, pos)
-        return digital_triggers, galvo_sequences, dig_chs, gv_chs, pos, gates, dwl
-
     def generate_galvo_point_scan(self, lasers, detectors):
         pos = 1
         gv_chs = []
@@ -265,9 +250,247 @@ class TriggerSequence:
         gates = [gate_ttl for _ in range(len(gate_ind))]
         return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
 
-    def generate_galvo_axial_scan(self, lasers, detectors):
-        digital_triggers, galvo_sequences, digital_channels, gv_chs, pos, gates = self.generate_galvo_point_scan(lasers, detectors)
-        return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
+    def _build_piezo_z_sequence(self, samples_per_z_total: int) -> np.ndarray:
+        """
+        Build the piezo voltage array for a full Z stack.
+
+        Each Z plane occupies ``samples_per_z_total`` samples: the first
+        ``samples_per_z_total - piezo_return_samples`` samples hold the
+        target voltage while the galvo acquires the XY frame, and the
+        remaining ``piezo_return_samples`` samples ramp linearly to the
+        next Z position.  After the last plane the piezo returns to the
+        first position.
+        """
+        z_voltages = self.piezo_scan_positions[0]   # already in volts
+        n_z = len(z_voltages)
+        hold_samples = samples_per_z_total - self.piezo_return_samples
+        seq = np.empty(samples_per_z_total * n_z)
+        for iz, v in enumerate(z_voltages):
+            base = iz * samples_per_z_total
+            seq[base: base + hold_samples] = v
+            next_v = z_voltages[(iz + 1) % n_z]
+            seq[base + hold_samples: base + samples_per_z_total] = (
+                np.linspace(v, next_v, self.piezo_return_samples, endpoint=False)
+            )
+        return seq
+
+    def _generate_1d_galvo_point_scan(self, lasers, detectors, scan_axis: int):
+        """
+        Generate a 1-D galvo point scan along ``scan_axis`` (0 = X, 1 = Y).
+
+        The orthogonal galvo axis is held at its origin voltage.  This
+        supports XZ (scan_axis=0) and YZ (scan_axis=1) plane acquisition
+        when paired with the piezo Z sweep in ``generate_3d_point_scan``.
+        """
+        if scan_axis not in (0, 1):
+            raise ValueError("scan_axis must be 0 (X) or 1 (Y).")
+
+        n_scan = self.galvo_scan_pos[scan_axis]
+        if n_scan == 0:
+            raise ValueError(
+                f"galvo_scan_pos[{scan_axis}] is zero — no pixels on the scan axis."
+            )
+
+        # Temporarily reconfigure galvo for 1-D raster:
+        # n_pixels = n_scan, n_lines = 1  (X-axis scan)
+        # n_pixels = 1, n_lines = n_scan  (Y-axis scan)
+        orig_n_pixels = self.galvo.n_pixels
+        orig_n_lines = self.galvo.n_lines
+        orig_px = self.galvo.pixel_sx
+        orig_py = self.galvo.pixel_sy
+        orig_vx = self.galvo.pixel_vx
+        orig_vy = self.galvo.pixel_vy
+
+        try:
+            if scan_axis == 0:
+                # X scans, Y static: single-line scan along X
+                self.galvo.set_params(
+                    sample_rate_hz=None,
+                    start_s=(self.galvo_starts[0], self.galvo_origins[1]),
+                    pixel_s=(self.dot_steps[0], self.dot_steps[1]),
+                    pixels_lines=(n_scan, 1),
+                    t_ramp_us=None, t_flyback_us=None, t_settle_us=None,
+                )
+            else:
+                # Y scans, X static: single-column scan — use Y as fast axis
+                # by swapping pixel/line counts and sizes
+                self.galvo.set_params(
+                    sample_rate_hz=None,
+                    start_s=(self.galvo_origins[0], self.galvo_starts[1]),
+                    pixel_s=(self.dot_steps[1], self.dot_steps[0]),
+                    pixels_lines=(n_scan, 1),
+                    t_ramp_us=None, t_flyback_us=None, t_settle_us=None,
+                )
+
+            fast_axis, slow_axis, gate_ttl = self.galvo.build_scan()
+
+            if scan_axis == 0:
+                galvo_seqs = np.array([fast_axis, slow_axis])
+                gv_chs = [0, 1]
+            else:
+                # Swap back: fast_axis drove the Y mirror, slow_axis is X (static)
+                galvo_seqs = np.array([slow_axis, fast_axis])
+                gv_chs = [0, 1]
+
+        finally:
+            # Always restore original galvo parameters
+            self.galvo.set_params(
+                sample_rate_hz=None,
+                start_s=(orig_px, orig_py),
+                pixel_s=(orig_vx, orig_vy),
+                pixels_lines=(orig_n_pixels, orig_n_lines),
+                t_ramp_us=None, t_flyback_us=None, t_settle_us=None,
+            )
+
+        detect_ind = [d + 3 for d in detectors]
+        dig_chs = lasers.copy()
+        dig_chs.extend(detect_ind)
+        digital_triggers = np.array([gate_ttl for _ in dig_chs])
+        gates = np.array([gate_ttl for _ in detect_ind])
+        pos = n_scan
+
+        return digital_triggers, galvo_seqs, dig_chs, gv_chs, pos, gates
+
+    def generate_3d_resolft_scan(self, lasers, detectors):
+        """
+        Generate waveforms for a 3-D RESOLFT scan.
+
+        XY: galvo RESOLFT scan (identical to ``generate_galvo_resolft_scan``
+        for each plane).
+        Z:  piezo steps through ``piezo_scan_pos[0]`` planes.
+
+        Between consecutive Z planes the galvo holds its end position while
+        the piezo ramps to the next voltage over ``piezo_return_samples``
+        samples.
+
+        Returns
+        -------
+        digital_triggers : ndarray, shape (n_channels, N_total)
+        galvo_sequences  : ndarray, shape (2, N_total) or (N_total,)
+        piezo_sequence   : ndarray, shape (N_total,)
+        dig_chs          : list[int]
+        gv_chs           : list[int]
+        pz_chs           : list[int]   piezo DAQ channel indices (always [0])
+        total_pos        : int         total XYZ pixels
+        gates            : ndarray
+        dwl              : int         pixel dwell samples
+        """
+        (digital_triggers, galvo_seqs, dig_chs, gv_chs,
+         xy_pos, gates, dwl) = self.generate_galvo_resolft_scan(lasers, detectors)
+
+        n_z = self.piezo_scan_pos[0]
+        if n_z == 0:
+            raise ValueError("piezo_scan_pos[0] is zero — no Z planes defined.")
+
+        galvo_frame_samples = digital_triggers.shape[1]
+        pad = self.piezo_return_samples
+
+        # Pad galvo/digital/gate arrays so each Z slot =
+        # galvo_frame_samples + piezo_return_samples.
+        # During the return interval the galvo holds its last position and
+        # all laser/detector triggers are off.
+        if galvo_seqs.ndim == 1:
+            galvo_seqs_padded = np.pad(galvo_seqs, (0, pad), mode='edge')
+        else:
+            galvo_seqs_padded = np.pad(galvo_seqs, ((0, 0), (0, pad)), mode='edge')
+        digital_padded = np.pad(digital_triggers, ((0, 0), (0, pad)),
+                                constant_values=0)
+        gates_padded = np.pad(gates, ((0, 0), (0, pad)), constant_values=0)
+
+        # Tile for all Z planes
+        if galvo_seqs_padded.ndim == 1:
+            galvo_seqs_3d = np.tile(galvo_seqs_padded, n_z)
+        else:
+            galvo_seqs_3d = np.tile(galvo_seqs_padded, (1, n_z))
+        digital_3d = np.tile(digital_padded, n_z)
+        gates_3d = np.tile(gates_padded, n_z)
+
+        samples_per_z = galvo_frame_samples + pad
+        piezo_seq = self._build_piezo_z_sequence(samples_per_z)
+
+        total_pos = xy_pos * n_z
+        return (digital_3d, galvo_seqs_3d, piezo_seq,
+                dig_chs, gv_chs, [0], total_pos, gates_3d, dwl)
+
+    def generate_3d_point_scan(self, lasers, detectors):
+        """
+        Generate waveforms for a 3-D point scan.
+
+        XY: galvo point scan derived from ``generate_galvo_point_scan``.
+        Z:  piezo steps through ``piezo_scan_pos[0]`` planes.
+
+        XZ / YZ compatibility
+        ---------------------
+        Setting ``galvo_ranges[1] = 0`` (zero Y range) collapses the scan
+        to an XZ plane: the Y galvo is held at ``galvo_origins[1]`` and
+        only X scans.  Setting ``galvo_ranges[0] = 0`` gives a YZ plane
+        with X held at ``galvo_origins[0]``.
+
+        Returns
+        -------
+        digital_triggers : ndarray, shape (n_channels, N_total)
+        galvo_sequences  : ndarray, shape (2, N_total) or (N_total,)
+        piezo_sequence   : ndarray, shape (N_total,)
+        dig_chs          : list[int]
+        gv_chs           : list[int]
+        pz_chs           : list[int]   always [0]
+        total_pos        : int         total XYZ pixels
+        gates            : ndarray
+        """
+        n_z = self.piezo_scan_pos[0]
+        if n_z == 0:
+            raise ValueError("piezo_scan_pos[0] is zero — no Z planes defined.")
+
+        n_x = self.galvo_scan_pos[0]
+        n_y = self.galvo_scan_pos[1]
+
+        # Determine scan geometry from which galvo axes are active
+        if n_x > 0 and n_y > 0:
+            # Full XYZ raster: use standard 2-D galvo point scan per plane
+            (digital_triggers, galvo_seqs, dig_chs, gv_chs,
+             xy_pos, gates) = self.generate_galvo_point_scan(lasers, detectors)
+
+        elif n_x > 0:
+            # XZ scan: X galvo scans, Y galvo static at origin
+            (digital_triggers, galvo_seqs, dig_chs, gv_chs,
+             xy_pos, gates) = self._generate_1d_galvo_point_scan(
+                lasers, detectors, scan_axis=0)
+
+        elif n_y > 0:
+            # YZ scan: Y galvo scans, X galvo static at origin
+            (digital_triggers, galvo_seqs, dig_chs, gv_chs,
+             xy_pos, gates) = self._generate_1d_galvo_point_scan(
+                lasers, detectors, scan_axis=1)
+
+        else:
+            raise ValueError(
+                "Both galvo_scan_pos are zero — at least one galvo axis must scan."
+            )
+
+        galvo_frame_samples = digital_triggers.shape[1]
+        pad = self.piezo_return_samples
+
+        if galvo_seqs.ndim == 1:
+            galvo_seqs_padded = np.pad(galvo_seqs, (0, pad), mode='edge')
+        else:
+            galvo_seqs_padded = np.pad(galvo_seqs, ((0, 0), (0, pad)), mode='edge')
+        digital_padded = np.pad(digital_triggers, ((0, 0), (0, pad)),
+                                constant_values=0)
+        gates_padded = np.pad(gates, ((0, 0), (0, pad)), constant_values=0)
+
+        if galvo_seqs_padded.ndim == 1:
+            galvo_seqs_3d = np.tile(galvo_seqs_padded, n_z)
+        else:
+            galvo_seqs_3d = np.tile(galvo_seqs_padded, (1, n_z))
+        digital_3d = np.tile(digital_padded, n_z)
+        gates_3d = np.tile(gates_padded, n_z)
+
+        samples_per_z = galvo_frame_samples + pad
+        piezo_seq = self._build_piezo_z_sequence(samples_per_z)
+
+        total_pos = xy_pos * n_z
+        return (digital_3d, galvo_seqs_3d, piezo_seq,
+                dig_chs, gv_chs, [0], total_pos, gates_3d)
 
 
 def convert_list(arrays):

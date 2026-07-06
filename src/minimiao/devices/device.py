@@ -7,6 +7,7 @@ from . import alpao_dm
 from . import cobolt_laser
 from . import ni_daq
 from . import galvo_mirror
+from . import pi_piezo
 
 
 class DeviceManager:
@@ -29,6 +30,10 @@ class DeviceManager:
             self.logg.error(f"{e}")
         try:
             self.gvs = galvo_mirror.GalvoWaveform(logg=self.logg)
+        except Exception as e:
+            self.logg.error(f"{e}")
+        try:
+            self.pz = pi_piezo.PiezoWaveform(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
         self.logg.info("Finish initiating devices")

@@ -14,7 +14,9 @@ class ComputationManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.rec = image_reconstructions.ImgRecon(logg=self.logg)
-        self.trg = trigger_generator.TriggerSequence(self.dev.gvs, logg=self.logg)
+        self.trg = trigger_generator.TriggerSequence(galvo=self.dev.gvs,
+                                                     piezo=self.dev.pz,
+                                                     logg=self.logg)
 
     @staticmethod
     def setup_logging():
