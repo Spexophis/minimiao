@@ -9,7 +9,7 @@ import nidaqmx
 import numpy as np
 from nidaqmx.constants import Signal, Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY, \
     DataTransferActiveTransferMode, READ_ALL_AVAILABLE
-from nidaqmx.error_codes import DAQmxWarnings, DAQmxErrors
+from nidaqmx.error_codes import DAQmxWarnings
 from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
 from nidaqmx.system import System
 
@@ -192,8 +192,6 @@ class NIDAQ:
                                                                             min_val=-10., max_val=10.)
                 self.tasks["analog_in"].timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
                                                                    sample_mode=self.mode, samps_per_chan=n_samples)
-                ai_buf = max(n_samples, int(self.sample_rate * 4))
-                self.tasks["analog_in"].in_stream.input_buf_size = ai_buf
                 if len(reader_channels) > 1:
                     self.analog_reader = AnalogMultiChannelReader(self.tasks["analog_in"].in_stream)
                 else:
@@ -268,7 +266,6 @@ class NIDAQ:
             self.tasks["photon_counters"].append(nidaqmx.Task(tsk_name))
             self.acq_threads.append(run_threads.PhotonCountThread(self, i))
         self.mpd_data = run_threads.PhotonCountList(len(cl), self.photon_counter_length)
-        buf_size = max(self.photon_counter_length, int(self.sample_rate * 4))
         for n, tsk in enumerate(self.tasks["photon_counters"]):
             c = tsk.ci_channels.add_ci_count_edges_chan(counter=self.photon_counter_channels[n],
                                                         edge=Edge.RISING)
@@ -277,7 +274,7 @@ class NIDAQ:
             tsk.timing.cfg_samp_clk_timing(rate=self.sample_rate, source="/Dev1/PFI2",
                                            active_edge=Edge.RISING, sample_mode=self.mode,
                                            samps_per_chan=self.photon_counter_length)
-            tsk.in_stream.input_buf_size = buf_size
+            tsk.in_stream.input_buf_size = self.photon_counter_length
         self._active["photon_counters"] = True
 
     def clear_photon_counter(self):
@@ -316,36 +313,17 @@ class NIDAQ:
 
     def get_photon_counts(self, ind):
         try:
-            counts = self.tasks["photon_counters"][ind].read(number_of_samples_per_channel=READ_ALL_AVAILABLE,
-                                                             timeout=0.0)
-            if counts:
-                n = len(counts) if isinstance(counts, (list, tuple)) else 1
-                self.mpd_data.add_element(counts if isinstance(counts, (list, tuple)) else [counts], n, ind)
-        except nidaqmx.DaqError as e:
-            if e.error_code == DAQmxErrors.SAMPLES_NO_LONGER_AVAILABLE:
-                self.logg.warning("Photon counter %d buffer overrun (samples overwritten); "
-                                  "consider lowering the sample rate or increasing buffer size.", ind)
-            else:
-                self.logg.error("DAQ read error %s: %s", e.error_code, e)
+            avail = self.tasks["photon_counters"][ind].in_stream.avail_samp_per_chan
+            # total = self.tasks["photon_counters"][ind].in_stream.total_samp_per_chan_acquired
+            if avail > 0:
+                counts = self.tasks["photon_counters"][ind].read(number_of_samples_per_channel=avail, timeout=0.0)
+                self.mpd_data.add_element(counts, avail, ind)
         except nidaqmx.DaqWarning as e:
-            self.logg.warning("DAQ read warning %s: %s", e.error_code, e)
+            self.logg.error("DAQ read error %s: %s", e.error_code, e)
 
     def get_data(self):
         edg_num, count_data = self.mpd_data.get_elements()
         return count_data
-
-    def _drain_photon_counters(self):
-        """Read and process any samples still sitting in photon counter buffers."""
-        for i, task in enumerate(self.tasks["photon_counters"]):
-            try:
-                avail = task.in_stream.avail_samp_per_chan
-                if avail > 0:
-                    counts = task.read(number_of_samples_per_channel=READ_ALL_AVAILABLE, timeout=0.0)
-                    if self.mpd_data is not None:
-                        n = len(counts) if isinstance(counts, (list, tuple)) else int(avail)
-                        self.mpd_data.add_element(counts, n, i)
-            except Exception as e:
-                self.logg.debug("Drain photon counter %d: %s", i, e)
 
     def start_pmt_read(self):
         if self.pmt_thread:
@@ -377,22 +355,6 @@ class NIDAQ:
                 self.pmt_data.add_element(pmt_ch.tolist(), avail)
         except nidaqmx.DaqWarning as e:
             self.logg.error("PMT read error %s: %s", e.error_code, e)
-
-    def _drain_analog_in(self):
-        """Read and discard any samples still in the analog-in buffer before stopping."""
-        if self.tasks["analog_in"] is None or self.analog_reader is None:
-            return
-        try:
-            avail = self.tasks["analog_in"].in_stream.avail_samp_per_chan
-            if avail > 0:
-                if isinstance(self.analog_reader, AnalogMultiChannelReader):
-                    tmp = np.empty((self.analog_data.shape[0], avail), dtype=np.float64)
-                    self.analog_reader.read_many_sample(tmp, number_of_samples_per_channel=avail, timeout=0.)
-                else:
-                    tmp = np.empty(avail, dtype=np.float64)
-                    self.analog_reader.read_many_sample(tmp, number_of_samples_per_channel=avail, timeout=0.)
-        except Exception as e:
-            self.logg.debug("Drain analog in: %s", e)
 
     def start_triggers(self):
         try:
@@ -433,7 +395,6 @@ class NIDAQ:
                     if self._active["photon_counters"] and self._running["photon_counters"]:
                         for task in self.tasks["photon_counters"]:
                             task.wait_until_done(WAIT_INFINITELY)
-                            self._drain_photon_counters()
                     if self._active["digital_out"] and self._running["digital_out"]:
                         self.tasks["digital_out"].wait_until_done(WAIT_INFINITELY)
                     self.logg.info("Trigger finished")
@@ -453,11 +414,9 @@ class NIDAQ:
                 self.tasks["analog_out"].stop()
                 self._running["analog_out"] = False
             if self._active["analog_in"] and self._running["analog_in"]:
-                self._drain_analog_in()
                 self.tasks["analog_in"].stop()
                 self._running["analog_in"] = False
             if self._active["photon_counters"] and self._running["photon_counters"]:
-                self._drain_photon_counters()
                 for task in self.tasks["photon_counters"]:
                     task.stop()
                 self._running["photon_counters"] = False
