@@ -388,8 +388,8 @@ class DPCCameraDataList:
         self.group_size = group_size
         self.max_length = max_length
         self.data_list = deque(maxlen=max_length)        # reconstructed dpc_combined images
-        self.raw_group_list = deque(maxlen=max_length)    # matching raw 4-frame groups
-        self._staging = []
+        self.raw_group_list = deque(maxlen=max_length)    # matching raw 4-frame windows
+        self._window = deque(maxlen=group_size)
         self.callback = None
         self._lock = threading.Lock()
 
@@ -400,10 +400,10 @@ class DPCCameraDataList:
 
         ready_groups = []
         with self._lock:
-            self._staging.extend(elements)
-            while len(self._staging) >= self.group_size:
-                ready_groups.append(self._staging[:self.group_size])
-                self._staging = self._staging[self.group_size:]
+            for element in elements:
+                self._window.append(element)
+                if len(self._window) == self.group_size:
+                    ready_groups.append(list(self._window))
 
         for group in ready_groups:
             _, _, dpc_combined = dpc_reconstruct(group)
