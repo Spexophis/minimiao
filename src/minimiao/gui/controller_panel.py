@@ -21,6 +21,9 @@ class ControlPanel(QWidget):
     Signal_piezo_move_usb = pyqtSignal(str, float, float, float)
     Signal_piezo_move = pyqtSignal(str, float, float, float)
     Signal_set_laser = pyqtSignal(list, bool, float)
+    Signal_motor_home = pyqtSignal(float)
+    Signal_motor_step = pyqtSignal(float)
+    Signal_motor_move = pyqtSignal(bool)
     Signal_daq_update = pyqtSignal(int)
     Signal_daq_reset = pyqtSignal()
     Signal_plot_trigger = pyqtSignal()
@@ -30,6 +33,7 @@ class ControlPanel(QWidget):
     Signal_fft = pyqtSignal(bool)
     Signal_plot_profile = pyqtSignal()
     Signal_add_profile = pyqtSignal()
+    Signal_dpc = pyqtSignal(bool)
     Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
 
@@ -320,11 +324,24 @@ class ControlPanel(QWidget):
 
     def _create_slm_panel(self):
         group = cw.GroupWidget()
-        slm_scroll_area, slm_scroll_layout = cw.create_scroll_area()
+        slm_scroll_area, slm_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[], maxlen=256)
+        self.QDoubleSpinBox_motor_step = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 14.5)
+        self.QPushButton_motor_fwd = cw.PushButtonWidget("Forward")
+        self.QPushButton_motor_bwd = cw.PushButtonWidget("Backward")
+        self.QDoubleSpinBox_motor_home = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 5)
+        self.QPushButton_motor_home = cw.PushButtonWidget("Home")
 
-        slm_scroll_layout.addRow(cw.LabelWidget(str('SLM')), self.QComboBox_slm_sequence)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('SLM')), 0, 0, 1, 1)
+        slm_scroll_layout.addWidget(self.QComboBox_slm_sequence, 1, 0, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Motor')), 0, 1, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Jog Step')), 0, 2, 1, 1)
+        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_step, 1, 2, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_fwd, 0, 3, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_bwd, 1, 3, 1, 1)
+        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_home, 0, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_home, 1, 4, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(slm_scroll_area)
@@ -336,9 +353,10 @@ class ControlPanel(QWidget):
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field", "Focus Lock"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
+        self.QPushButton_dpc = cw.PushButtonWidget("DPC", checkable=True)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
         self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
         self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
@@ -356,6 +374,7 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(self.QComboBox_live_modes, 1, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_save_live_timing_presets, 2, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_video, 1, 2, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_dpc, 2, 2, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Modes')), 0, 3, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_acquisition_modes, 1, 3, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_save_acquisition_timing_presets, 2, 3, 1, 1)
@@ -390,6 +409,10 @@ class ControlPanel(QWidget):
         self.QPushButton_laser_488_0.clicked.connect(self.set_laser_488_0)
         self.QPushButton_laser_488_1.clicked.connect(self.set_laser_488_1)
         self.QPushButton_laser_405.clicked.connect(self.set_laser_405)
+        self.QPushButton_motor_home.clicked.connect(self.motor_home)
+        self.QDoubleSpinBox_motor_step.valueChanged.connect(self.motor_step)
+        self.QPushButton_motor_fwd.clicked.connect(self.motor_fwd)
+        self.QPushButton_motor_bwd.clicked.connect(self.motor_bwd)
         self.QSpinBox_daq_sample_rate.valueChanged.connect(self.update_daq)
         self.QPushButton_reset_daq.clicked.connect(self.reset_daq)
         self.QPushButton_plot_trigger.clicked.connect(self.plot_trigger_sequence)
@@ -397,6 +420,7 @@ class ControlPanel(QWidget):
         self.QPushButton_focus_locking.clicked.connect(self.run_focus_locking)
         self.QPushButton_video.clicked.connect(self.run_video)
         self.QPushButton_fft.clicked.connect(self.run_fft)
+        self.QPushButton_dpc.clicked.connect(self.run_dpc)
         self.QPushButton_plot_profile.clicked.connect(self.run_plot_profile)
         self.QPushButton_add_profile.clicked.connect(self.run_add_profile)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
@@ -443,6 +467,9 @@ class ControlPanel(QWidget):
         return [self.QSpinBox_scmos_coordinate_x.value(), self.QSpinBox_scmos_coordinate_y.value(),
                 self.QSpinBox_scmos_coordinate_nx.value(), self.QSpinBox_scmos_coordinate_ny.value(),
                 self.QSpinBox_scmos_coordinate_bin.value()]
+
+    def get_scmos_exposure(self):
+        return self.QDoubleSpinBox_scmos_t_exposure.value()
 
     def get_scmos_gain(self):
         return self.QSpinBox_scmos_gain.value()
@@ -592,6 +619,23 @@ class ControlPanel(QWidget):
     def get_slm_sequence(self):
         return self.QComboBox_slm_sequence.currentText()
 
+    @pyqtSlot()
+    def motor_home(self):
+        pos = self.QDoubleSpinBox_motor_home.value()
+        self.Signal_motor_home.emit(pos)
+
+    @pyqtSlot(float)
+    def motor_step(self, step_size: float):
+        self.Signal_motor_step.emit(step_size)
+
+    @pyqtSlot()
+    def motor_fwd(self):
+        self.Signal_motor_move.emit(True)
+
+    @pyqtSlot()
+    def motor_bwd(self):
+        self.Signal_motor_move.emit(False)
+
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
         self.Signal_daq_update.emit(sample_rate)
@@ -647,6 +691,13 @@ class ControlPanel(QWidget):
             self.Signal_fft.emit(True)
         else:
             self.Signal_fft.emit(False)
+
+    @pyqtSlot()
+    def run_dpc(self):
+        if self.QPushButton_dpc.isChecked():
+            self.Signal_dpc.emit(True)
+        else:
+            self.Signal_dpc.emit(False)
 
     def get_profile_axis(self):
         return self.QComboBox_profile_axis.currentText()

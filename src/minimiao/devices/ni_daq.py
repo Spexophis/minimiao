@@ -30,12 +30,14 @@ class NIDAQ:
         self.tasks, self._active, self._running, = self._configure()
         self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
-        self.analog_channels = ["Dev3/ao0", "Dev3/ao1", "Dev3/ao2"]
-        self.digital_channels = ["Dev2/port0/line0", "Dev2/port0/line1", "Dev2/port0/line3",
-                                 "Dev2/port0/line4", "Dev2/port0/line5", "Dev2/port0/line6"]
+        self.analog_channels = ["Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
+        self.digital_channels = ["Dev2/port0/line0", "Dev2/port0/line1", "Dev2/port0/line3", "Dev2/port0/line4",
+                                 "Dev2/port0/line5", "Dev2/port0/line6", "Dev2/port0/line7"]
+        self.led_channels = ["Dev3/port0/line0", "Dev3/port0/line1"]
+        self.task_led = None
         self.clock_external_start_terminal = "/Dev2/PFI1"
-        self.clock_counter_channel = "/Dev2/ctr0"
-        self.clock_counter_terminals = ["/Dev2/PFI12", "/Dev3/PFI0"]
+        self.clock_counter_channels = ["/Dev2/ctr0", "/Dev3/ctr0"]
+        self.clock_counter_terminals = ["/Dev2/PFI12", "/Dev3/PFI12"]
         self.run_mode = None
         self.retriggered = False
         self.sequence_samples = None
@@ -102,7 +104,7 @@ class NIDAQ:
     def get_piezo_position(self):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev3/ai0:2", min_val=-10.0, max_val=10.0)
+                task.ai_channels.add_ai_voltage_chan("Dev2/ai0:2", min_val=-10.0, max_val=10.0)
                 task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
                                                 samps_per_chan=16, active_edge=Edge.RISING)
                 pos = task.read(number_of_samples_per_channel=16)
@@ -114,6 +116,69 @@ class NIDAQ:
                     e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
+
+    def write_dpc_sequences(self, led_sequences, indices=None, finite=True):
+
+        if indices is None:
+            indices = [0, 1]
+
+        if finite:
+            md = AcquisitionType.FINITE
+        else:
+            md = AcquisitionType.CONTINUOUS
+
+        led_sequences = np.asarray(led_sequences)
+
+        if led_sequences.ndim > 1:
+            n_channels, n_samples = led_sequences.shape
+            if n_channels == 1:
+                led_sequences = led_sequences[0]
+        else:
+            n_channels = 1
+            n_samples = led_sequences.shape[0]
+
+        if n_channels != len(indices):
+            self.logg.error("WARNING: Length of n_channels and indices differ, skipping led sequences update.")
+            return
+
+        try:
+            self.task_led = nidaqmx.Task()
+
+            for ind in indices:
+                self.task_led.do_channels.add_do_chan(self.led_channels[ind], line_grouping=LineGrouping.CHAN_PER_LINE)
+
+            self.task_led.timing.cfg_samp_clk_timing(rate=8e6, active_edge=Edge.RISING,
+                                                     sample_mode=md, samps_per_chan=n_samples)
+
+
+            if self.run_mode == AcquisitionType.CONTINUOUS:
+                self.task_led.out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
+
+            self.task_led.write(led_sequences == 1.0, auto_start=False)
+
+            self.task_led.control(TaskMode.TASK_COMMIT)
+
+            self.logg.info(f"LED sequence configured: "
+                           f"{n_channels} channel(s), {n_samples} samples, "
+                           f"clocked from {self.clock_counter_terminals[1]}.")
+
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+        except Exception as e:
+            self.logg.error(f"Error configuring digit sequences: {e}")
+
+    def run_dpc_sequences(self):
+        self.task_led.start()
+
+    def stop_dpc_sequences(self, cls=True):
+        self.task_led.stop()
+        if cls:
+            self.task_led.close()
 
     def write_clock_channel(self, samples_per_trigger, trigger=False):
         """
@@ -138,19 +203,15 @@ class NIDAQ:
 
             # Retriggerable pulse generation must be finite
             if trigger and samples_per_trigger <= 0:
-                self.logg.error(
-                    "Retriggerable clock generation requires samples_per_trigger > 0."
-                )
+                self.logg.error("Retriggerable clock generation requires samples_per_trigger > 0.")
                 return
 
             self.tasks["clock"] = nidaqmx.Task("clock")
 
             # Counter pulse train
-            co_channel = self.tasks["clock"].co_channels.add_co_pulse_chan_freq(
-                counter=self.clock_counter_channel,
-                freq=self.sample_rate,
-                duty_cycle=self.duty_cycle
-            )
+            co_channel = self.tasks["clock"].co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channels[0],
+                                                                                freq=self.sample_rate,
+                                                                                duty_cycle=self.duty_cycle)
 
             # Counter timing base
             co_channel.co_ctr_timebase_src = "20MHzTimebase"
@@ -158,29 +219,20 @@ class NIDAQ:
             # Physical output terminal for the pulse train
             co_channel.co_pulse_term = self.clock_counter_terminals[0]
 
-            # ------------------------------------------------------------
             # Timing mode
-            # ------------------------------------------------------------
             if samples_per_trigger > 0:
                 # Finite burst: exactly N pulses
-                self.tasks["clock"].timing.cfg_implicit_timing(
-                    sample_mode=AcquisitionType.FINITE,
-                    samps_per_chan=samples_per_trigger
-                )
+                self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.FINITE,
+                                                               samps_per_chan=samples_per_trigger)
             else:
                 # Continuous pulse train
-                self.tasks["clock"].timing.cfg_implicit_timing(
-                    sample_mode=AcquisitionType.CONTINUOUS
-                )
+                self.tasks["clock"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
 
-            # ------------------------------------------------------------
             # External start trigger, optionally retriggerable
-            # ------------------------------------------------------------
             if trigger:
                 self.tasks["clock"].triggers.start_trigger.cfg_dig_edge_start_trig(
                     trigger_source=self.clock_external_start_terminal,
-                    trigger_edge=Edge.RISING
-                )
+                    trigger_edge=Edge.RISING)
 
                 self.tasks["clock"].triggers.start_trigger.retriggerable = True
 
@@ -191,22 +243,18 @@ class NIDAQ:
             self._running["clock"] = False
 
             if trigger:
-                self.logg.info(
-                    f"Retriggerable clock configured: "
-                    f"{samples_per_trigger} pulses per external trigger."
-                )
+                self.logg.info(f"Retriggerable clock configured: "
+                               f"{samples_per_trigger} pulses per external trigger.")
             elif samples_per_trigger > 0:
-                self.logg.info(
-                    f"Finite clock configured: {samples_per_trigger} pulses."
-                )
+                self.logg.info(f"Finite clock configured: {samples_per_trigger} pulses.")
             else:
                 self.logg.info("Continuous clock configured.")
 
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, \
-                    "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -224,7 +272,7 @@ class NIDAQ:
               generates exactly n_samples clock pulses per trigger.
         """
         if indices is None:
-            indices = [0, 1, 2, 3, 4]
+            indices = [2, 3, 4, 5, 6]
 
         digital_sequences = np.asarray(digital_sequences)
 
@@ -237,10 +285,8 @@ class NIDAQ:
             n_samples = digital_sequences.shape[0]
 
         if n_channels != len(indices):
-            self.logg.error(
-                "WARNING: Length of n_channels and indices differ, "
-                "skipping digital sequences update."
-            )
+            self.logg.error("WARNING: Length of n_channels and indices differ, "
+                            "skipping digital sequences update.")
             return
 
         try:
@@ -248,32 +294,23 @@ class NIDAQ:
 
             # Add digital output lines
             for ind in indices:
-                self.tasks["digital"].do_channels.add_do_chan(
-                    self.digital_channels[ind],
-                    line_grouping=LineGrouping.CHAN_PER_LINE
-                )
+                self.tasks["digital"].do_channels.add_do_chan(self.digital_channels[ind],
+                                                              line_grouping=LineGrouping.CHAN_PER_LINE)
 
             # Use retriggerable counter output as sample clock
-            self.tasks["digital"].timing.cfg_samp_clk_timing(
-                rate=self.sample_rate,
-                source=self.clock_counter_terminals[0],  # "/Dev2/PFI12"
-                active_edge=Edge.RISING,
-                sample_mode=self.run_mode,
-                samps_per_chan=n_samples
-            )
+            self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+                                                             source=self.clock_counter_terminals[0],  # "/Dev2/PFI12"
+                                                             active_edge=Edge.RISING,
+                                                             sample_mode=self.run_mode,
+                                                             samps_per_chan=n_samples)
 
             # For repeated trigger mode:
             # digital task is continuous, but advances only when PFI12 clocks arrive
             if self.run_mode == AcquisitionType.CONTINUOUS:
-                self.tasks["digital"].out_stream.regen_mode = (
-                    RegenerationMode.ALLOW_REGENERATION
-                )
+                self.tasks["digital"].out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
 
             # Write the digital waveform into the buffer, but do not start yet
-            self.tasks["digital"].write(
-                digital_sequences == 1.0,
-                auto_start=False
-            )
+            self.tasks["digital"].write(digital_sequences == 1.0, auto_start=False)
 
             # Commit now so routing/timing errors appear at configuration time
             self.tasks["digital"].control(TaskMode.TASK_COMMIT)
@@ -281,28 +318,26 @@ class NIDAQ:
             self._active["digital"] = True
             self._running["digital"] = False
 
-            self.logg.info(
-                f"Digital sequence configured: "
-                f"{n_channels} channel(s), {n_samples} samples, "
-                f"clocked from {self.clock_counter_terminals[0]}."
-            )
+            self.logg.info(f"Digital sequence configured: "
+                           f"{n_channels} channel(s), {n_samples} samples, "
+                           f"clocked from {self.clock_counter_terminals[0]}.")
 
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, \
-                    "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
         except Exception as e:
             self.logg.error(f"Error configuring digital sequences: {e}")
 
-    def write_analog_sequences(self, piezo_sequences, indices=None):
+    def write_analog_sequences(self, analog_sequences, indices=None):
         """
         Configure hardware-timed analog output.
 
-        In repeated-trigger mode:
+        In repeated-trigger mode:.
             - AO runs as a CONTINUOUS task with regeneration enabled.
             - AO uses /Dev3/PFI0 as its external sample clock.
             - /Dev3/PFI0 should receive the counter pulse train generated
@@ -313,19 +348,17 @@ class NIDAQ:
         if indices is None:
             indices = [0, 1, 2]
 
-        piezo_sequences = np.asarray(piezo_sequences)
+        analog_sequences = np.asarray(analog_sequences)
 
-        if piezo_sequences.ndim > 1:
-            n_channels, n_samples = piezo_sequences.shape
+        if analog_sequences.ndim > 1:
+            n_channels, n_samples = analog_sequences.shape
         else:
             n_channels = 1
-            n_samples = piezo_sequences.shape[0]
+            n_samples = analog_sequences.shape[0]
 
         if n_channels != len(indices):
-            self.logg.error(
-                "WARNING: Length of n_channels and indices differ, "
-                "skipping piezo sequences update."
-            )
+            self.logg.error("WARNING: Length of n_channels and indices differ, "
+                            "skipping piezo sequences update.")
             return
 
         try:
@@ -333,36 +366,26 @@ class NIDAQ:
 
             # Add AO channels
             for ind in indices:
-                self.tasks["analog"].ao_channels.add_ao_voltage_chan(
-                    self.analog_channels[ind],
-                    min_val=0.0,
-                    max_val=10.0
-                )
+                self.tasks["analog"].ao_channels.add_ao_voltage_chan(self.analog_channels[ind],
+                                                                     min_val=0.0,
+                                                                     max_val=10.0)
 
             # Use the retriggerable counter pulse train as AO sample clock.
-            # In your current wiring:
-            #   Dev2/PFI12 --> Dev3/PFI0
-            self.tasks["analog"].timing.cfg_samp_clk_timing(
-                rate=self.sample_rate,
-                source=self.clock_counter_terminals[1],  # "/Dev3/PFI0"
-                active_edge=Edge.RISING,
-                sample_mode=self.run_mode,
-                samps_per_chan=n_samples
-            )
+            # Clock wiring: Dev2/PFI12 --> Dev3/PFI0
+            self.tasks["analog"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
+                                                            source=self.clock_counter_terminals[0],
+                                                            active_edge=Edge.RISING,
+                                                            sample_mode=self.run_mode,
+                                                            samps_per_chan=n_samples)
 
             # In repeated-trigger mode, self.run_mode is CONTINUOUS.
             # Regeneration allows the same waveform buffer to be reused
             # every time a new burst of sample clocks arrives.
             if self.run_mode == AcquisitionType.CONTINUOUS:
-                self.tasks["analog"].out_stream.regen_mode = (
-                    RegenerationMode.ALLOW_REGENERATION
-                )
+                self.tasks["analog"].out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
 
             # Write waveform into the AO buffer, but do not start yet
-            self.tasks["analog"].write(
-                piezo_sequences,
-                auto_start=False
-            )
+            self.tasks["analog"].write(analog_sequences, auto_start=False)
 
             # Commit now so timing/routing errors appear during setup
             self.tasks["analog"].control(TaskMode.TASK_COMMIT)
@@ -370,32 +393,24 @@ class NIDAQ:
             self._active["analog"] = True
             self._running["analog"] = False
 
-            self.logg.info(
-                f"Analog sequence configured: "
-                f"{n_channels} channel(s), {n_samples} samples, "
-                f"clocked from {self.clock_counter_terminals[1]}."
-            )
+            self.logg.info(f"Analog sequence configured: "
+                           f"{n_channels} channel(s), {n_samples} samples, "
+                           f"clocked from {self.clock_counter_terminals[0]}.")
 
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, \
-                    "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
         except Exception as e:
             self.logg.error(f"Error configuring analog sequences: {e}")
 
-    def write_triggers(
-            self,
-            digital_sequences=None,
-            digital_channels=None,
-            analog_sequences=None,
-            analog_channels=None,
-            finite=True,
-            trg=False
-    ):
+    def write_triggers(self,
+                       digital_sequences=None, digital_channels=None,
+                       analog_sequences=None, analog_channels=None,
+                       finite=True, trg=False):
         """
         Configure synchronized counter-clocked AO/DO generation.
 
@@ -434,10 +449,8 @@ class NIDAQ:
                 analog_channels = list(range(n_analog_channel))
 
             if n_analog_channel != len(analog_channels):
-                self.logg.error(
-                    "WARNING: Length of n_analog_channel and analog_channels differ, "
-                    "skipping analog sequences."
-                )
+                self.logg.error("WARNING: Length of n_analog_channel and analog_channels differ, "
+                                "skipping analog sequences.")
                 return
 
             sequence_samples = analog_samples
@@ -458,18 +471,14 @@ class NIDAQ:
                 digital_channels = list(range(n_digital_channel))
 
             if n_digital_channel != len(digital_channels):
-                self.logg.error(
-                    "WARNING: Length of n_digital_channel and digital_channels differ, "
-                    "skipping digital sequences."
-                )
+                self.logg.error("WARNING: Length of n_digital_channel and digital_channels differ, "
+                                "skipping digital sequences.")
                 return
 
             if sequence_samples is None:
                 sequence_samples = digital_samples
             elif sequence_samples != digital_samples:
-                self.logg.error(
-                    "WARNING: Length of digital sequences and analog sequences differ."
-                )
+                self.logg.error("WARNING: Length of digital sequences and analog sequences differ.")
                 return
 
         # ================================================================
@@ -485,60 +494,45 @@ class NIDAQ:
         # Choose timing architecture
         # ================================================================
         if finite:
-            # One finite sequence.
-            # Counter emits exactly sequence_samples pulses.
+            # One finite sequence: Counter emits exactly sequence_samples pulses.
             self.run_mode = AcquisitionType.FINITE
             clock_samples = sequence_samples
 
             if trg:
-                self.logg.warning(
-                    "finite=True and trg=True uses your current triggered counter setup. "
-                    "For repeated one-sequence-per-trigger operation, use "
-                    "finite=False, trg=True."
-                )
+                self.logg.warning("finite=True and trg=True uses your current triggered counter setup. "
+                                  "For repeated one-sequence-per-trigger operation, use "
+                                  "finite=False, trg=True.")
 
         else:
             # Continuous AO/DO tasks
             self.run_mode = AcquisitionType.CONTINUOUS
 
             if trg:
-                # Repeated-trigger mode:
-                # Counter produces one finite pulse burst per external trigger.
+                # Repeated-trigger mode: Counter produces one finite pulse burst per external trigger.
                 clock_samples = sequence_samples
             else:
-                # Free-running continuous mode:
-                # Counter produces a continuous sample clock.
+                # Free-running continuous mode: Counter produces a continuous sample clock.
                 clock_samples = 0
 
         # ================================================================
         # Configure counter sample clock first
         # ================================================================
-        self.write_clock_channel(
-            samples_per_trigger=clock_samples,
-            trigger=trg
-        )
+        self.write_clock_channel(samples_per_trigger=clock_samples, trigger=trg)
 
         # ================================================================
         # Configure AO and DO tasks that consume that sample clock
         # ================================================================
         try:
             if digital_sequences is not None:
-                self.write_digital_sequences(
-                    digital_sequences,
-                    indices=digital_channels
-                )
+                self.write_digital_sequences(digital_sequences, indices=digital_channels)
 
             if analog_sequences is not None:
-                self.write_analog_sequences(
-                    analog_sequences,
-                    indices=analog_channels
-                )
+                self.write_analog_sequences(analog_sequences, indices=analog_channels)
 
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, \
-                    "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -594,8 +588,7 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
-                    e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -639,7 +632,7 @@ class NIDAQ:
             num_samples = data.shape[0]
         acquired_data = np.zeros(data.shape)
         with nidaqmx.Task() as clk_task:
-            co_channel = clk_task.co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channel,
+            co_channel = clk_task.co_channels.add_co_pulse_chan_freq(counter=self.clock_counter_channels[0],
                                                                      freq=self.sample_rate, duty_cycle=self.duty_cycle)
             co_channel.co_pulse_term = self.clock_counter_terminals[0]
             clk_task.timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)

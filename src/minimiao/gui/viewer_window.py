@@ -11,7 +11,7 @@ from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
 
 from . import custom_widgets as cw
-from . import gl_viewer
+from . import vispy_viewer
 
 
 class FramePool(QObject):
@@ -59,6 +59,7 @@ class LiveViewer(QWidget):
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.fft_mode = False
         self.fft_worker = None
+        self.dpc_worker = None
         self.view_stack.setCurrentIndex(0)
         self._setup_signal_connections()
 
@@ -82,6 +83,7 @@ class LiveViewer(QWidget):
     def _setup_signal_connections(self):
         self.QSlider_black.valueChanged.connect(self.on_black_change)
         self.QSlider_white.valueChanged.connect(self.on_white_change)
+        self.QPushButton_fit_view.clicked.connect(self.fit_view)
         self.QPushButton_contrast_auto.clicked.connect(self.auto_contrast)
         self.QPushButton_contrast_manual.clicked.connect(self.manual_contrast)
         self.image_viewer.mousePixelChanged.connect(self.on_mouse)
@@ -94,22 +96,26 @@ class LiveViewer(QWidget):
         layout_view = QVBoxLayout()
         layout_view.setContentsMargins(4, 4, 4, 4)
 
-        self.image_viewer = gl_viewer.GLGray16Viewer(use_pbo=True)  # camera frames (big, fast)
+        self.image_viewer = vispy_viewer.VispyViewer()
         self.image_viewer.set_levels(0, 65535, 1.0)
 
-        self.fft_viewer = gl_viewer.GLGray16Viewer(use_pbo=False)  # FFT frames (smaller; PBO not needed)
+        self.fft_viewer = vispy_viewer.VispyViewer()
+
+        self.dpc_viewer = vispy_viewer.VispyViewer()
 
         self.view_stack = QStackedWidget()
         self.view_stack.addWidget(self.image_viewer)  # index 0
         self.view_stack.addWidget(self.fft_viewer)  # index 1
+        self.view_stack.addWidget(self.dpc_viewer)  # index 1
 
         controls = QWidget()
         row = QHBoxLayout(controls)
-        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image", "FFT"])
+        self.QComboBox_viewer_selection = cw.ComboBoxWidget(list_items=["Image", "FFT", "DPC"])
         self.QSlider_black = cw.SliderWidget(0, 65535, 0)
         self.QSpinBox_black = cw.SpinBoxWidget(0, 65535, 1, 0)
         self.QSlider_white = cw.SliderWidget(0, 65535, 65535)
         self.QSpinBox_white = cw.SpinBoxWidget(0, 65535, 1, 65535)
+        self.QPushButton_fit_view = cw.PushButtonWidget("Fit to Window")
         self.QPushButton_contrast_manual = cw.PushButtonWidget("Set")
         self.QPushButton_contrast_auto = cw.PushButtonWidget("Auto Set")
         row.addWidget(self.QComboBox_viewer_selection)
@@ -121,6 +127,7 @@ class LiveViewer(QWidget):
         row.addWidget(self.QSlider_white)
         row.addWidget(self.QSpinBox_white)
         row.addWidget(cw.LabelWidget("65535"))
+        row.addWidget(self.QPushButton_fit_view)
         row.addWidget(self.QPushButton_contrast_manual)
         row.addWidget(self.QPushButton_contrast_auto)
 
@@ -203,6 +210,10 @@ class LiveViewer(QWidget):
         # send only index to GUI thread
         self.frame_idx_signal.emit(idx)
 
+    @pyqtSlot()
+    def fit_view(self):
+        self.view_stack.currentWidget().fit_to_window()
+
     @pyqtSlot(int)
     def on_black_change(self, value: int):
         self.QSpinBox_black.setValue(value)
@@ -229,6 +240,9 @@ class LiveViewer(QWidget):
 
     def on_fft_frame(self, frame_u16):
         self.fft_viewer.set_frame(frame_u16)
+
+    def on_dpc_frame(self, frame_u16):
+        self.dpc_viewer.set_frame(frame_u16)
 
     def plot_trace(self, y, x=None, overlay=False):
         y = np.asarray(y)

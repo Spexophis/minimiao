@@ -98,7 +98,7 @@ class ThorCMOS:
         self.camera.is_frame_rate_control_enabled = True
         self.camera.frames_per_trigger_zero_for_unlimited = 1
         # self.camera.image_poll_timeout_ms = 0  # 1 second polling timeout
-        self.set_acquisition_mode(2)
+        self.set_acquisition_mode(1)
         self.set_trigger_polarity(0)
 
     def close(self):
@@ -107,15 +107,24 @@ class ThorCMOS:
         self.camera.dispose()
         self.sdk.dispose()
 
-    def set_roi(self, upper_left_x_pixels, upper_left_y_pixels, lower_right_x_pixels, lower_right_y_pixels):
-        self.camera.roi = (upper_left_x_pixels, upper_left_y_pixels, lower_right_x_pixels, lower_right_y_pixels)
+    def set_roi(self):
+        self.camera.binx = self.bin_h
+        self.camera.biny = self.bin_v
+        self.camera.roi = (self.start_h, self.start_v, self.end_h, self.end_v)
+        self.pixels_x = self.end_h - self.start_h + 1
+        self.pixels_y = self.end_v - self.start_v + 1
+        self.img_size = self.pixels_x * self.pixels_y
+        self.ps = 3.45 / self.bin_h
+        self.logg.info("bin_h = {} \nbin_v = {} \nstart_h = {} \nend_h = {} \nstart_v = {} \nend_v = {}".format(
+            self.bin_h, self.bin_v, self.start_h, self.end_h, self.start_v, self.end_v))
 
     def set_frame_rate(self, frame_rate):
         self.camera.frame_rate_control_value = frame_rate
         self.camera.is_frame_rate_control_enabled = True
 
-    def set_exposure(self, exposure):
-        self.camera.exposure_time_us = exposure
+    def set_exposure_time(self):
+        self.camera.exposure_time_us = int(self.t_exposure * 1e6)
+        self.logg.info("Set Exposure Time to {}".format(self.t_exposure))
 
     def set_acquisition_mode(self, md):
         """
@@ -135,8 +144,10 @@ class ThorCMOS:
     def send_software_trigger(self):
         self.camera.issue_software_trigger()
 
-    def prepare_live(self):
-        self.data = run_threads.CameraDataList(4)
+    def prepare_live(self, max_length=64):
+        self.set_roi()
+        self.set_exposure_time()
+        self.data = run_threads.DPCCameraDataList(max_length=max_length)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
 
     def start_live(self):
@@ -145,12 +156,17 @@ class ThorCMOS:
 
     def stop_live(self):
         self.camera.disarm()
-        self.acq_thread.stop()
-        self.acq_thread = None
-        self.data = None
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()
+            self.data = None
 
     def prepare_acquisition(self, n):
-        self.data = run_threads.CameraDataList(n)
+        self.set_roi()
+        self.set_exposure_time()
+        self.data = run_threads.DPCCameraDataList(max_length=n)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
 
     def start_acquisition(self):
@@ -159,12 +175,18 @@ class ThorCMOS:
 
     def stop_acquisition(self):
         self.camera.disarm()
-        self.acq_thread.stop()
-        self.acq_thread = None
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()
+            self.data = None
 
-    def get_image(self):
-        frame = self.camera.get_pending_frame_or_null()
-        if frame is not None:
+    def get_images(self):
+        while True:
+            frame = self.camera.get_pending_frame_or_null()
+            if frame is None:
+                break
             image_buffer_copy = np.copy(frame.image_buffer)
             numpy_shaped_image = image_buffer_copy.reshape(self.camera.image_height_pixels,
                                                            self.camera.image_width_pixels)

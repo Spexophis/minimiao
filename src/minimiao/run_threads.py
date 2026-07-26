@@ -302,6 +302,132 @@ class FFTWorker(QThread):
             self.fft_ready.emit(out)
 
 
+class DPCWorker(QThread):
+    dpc_ready = pyqtSignal(object)
+
+    def __init__(self, fps=10, parent=None):
+        super().__init__(parent)
+        self.fps = float(fps)
+        self._running = True
+        self._latest = None
+
+    def stop(self):
+        self._running = False
+        self.wait(2)
+
+    def push_frame(self, dpc_image: np.ndarray):
+        if dpc_image is None or dpc_image.ndim != 2:
+            return
+        self._latest = np.array(dpc_image, copy=True)
+
+    def run(self):
+        period = 1.0 / max(self.fps, 0.1)
+        next_t = time.perf_counter()
+
+        while self._running:
+            now = time.perf_counter()
+            if now < next_t:
+                self.msleep(int((next_t - now) * 1000))
+                continue
+            next_t = now + period
+
+            if self._latest is None:
+                continue
+
+            img = self._latest
+            mn = float(img.min())
+            mx = float(img.max())
+            if mx <= mn:
+                out = np.zeros_like(img, dtype=np.uint16)
+            else:
+                out = ((img - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+
+            self.dpc_ready.emit(out)
+
+
+def dpc_reconstruct(frames):
+    """
+    Reconstruct a differential phase contrast (DPC) image from 4 raw frames
+    acquired under complementary half-circle illumination patterns, in
+    acquisition order (top, bottom, left, right).
+
+    Returns (dpc_x, dpc_y, dpc_combined) as float32 arrays:
+      dpc_x        = (right - left) / (right + left)  -- horizontal phase gradient
+      dpc_y        = (bottom - top) / (bottom + top)   -- vertical phase gradient
+      dpc_combined = 0.5 * (dpc_x + dpc_y)             -- single-image live preview
+
+    This is the standard raw normalized-difference DPC contrast used for live
+    display; it is not a deconvolved quantitative phase (that requires the
+    optical system's weak-object transfer functions and is better done as an
+    offline post-processing step).
+    """
+    if len(frames) != 4:
+        raise ValueError(f"DPC reconstruction requires exactly 4 frames, got {len(frames)}")
+
+    top, bottom, left, right = (np.asarray(f, dtype=np.float32) for f in frames)
+
+    sum_h = left + right
+    sum_v = top + bottom
+    dpc_x = np.divide(right - left, sum_h, out=np.zeros_like(sum_h), where=sum_h > 0)
+    dpc_y = np.divide(bottom - top, sum_v, out=np.zeros_like(sum_v), where=sum_v > 0)
+    dpc_combined = 0.5 * (dpc_x + dpc_y)
+    return dpc_x, dpc_y, dpc_combined
+
+
+class DPCCameraDataList:
+    """
+    Rolling buffer for a DPC camera. Raw frames arrive one at a time from
+    the acquisition thread (same as CameraDataList) but must always be
+    consumed in complete groups of 4 (top/bottom/left/right illumination),
+    since a DPC image only makes sense once all 4 are available. Frames are
+    staged until a full group accumulates, then immediately reconstructed
+    via dpc_reconstruct(); only the reconstructed DPC images are exposed.
+    """
+
+    def __init__(self, max_length, group_size=4):
+        self.group_size = group_size
+        self.max_length = max_length
+        self.data_list = deque(maxlen=max_length)        # reconstructed dpc_combined images
+        self.raw_group_list = deque(maxlen=max_length)    # matching raw 4-frame groups
+        self._staging = []
+        self.callback = None
+        self._lock = threading.Lock()
+
+    def add_element(self, elements, ids=None):
+        elements = list(elements)
+        if not elements:
+            return
+
+        ready_groups = []
+        with self._lock:
+            self._staging.extend(elements)
+            while len(self._staging) >= self.group_size:
+                ready_groups.append(self._staging[:self.group_size])
+                self._staging = self._staging[self.group_size:]
+
+        for group in ready_groups:
+            _, _, dpc_combined = dpc_reconstruct(group)
+            with self._lock:
+                self.data_list.append(dpc_combined)
+                self.raw_group_list.append(group)
+            if self.callback is not None:
+                self.callback(dpc_combined)
+
+    def get_last_element(self):
+        with self._lock:
+            return self.data_list[-1] if self.data_list else None
+
+    def get_elements(self):
+        with self._lock:
+            return np.array(self.data_list) if self.data_list else None
+
+    def on_update(self, callback):
+        self.callback = callback
+
+    def close(self):
+        pass
+
+
 class TaskWorker(QThread):
     error = pyqtSignal(tuple)
 

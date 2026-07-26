@@ -55,14 +55,19 @@ class TriggerSequence:
         self.slm_on_time = 2 * 20000.0e-6 + 310.72e-6  # s
         self.slm_on_samples = round(self.slm_on_time * self.sample_rate)
         # camera
-        self.initial_time = 0.00159  # s
+        self.initial_time = 0.000  # s
         self.initial_samples = int(np.ceil(self.initial_time * self.sample_rate))
-        self.exposure_time = 0.005  # s
+        self.exposure_time = 0.04  # s
         self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
         self.standby_time = 0.03893  # s
         self.standby_samples = int(np.ceil(self.standby_time * self.sample_rate))
         self.frame_time = 0.05  # s
         self.frame_samples = int(np.ceil(self.frame_time * self.sample_rate))
+        # motor
+        self.motor_jog_pulse = 0.001
+        self.motor_jog_samples = int(np.ceil(self.motor_jog_pulse * self.sample_rate))
+        self.motor_rot_time = 0.05
+        self.motor_rot_samples = int(np.ceil(self.motor_rot_time * self.sample_rate))
 
     @staticmethod
     def setup_logging():
@@ -145,18 +150,40 @@ class TriggerSequence:
             self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
 
     def generate_digital_triggers(self, lasers, camera):
-        cam_ind = camera + 3
-        digital_channels = [2, cam_ind]
-        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
+        digital_channels = [2, 3]
+        self.cycle_samples = int(max(self.slm_total_samples, self.frame_samples) * 1.5)
         self.cycle_time = self.cycle_samples / self.sample_rate
         digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
         digital_triggers[0, :self.trigger_pulse_samples] = 1
         digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         return digital_triggers, digital_channels
 
+    def generate_sim_triggers(self, nph=6):
+        digital_channels = [2, 3, 4, 5, 6]
+        self.frame_samples = int(np.ceil(0.08 * self.sample_rate))
+        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
+        self.cycle_time = self.cycle_samples / self.sample_rate
+        digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
+        digital_triggers[0, :self.trigger_pulse_samples] = 1
+        digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
+        digital_triggers = np.tile(digital_triggers, (1, nph))
+        digital_triggers = np.concatenate((digital_triggers, np.zeros((2, self.motor_rot_samples), dtype=np.uint8)), axis=1)
+        digital_triggers = np.tile(digital_triggers, (1, 2))
+        motor_stay = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
+        motor_stay[0, -4 * self.motor_jog_samples:] = 0
+        motor_fwd = np.ones((3, self.motor_rot_samples), dtype=np.uint8)
+        motor_fwd[0, :5 * self.motor_jog_samples] = 0
+        motor_fwd[2, :self.motor_jog_samples] = 0
+        motor_bwd = np.ones((3, self.motor_rot_samples), dtype=np.uint8)
+        motor_bwd[0, :5 * self.motor_jog_samples] = 0
+        motor_bwd[1, :self.motor_jog_samples] = 0
+        digit_triggers = np.concatenate((motor_stay, motor_fwd), axis=1)
+        digit_triggers = np.concatenate((digit_triggers, motor_stay), axis=1)
+        digit_triggers = np.concatenate((digit_triggers, motor_bwd), axis=1)
+        return np.concatenate((digital_triggers, digit_triggers), axis=0), digital_channels
+
     def generate_piezo_scan(self, num, lasers, camera):
-        cam_ind = camera + 3
-        digital_channels = [2, cam_ind]
+        digital_channels = [2, 3]
         self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
         self.cycle_time = self.cycle_samples / self.sample_rate
         stage_samples = (num - 1) * self.cycle_samples + max(self.slm_end_samples + self.return_samples, self.frame_samples)
