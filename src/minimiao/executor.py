@@ -91,7 +91,7 @@ class CommandExecutor(QObject):
             p = self.devs.deck.get_position_steps_taken(3)
             self.ctrl_panel.display_deck_position(p)
 
-            # self.reset_piezo_positions()
+            self.reset_piezo_positions()
 
             self.devs.motor.move_to(0)
             self.devs.motor.set_velocity(100)
