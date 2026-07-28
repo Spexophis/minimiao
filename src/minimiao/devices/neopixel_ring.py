@@ -4,6 +4,7 @@
 
 
 import numpy as np
+
 from minimiao import logger
 
 
@@ -13,13 +14,13 @@ class NeoPixel:
         self.logg = logg or logger.setup_logging()
         self.sample_rate = 8e6
         self.time_res = 1 / self.sample_rate
-        self.bit_time = 1.25e-6 # s
+        self.bit_time = 1.25e-6  # s
         self.bit_sample = int(self.bit_time * self.sample_rate)
         self.bit_0_high = 2
         self.bit_0_low = 8
         self.bit_1_high = 7
         self.bit_1_low = 3
-        self.reset_time = 80e-6 # s
+        self.reset_time = 80e-6  # s
         self.reset_sample = int(self.reset_time * self.sample_rate)
 
     def close(self):
@@ -114,7 +115,7 @@ if __name__ == '__main__':
     plt.show()
 
     ts, xs = p.led_ring()
-    plt.figure(figsize=(12,3))
+    plt.figure(figsize=(12, 3))
     plt.step(ts, xs, where='post')
     plt.xlabel("Time (µs)")
     plt.ylabel("Signal level")
