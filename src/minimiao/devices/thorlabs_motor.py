@@ -130,7 +130,7 @@ class ELL14:
 
     _PRE_MOVE_DELAY = 0.1  # s; guards against a spurious move-to-0 if commands are too close
 
-    def __init__(self, port: str = "COM7", addr: int = 0,
+    def __init__(self, port: str = "COM10", addr: int = 0,
                  scale: ScaleType = "stage", baudrate: int = 9600, timeout: float = 3.0, auto_connect: bool = True,
                  valid_status: Sequence[Status] = tuple(_DEFAULT_VALID_STATUS), logg=None):
         self.logg = logg or logger.setup_logging()

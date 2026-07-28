@@ -5,16 +5,31 @@
 
 import datetime
 import getpass
-import logging
+import json
 import os
 import sys
-import json
+
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
-from .devices import device
-from . import executor, logger
-from .gui import main_window
-from .computations import computator
+try:
+    from . import executor, logger
+except ImportError as e:
+    from minimiao import executor, logger
+
+try:
+    from .computations import computator
+except ImportError as e:
+    from minimiao.computations import computator
+
+try:
+    from .devices import device
+except ImportError as e:
+    from minimiao.devices import device
+
+try:
+    from .gui import main_window
+except ImportError as e:
+    from minimiao.gui import main_window
 
 
 def setup_folder():

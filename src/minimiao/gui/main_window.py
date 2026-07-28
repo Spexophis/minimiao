@@ -3,12 +3,18 @@
 # Licensed under the MIT License.
 
 
-import sys
 import os
+import sys
+
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
-from . import custom_widgets as cw
-from . import controller_panel, ao_panel, viewer_window
+
+from minimiao import logger
+
+try:
+    from . import controller_panel, ao_panel, viewer_window, custom_widgets as cw
+except ImportError as e:
+    from minimiao.gui import controller_panel, ao_panel, viewer_window, custom_widgets as cw
 
 
 class MainWindow(QMainWindow):
@@ -22,12 +28,6 @@ class MainWindow(QMainWindow):
         self._set_dark_theme()
         self._setup_ui()
         self.dialog, self.dialog_text = None, None
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def closeEvent(self, event, **kwargs):
         self.aboutToClose.emit()
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
 
 if __name__ == '__main__':
     import json
+
     app = QApplication(sys.argv)
     with open(r"C:\Users\ruizhe.lin\Documents\data\config_files\microscope_configurations_20240426.json", 'r') as f:
         cfg = json.load(f)

@@ -11,8 +11,16 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QFont
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
-from . import custom_widgets as cw
-from ..utilities.zernike_generator import zernike_basis as _zg_basis, noll_to_nm
+try:
+    from . import custom_widgets as cw
+except ImportError as e:
+    from minimiao.gui import custom_widgets as cw
+
+try:
+    from ..utilities.zernike_generator import zernike_basis as _zg_basis, noll_to_nm
+except ImportError as e:
+    from minimiao.utilities.zernike_generator import zernike_basis as _zg_basis, noll_to_nm
+
 
 _ZMS = [
     (-1, 1), (1, 1),

@@ -84,12 +84,6 @@ class EMCCDCamera:
             return getattr(self._settings, item)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def _initialize_sdk(self):
         try:
             sdk = atmcd(r'C:\Program Files\Andor SDK')

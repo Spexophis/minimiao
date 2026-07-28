@@ -4,16 +4,13 @@
 
 
 from minimiao import logger
-from . import andor_emccd
-from . import cobolt_laser
-from . import fdd_slm
-from . import mcl_deck
-from . import mcl_piezo
-from . import ni_daq
-from . import phaseform_dpp
-from . import thorlab_scmos
-from . import thorlabs_motor
-from . import neopixel_ring
+
+try:
+    from . import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, thorlab_scmos, \
+        thorlabs_motor, neopixel_ring
+except ImportError as e:
+    from minimiao.devices import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, \
+        thorlab_scmos, thorlabs_motor, neopixel_ring
 
 
 class DeviceManager:

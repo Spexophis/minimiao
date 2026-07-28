@@ -8,7 +8,10 @@ import json
 from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSpinBox, QDoubleSpinBox
 
-from . import custom_widgets as cw
+try:
+    from . import custom_widgets as cw
+except ImportError as e:
+    from minimiao.gui import custom_widgets as cw
 
 
 class ControlPanel(QWidget):

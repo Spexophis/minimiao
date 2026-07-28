@@ -9,7 +9,7 @@ from minimiao import run_threads, logger
 import numpy as np
 from thorlabs_tsi_sdk.tl_camera import TLCameraSDK
 
-path_to_files = r"C:\Program Files\Thorlabs\Scientific Imaging\Scientific Camera Support\Scientific Camera Interfaces\SDK\Python Toolkit"
+path_to_files = r"C:\Program Files\Thorlabs\Scientific Camera Interfaces\SDK\Python Toolkit"
 
 
 class ThorCMOS:
@@ -57,12 +57,6 @@ class ThorCMOS:
         if hasattr(self._settings, item):
             return getattr(self._settings, item)
         raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     @staticmethod
     def _configure_path():

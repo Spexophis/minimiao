@@ -62,12 +62,6 @@ class MCLNanoDrive:
         self.mcl_piezo.release_all_handles()
         self.logg.info("Piezo Handle released")
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def set_clock_frequency(self):
         self.mcl_piezo.change_clock(3, 0, self.handle)
         self.mcl_piezo.change_clock(0.1, 1, self.handle)

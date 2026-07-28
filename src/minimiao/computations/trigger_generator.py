@@ -69,12 +69,6 @@ class TriggerSequence:
         self.motor_rot_time = 0.05
         self.motor_rot_samples = int(np.ceil(self.motor_rot_time * self.sample_rate))
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def update_sampling_rate(self, sample_rate=None):
         if sample_rate is not None:
             self.sample_rate = sample_rate  # Hz

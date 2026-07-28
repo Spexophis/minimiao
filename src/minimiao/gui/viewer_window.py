@@ -3,15 +3,20 @@
 # Licensed under the MIT License.
 
 
-from collections import deque
-
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QStackedWidget
 
-from . import custom_widgets as cw
-from . import vispy_viewer
+try:
+    from . import custom_widgets as cw
+except ImportError as e:
+    from minimiao.gui import custom_widgets as cw
+
+try:
+    from . import vispy_viewer
+except ImportError as e:
+    from minimiao.gui import vispy_viewer
 
 
 class FramePool(QObject):

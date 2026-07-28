@@ -11,8 +11,15 @@ import pandas as pd
 import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 
-from . import run_threads
-from .utilities import image_processor as ipr
+try:
+    from . import run_threads, logger
+except ImportError as e:
+    from minimiao import run_threads, logger
+
+try:
+    from .utilities import image_processor as ipr
+except ImportError as e:
+    from minimiao.utilities import image_processor as ipr
 
 
 class CommandExecutor(QObject):
@@ -20,7 +27,7 @@ class CommandExecutor(QObject):
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
 
-    def __init__(self, dev, cwd, cmp, path, logger=None):
+    def __init__(self, dev, cwd, cmp, path, logg=None):
         super().__init__()
         self.devs = dev
         self.vw = cwd
@@ -29,18 +36,12 @@ class CommandExecutor(QObject):
         self.ao_panel = self.vw.ao_panel
         self.trg = cmp.trg
         self.path = path
-        self.logg = logger or self.setup_logging()
+        self.logg = logg or logger.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
         self.lasers = []
         self.slm_seq = ""
         self.task_worker = None
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def _set_signal_executions(self):
         # EMCCD
@@ -90,7 +91,7 @@ class CommandExecutor(QObject):
             p = self.devs.deck.get_position_steps_taken(3)
             self.ctrl_panel.display_deck_position(p)
 
-            self.reset_piezo_positions()
+            # self.reset_piezo_positions()
 
             self.devs.motor.move_to(0)
             self.devs.motor.set_velocity(100)
@@ -220,7 +221,7 @@ class CommandExecutor(QObject):
                 self.devs.daq.set_piezo_position([pos_x / 10.], [0])
                 QTimer.singleShot(100, lambda: self._update_piezo_display_x())
         except Exception as e:
-            self.logg.error(f"MCL Piezo Error: {e}")
+            self.logg.error(f"MCL Piezo {port} Error: {e}")
 
     def _update_piezo_display_x(self):
         try:
@@ -429,7 +430,8 @@ class CommandExecutor(QObject):
     def plot_add(self):
         try:
             ax = self.ctrl_panel.get_profile_axis()
-            self.viewer.plot_trace(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True), overlay=True)
+            self.viewer.plot_trace(ipr.get_profile(self.viewer.image_viewer._display_frame, ax, norm=True),
+                                   overlay=True)
         except Exception as e:
             self.logg.error(f"Error plotting profile: {e}")
 
@@ -567,7 +569,8 @@ class CommandExecutor(QObject):
                                          finite=False, trg=False)
         elif aqm == "2D_SIM":
             dtr, chs = self.trg.generate_sim_triggers(aqn)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=[2, 3, 4, 5, 6], finite=False, trg=False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=[2, 3, 4, 5, 6], finite=False,
+                                         trg=False)
             pos = aqn
         elif aqm == "3D_SIM":
             dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(aqn, self.lasers, 0)

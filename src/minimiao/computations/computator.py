@@ -4,7 +4,11 @@
 
 
 from minimiao import logger
-from . import trigger_generator
+
+try:
+    from . import trigger_generator
+except ImportError as e:
+    from minimiao.computations import trigger_generator
 
 
 class ComputationManager:
@@ -13,9 +17,3 @@ class ComputationManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.trg = trigger_generator.TriggerSequence(logg=self.logg)
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging

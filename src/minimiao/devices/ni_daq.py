@@ -8,10 +8,12 @@ import warnings
 import nidaqmx
 import numpy as np
 from nidaqmx.constants import Edge, AcquisitionType, LineGrouping, WAIT_INFINITELY, TaskMode, RegenerationMode
+from nidaqmx.constants import PowerUpStates
 from nidaqmx.error_codes import DAQmxWarnings
 from nidaqmx.stream_readers import AnalogSingleChannelReader, AnalogMultiChannelReader
 from nidaqmx.stream_writers import AnalogSingleChannelWriter, AnalogMultiChannelWriter
 from nidaqmx.system import System
+from nidaqmx.types import DOPowerUpState
 
 from minimiao import logger
 
@@ -22,7 +24,6 @@ class NIDAQ:
 
     def __init__(self, logg=None):
         self.logg = logg or logger.setup_logging()
-        self.setup_logging()
         self.devices = self._initialize()
         self.tasks = {}
         self._active = {}
@@ -30,14 +31,14 @@ class NIDAQ:
         self.tasks, self._active, self._running, = self._configure()
         self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
-        self.analog_channels = ["Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
-        self.digital_channels = ["Dev2/port0/line0", "Dev2/port0/line1", "Dev2/port0/line3", "Dev2/port0/line4",
-                                 "Dev2/port0/line5", "Dev2/port0/line6", "Dev2/port0/line7"]
-        self.led_channels = ["Dev3/port0/line0", "Dev3/port0/line1"]
+        self.analog_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2"]
+        self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3", "Dev1/port0/line4",
+                                 "Dev1/port0/line5", "Dev1/port0/line6", "Dev1/port0/line7"]
+        self.led_channels = ["Dev2/port0/line0", "Dev2/port0/line1"]
         self.task_led = None
-        self.clock_external_start_terminal = "/Dev2/PFI1"
-        self.clock_counter_channels = ["/Dev2/ctr0", "/Dev3/ctr0"]
-        self.clock_counter_terminals = ["/Dev2/PFI12", "/Dev3/PFI12"]
+        self.clock_external_start_terminal = "/Dev1/PFI1"
+        self.clock_counter_channels = ["/Dev1/ctr0", "/Dev2/ctr0"]
+        self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev2/PFI12"]
         self.run_mode = None
         self.retriggered = False
         self.sequence_samples = None
@@ -48,12 +49,6 @@ class NIDAQ:
     def close(self):
         for device in self.devices:
             device.reset_device()
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def _initialize(self):
         try:
@@ -104,7 +99,7 @@ class NIDAQ:
     def get_piezo_position(self):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev2/ai0:2", min_val=-10.0, max_val=10.0)
+                task.ai_channels.add_ai_voltage_chan("Dev1/ai0:2", min_val=-10.0, max_val=10.0)
                 task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
                                                 samps_per_chan=16, active_edge=Edge.RISING)
                 pos = task.read(number_of_samples_per_channel=16)
@@ -150,7 +145,6 @@ class NIDAQ:
             self.task_led.timing.cfg_samp_clk_timing(rate=8e6, active_edge=Edge.RISING,
                                                      sample_mode=md, samps_per_chan=n_samples)
 
-
             if self.run_mode == AcquisitionType.CONTINUOUS:
                 self.task_led.out_stream.regen_mode = RegenerationMode.ALLOW_REGENERATION
 
@@ -165,7 +159,8 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -299,7 +294,7 @@ class NIDAQ:
 
             # Use retriggerable counter output as sample clock
             self.tasks["digital"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
-                                                             source=self.clock_counter_terminals[0],  # "/Dev2/PFI12"
+                                                             source=self.clock_counter_terminals[0],  # "/Dev1/PFI12"
                                                              active_edge=Edge.RISING,
                                                              sample_mode=self.run_mode,
                                                              samps_per_chan=n_samples)
@@ -339,9 +334,9 @@ class NIDAQ:
 
         In repeated-trigger mode:.
             - AO runs as a CONTINUOUS task with regeneration enabled.
-            - AO uses /Dev3/PFI0 as its external sample clock.
-            - /Dev3/PFI0 should receive the counter pulse train generated
-              on /Dev2/PFI12.
+            - AO uses /Dev2/PFI0 as its external sample clock.
+            - /Dev2/PFI0 should receive the counter pulse train generated
+              on /Dev1/PFI12.
             - Each external trigger causes the counter to emit exactly
               n_samples pulses, so exactly one AO sequence is output.
         """
@@ -371,7 +366,7 @@ class NIDAQ:
                                                                      max_val=10.0)
 
             # Use the retriggerable counter pulse train as AO sample clock.
-            # Clock wiring: Dev2/PFI12 --> Dev3/PFI0
+            # Clock wiring: Dev1/PFI12 --> Dev2/PFI0
             self.tasks["analog"].timing.cfg_samp_clk_timing(rate=self.sample_rate,
                                                             source=self.clock_counter_terminals[0],
                                                             active_edge=Edge.RISING,
@@ -400,7 +395,8 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -532,7 +528,8 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -588,7 +585,8 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:
-                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(e.error_code)
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
@@ -660,3 +658,44 @@ class NIDAQ:
                     input_task.wait_until_done(WAIT_INFINITELY)
                     reader.read_many_sample(data=acquired_data, number_of_samples_per_channel=num_samples)
         return acquired_data
+
+
+def configure_do_power_up_high(device: str = "Dev2", high_lines: tuple[int, ...] = (5, 6, 7)) -> None:
+    """
+    Configure selected Port 0 lines to power up HIGH while preserving
+    the existing power-up states of the other Port 0 lines.
+    """
+    system = System.local()
+
+    existing_states = system.get_digital_power_up_states(device)
+
+    existing_by_channel = {
+        state.physical_channel: state.power_up_state
+        for state in existing_states
+    }
+
+    port0_states = []
+
+    for line_number in range(32):
+        channel = f"{device}/port0/line{line_number}"
+
+        if line_number in high_lines:
+            power_up_state = PowerUpStates.HIGH
+        else:
+            # Preserve the current configuration of every other line.
+            power_up_state = existing_by_channel.get(
+                channel,
+                PowerUpStates.TRISTATE,
+            )
+
+        port0_states.append(
+            DOPowerUpState(
+                physical_channel=channel,
+                power_up_state=power_up_state,
+            )
+        )
+
+    system.set_digital_power_up_states(
+        device,
+        port0_states,
+    )

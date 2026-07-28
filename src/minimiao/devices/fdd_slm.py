@@ -35,12 +35,6 @@ class QXGA:
             pass
 
     @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
-    @staticmethod
     def load_configs():
         import json
         config_file = input("Enter configuration file directory: ")

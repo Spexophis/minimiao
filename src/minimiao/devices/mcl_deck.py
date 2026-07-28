@@ -54,12 +54,6 @@ class MCLMicroDrive:
         self.mcl_deck.MCL_ReleaseHandle(self.handle)
         self.logg.info('Deck Handle released.')
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def initialize_deck(self):
         self.mcl_deck.MCL_ReleaseAllHandles()
         handle = self.mcl_deck.MCL_InitHandle()
