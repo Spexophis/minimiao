@@ -28,8 +28,8 @@ class HoloSystem:
     slm_ny: int = 1272  # number of pixels in y
     slm_offset_x: int = 0
     slm_offset_y: int = 0
-    phase_nx: int = 800
-    phase_ny: int = 800
+    phase_nx: int = 850
+    phase_ny: int = 850
     correction_value: int = 137
     _correction_pattern: np.ndarray = None
 

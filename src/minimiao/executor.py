@@ -305,7 +305,7 @@ class CommandExecutor(QObject):
             self.stop_acquisition()
 
     def prepare_acquisition(self):
-        self.update_trigger_parameters()
+        # self.update_trigger_parameters()
         self.set_camera_roi()
         self.devs.camera.prepare_live()
         # self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
@@ -344,6 +344,9 @@ class CommandExecutor(QObject):
         file_name = self.vw.get_file_name()
         if file_name is not None:
             self.cgh.load_mask(file_name)
+            self.viewer.set_graph_image(self.cgh.cell_mask)
+        else:
+            self.cgh.cell_mask = self.devs.camera.data.get_last_element()
             self.viewer.set_graph_image(self.cgh.cell_mask)
 
     @pyqtSlot()
