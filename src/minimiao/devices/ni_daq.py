@@ -595,6 +595,64 @@ class NIDAQ:
             except AssertionError as ae:
                 self.logg.error("Assertion Error: %s", ae)
 
+    def pause_triggers(self):
+        """
+        Halt TTL generation without closing the tasks, so it can be resumed
+        exactly where a fresh buffer cycle begins via resume_triggers().
+
+        Used to "hold" the trigger train for the short window a camera needs
+        to re-arm (e.g. an Andor Kinetics series looping automatically),
+        so no pulse goes out while the camera cannot accept it.
+        """
+        try:
+            # Stop the clock first so no further sample-clock edges reach the
+            # AO/DO tasks while they are being stopped.
+            clock_task = self.tasks.get("clock")
+            if clock_task is not None and self._running.get("clock", False):
+                clock_task.stop()
+                self._running["clock"] = False
+
+            for key in ("digital", "analog"):
+                _task = self.tasks.get(key)
+                if _task is not None and self._running.get(key, False):
+                    _task.stop()
+                    self._running[key] = False
+
+            self.logg.info("Trigger output held")
+
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def resume_triggers(self):
+        """Resume TTL generation after pause_triggers()."""
+        try:
+            if self.tasks.get("clock") is None:
+                return
+
+            # Restart AO/DO before the clock so they are ready to consume
+            # sample-clock edges as soon as the clock resumes.
+            self.start_triggers()
+
+            clock_task = self.tasks.get("clock")
+            if clock_task is not None and not self._running.get("clock", False):
+                clock_task.start()
+                self._running["clock"] = True
+
+            self.logg.info("Trigger output resumed")
+
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
     def stop_triggers(self, _close=True):
         for key, _task in self.tasks.items():
             if _task is None:

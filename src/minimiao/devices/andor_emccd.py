@@ -41,6 +41,11 @@ Acquisition_Mode = {1: "Single Scan",
 
 
 class EMCCDCamera:
+    # Kinetics-mode series length used for "endless" live/streaming acquisitions.
+    # Large enough that the series essentially never runs out under normal use;
+    # _maintain_kinetic_series() re-arms automatically if it ever does.
+    LIVE_KINETICS_SERIES_LENGTH = 100000
+
     class CameraSettings:
         def __init__(self):
             self.temperature = None
@@ -78,6 +83,22 @@ class EMCCDCamera:
         self.preset_modes = None
         self.data = None
         self.acq_thread = None
+
+        # Automatic Kinetics-series re-arm (see _maintain_kinetic_series).
+        self._auto_loop_kinetics = False
+        self._kinetics_num = 0
+        self._frame_id_offset = 0
+        # Frames-before-series-end at which polling tightens up, to catch the
+        # DRV_IDLE transition as quickly as possible.
+        self._restart_lookahead = 2
+        self._normal_poll_interval = 0.05
+        self._fast_poll_interval = 0.002
+        # Optional hooks (wired up by the caller, e.g. to the NI-DAQ trigger
+        # generator) invoked immediately before/after the camera is re-armed,
+        # so the external TTL train can be held during the re-arm gap instead
+        # of continuing to pulse a camera that isn't ready to receive it.
+        self.on_series_restart_begin = None
+        self.on_series_restart_end = None
 
     def __getattr__(self, item):
         if hasattr(self._settings, item):
@@ -359,6 +380,7 @@ class EMCCDCamera:
     def set_kinetics_num(self, kn):
         ret = self.sdk.SetNumberKinetics(kn)
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self._kinetics_num = kn
             self.logg.info("Set Number of Kinetics to {}".format(kn))
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
@@ -371,12 +393,19 @@ class EMCCDCamera:
         self.set_gain()
         self.get_acquisition_timings()
         self.get_buffer_size()
+        # Kinetics mode stops the acquisition once the configured number of
+        # frames has been collected. Use a series long enough to behave like
+        # an endless live view; _maintain_kinetic_series() re-arms it
+        # automatically in the rare case it still runs out.
+        self._auto_loop_kinetics = (aq == 3)
         if aq == 3:
-            self.set_kinetics_num(self.buffer_size)
+            self.set_kinetics_num(self.LIVE_KINETICS_SERIES_LENGTH)
 
     def start_live(self):
+        self._frame_id_offset = 0
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self.acq_thread.interval = self._normal_poll_interval
         ret = self.sdk.PrepareAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             ret = self.sdk.StartAcquisition()
@@ -389,6 +418,7 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_live(self):
+        self._auto_loop_kinetics = False
         if self.acq_thread is not None:
             self.acq_thread.stop()
             self.acq_thread = None
@@ -403,6 +433,10 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def get_images(self):
+        self._drain_new_images()
+        self._maintain_kinetic_series()
+
+    def _drain_new_images(self):
         if self.data is None:
             return
 
@@ -422,7 +456,57 @@ class EMCCDCamera:
             return
 
         frames = np.asarray(data_array, dtype=np.uint16).reshape(num, self.pixels_y, self.pixels_x)
-        self.data.add_element([frames[i] for i in range(num)], [valid_first, valid_last])
+        offset = self._frame_id_offset
+        self.data.add_element([frames[i] for i in range(num)], [valid_first + offset, valid_last + offset])
+
+    def _maintain_kinetic_series(self):
+        """
+        Kinetics mode stops on its own once SetNumberKinetics frames have
+        been collected. To keep the tight, kinetic-cycle-timed exposure
+        pacing (needed for exact TTL sync) while still behaving like an
+        endless live view, re-arm the series immediately when it finishes.
+
+        The external TTL source (e.g. NI-DAQ) is held via
+        on_series_restart_begin/end for the short re-arm window, so it
+        does not keep pulsing a camera that is momentarily not ready to
+        receive a trigger. Frame ids are offset so displayed/saved frame
+        numbers keep counting up continuously across restarts.
+        """
+        if not self._auto_loop_kinetics or self.acq_thread is None or self._kinetics_num <= 0:
+            return
+
+        ret, _num_accum, num_kinetics = self.sdk.GetAcquisitionProgress()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            near_end = num_kinetics >= self._kinetics_num - self._restart_lookahead
+            self.acq_thread.interval = self._fast_poll_interval if near_end else self._normal_poll_interval
+
+        ret, status = self.sdk.GetStatus()
+        if ret != atmcd_errors.Error_Codes.DRV_SUCCESS or status != atmcd_errors.Error_Codes.DRV_IDLE:
+            return
+
+        # Drain any frames left behind by the finished series before re-arming.
+        self._drain_new_images()
+        self._frame_id_offset += self._kinetics_num
+
+        if self.on_series_restart_begin is not None:
+            try:
+                self.on_series_restart_begin()
+            except Exception as e:
+                self.logg.error(f"Error holding trigger for kinetic series restart: {e}")
+
+        ret = self.sdk.StartAcquisition()
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info("Kinetic series completed; re-armed automatically")
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+
+        if self.on_series_restart_end is not None:
+            try:
+                self.on_series_restart_end()
+            except Exception as e:
+                self.logg.error(f"Error releasing trigger after kinetic series restart: {e}")
+
+        self.acq_thread.interval = self._normal_poll_interval
 
     def get_last_image(self):
         if self.data is not None:
@@ -476,6 +560,7 @@ class EMCCDCamera:
             return None
 
     def prepare_data_acquisition(self, aq=5, preset=2):
+        self._auto_loop_kinetics = False
         self.set_roi()
         self.set_acquisition_mode(aq)
         self.set_preset_mode(preset)
@@ -485,8 +570,10 @@ class EMCCDCamera:
         self.get_buffer_size()
 
     def start_data_acquisition(self, n, fd, fn):
+        self._frame_id_offset = 0
         self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self.acq_thread.interval = self._normal_poll_interval
         ret = self.sdk.PrepareAcquisition()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             ret = self.sdk.StartAcquisition()
@@ -499,6 +586,7 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
     def stop_data_acquisition(self):
+        self._auto_loop_kinetics = False
         if self.acq_thread is not None:
             self.acq_thread.stop()
             self.acq_thread = None

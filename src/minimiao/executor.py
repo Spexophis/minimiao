@@ -388,6 +388,11 @@ class CommandExecutor(QObject):
     def start_video(self):
         try:
             self.devs.slm.activate()
+            # Kinetics-mode series auto-loops indefinitely (see EMCCDCamera.
+            # _maintain_kinetic_series); hold/release the DAQ TTL train around
+            # each re-arm so no trigger goes out while the camera can't take it.
+            self.devs.img_cam.on_series_restart_begin = self.devs.daq.pause_triggers
+            self.devs.img_cam.on_series_restart_end = self.devs.daq.resume_triggers
             self.devs.img_cam.start_live()
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.devs.daq.run_triggers()
@@ -402,6 +407,8 @@ class CommandExecutor(QObject):
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
             self.devs.img_cam.stop_live()
+            self.devs.img_cam.on_series_restart_begin = None
+            self.devs.img_cam.on_series_restart_end = None
             self.logg.info(r"Live Video Stopped")
             self.devs.slm.deactivate()
             self.lasers_off()
@@ -599,6 +606,11 @@ class CommandExecutor(QObject):
     def start_acquisition(self, labl: str, acq_num: int):
         try:
             self.devs.slm.activate()
+            # Kinetics-mode series auto-loops indefinitely (see EMCCDCamera.
+            # _maintain_kinetic_series); hold/release the DAQ TTL train around
+            # each re-arm so no trigger goes out while the camera can't take it.
+            self.devs.img_cam.on_series_restart_begin = self.devs.daq.pause_triggers
+            self.devs.img_cam.on_series_restart_end = self.devs.daq.resume_triggers
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.devs.daq.run_triggers()
@@ -609,6 +621,8 @@ class CommandExecutor(QObject):
 
     def stop_acquisition(self):
         try:
+            self.devs.img_cam.on_series_restart_begin = None
+            self.devs.img_cam.on_series_restart_end = None
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
             self.devs.img_cam.stop_data_acquisition()
