@@ -300,9 +300,15 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Cobolt Laser Error: {e}")
 
     def set_lasers(self, lasers):
-        pw = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        pw_405 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
         try:
-            self.devs.laser.set_modulation_mode(["488_1"], [pw])
+            self.devs.laser.set_modulation_mode(["405"], [pw_405])
+            self.devs.laser.laser_on(["405"])
+        except Exception as e:
+            self.logg.error(f"Cobolt Laser Error: {e}")
+        try:
+            self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
             self.devs.laser.laser_on(["488_1"])
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
@@ -361,8 +367,7 @@ class CommandExecutor(QObject):
                                           standby_time=self.devs.img_cam.t_readout,
                                           frame_rate=self.devs.img_cam.fps)
         dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x,
-                                  self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
@@ -472,9 +477,9 @@ class CommandExecutor(QObject):
         self.devs.dpc_cam.bin_h, self.devs.dpc_cam.bin_v = bn, bn
         self.devs.dpc_cam.start_h, self.devs.dpc_cam.end_h = x, x + nx - 1
         self.devs.dpc_cam.start_v, self.devs.dpc_cam.end_v = y, y + ny - 1
-        self.devs.dpc_cam.t_exposure = self.ctrl_panel.get_scmos_exposure()
+        self.devs.dpc_cam.t_exposure, t_readout = self.ctrl_panel.get_scmos_exposure()
         self.devs.dpc_cam.prepare_live()
-        dpc_seqs = self.devs.led.dpc_sequences(self.devs.dpc_cam.t_exposure)
+        dpc_seqs = self.devs.led.dpc_sequences(1, 128, self.devs.dpc_cam.t_exposure, t_readout)
         self.devs.daq.write_dpc_sequences(dpc_seqs, finite=False)
 
     def start_dpc(self):
@@ -560,7 +565,8 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_WideField":
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_WideField":
             dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(1, self.lasers, 0)
@@ -569,8 +575,8 @@ class CommandExecutor(QObject):
                                          finite=False, trg=False)
         elif aqm == "2D_SIM":
             dtr, chs = self.trg.generate_sim_triggers(aqn)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=[2, 3, 4, 5, 6], finite=False,
-                                         trg=False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=[2, 3, 4, 5, 6],
+                                         finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_SIM":
             dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(aqn, self.lasers, 0)
@@ -578,6 +584,11 @@ class CommandExecutor(QObject):
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
             pos *= aqn
+        elif aqm == "2D_NLSIM":
+            dtr, chs = self.trg.generate_nlsim_triggers(aqn)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=[0, 2, 3, 4, 5, 6],
+                                         finite=False, trg=False)
+            pos = aqn
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.viewer.switch_camera(self.devs.img_cam.pixels_x,

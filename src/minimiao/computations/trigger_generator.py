@@ -15,10 +15,10 @@ class TriggerSequence:
         # daq
         self.sample_rate = sample_rate  # Hz
         # digital triggers
-        self.digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
-        self.digital_ends = [0.00020, 0.0008, 0.0008, 0.003, 0.003, 0.001]
-        self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
-        self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
+        digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
+        digital_ends = [0.00020, 0.0008, 0.0008, 0.003, 0.003, 0.001]
+        self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in digital_starts]
+        self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in digital_ends]
         # piezo scanner
         self.piezo_conv_factors = [10., 10., 10.]
         self.piezo_steps = [0.032, 0.032, 0.16]
@@ -106,11 +106,9 @@ class TriggerSequence:
 
     def update_digital_parameters(self, digital_starts=None, digital_ends=None):
         if digital_starts is not None:
-            self.digital_starts = digital_starts
+            self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in digital_starts]
         if digital_ends is not None:
-            self.digital_ends = digital_ends
-        self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in self.digital_starts]
-        self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in self.digital_ends]
+            self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in digital_ends]
 
     def update_camera_parameters(self, initial_time=None, exposure_time=None, standby_time=None, frame_rate=None):
         if initial_time is not None:
@@ -144,17 +142,19 @@ class TriggerSequence:
             self.slm_delay_samples = round(self.slm_delay_time * self.sample_rate)
 
     def generate_digital_triggers(self, lasers, camera):
-        digital_channels = [2, 3]
-        self.cycle_samples = int(max(self.slm_total_samples, self.frame_samples) * 1.5)
+        digital_channels = [0, 2, 3]
+        act_samples = self.digital_ends[0] - self.digital_starts[0]
+        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + act_samples
         self.cycle_time = self.cycle_samples / self.sample_rate
-        digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
-        digital_triggers[0, :self.trigger_pulse_samples] = 1
-        digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
+        digital_triggers = np.zeros((3, self.cycle_samples), dtype=np.uint8)
+        digital_triggers[0, :act_samples] = 1
+        digital_triggers[1, act_samples:act_samples + self.trigger_pulse_samples] = 1
+        digital_triggers[2, act_samples + self.slm_start_samples:act_samples + self.slm_start_samples + self.trigger_pulse_samples] = 1
         return digital_triggers, digital_channels
 
     def generate_sim_triggers(self, nph=6):
         digital_channels = [2, 3, 4, 5, 6]
-        self.frame_samples = int(np.ceil(0.08 * self.sample_rate))
+        self.frame_samples = int(np.ceil(0.06 * self.sample_rate))
         self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + 2
         self.cycle_time = self.cycle_samples / self.sample_rate
         digital_triggers = np.zeros((2, self.cycle_samples), dtype=np.uint8)
@@ -162,6 +162,32 @@ class TriggerSequence:
         digital_triggers[1, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         digital_triggers = np.tile(digital_triggers, (1, nph))
         digital_triggers = np.concatenate((digital_triggers, np.zeros((2, self.motor_rot_samples), dtype=np.uint8)), axis=1)
+        digital_triggers = np.tile(digital_triggers, (1, 2))
+        motor_stay = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
+        motor_stay[0, -4 * self.motor_jog_samples:] = 0
+        motor_fwd = np.ones((3, self.motor_rot_samples), dtype=np.uint8)
+        motor_fwd[0, :5 * self.motor_jog_samples] = 0
+        motor_fwd[2, :self.motor_jog_samples] = 0
+        motor_bwd = np.ones((3, self.motor_rot_samples), dtype=np.uint8)
+        motor_bwd[0, :5 * self.motor_jog_samples] = 0
+        motor_bwd[1, :self.motor_jog_samples] = 0
+        digit_triggers = np.concatenate((motor_stay, motor_fwd), axis=1)
+        digit_triggers = np.concatenate((digit_triggers, motor_stay), axis=1)
+        digit_triggers = np.concatenate((digit_triggers, motor_bwd), axis=1)
+        return np.concatenate((digital_triggers, digit_triggers), axis=0), digital_channels
+
+    def generate_nlsim_triggers(self, nph=6):
+        digital_channels = [0, 2, 3, 4, 5, 6]
+        self.frame_samples = int(np.ceil(0.06 * self.sample_rate))
+        act_samples = self.digital_ends[0] - self.digital_starts[0]
+        self.cycle_samples = max(self.slm_total_samples, self.frame_samples) + act_samples
+        self.cycle_time = self.cycle_samples / self.sample_rate
+        digital_triggers = np.zeros((3, self.cycle_samples), dtype=np.uint8)
+        digital_triggers[0, :act_samples] = 1
+        digital_triggers[1, act_samples:act_samples + self.trigger_pulse_samples] = 1
+        digital_triggers[2, act_samples + self.slm_start_samples:act_samples + self.slm_start_samples + self.trigger_pulse_samples] = 1
+        digital_triggers = np.tile(digital_triggers, (1, nph))
+        digital_triggers = np.concatenate((digital_triggers, np.zeros((3, self.motor_rot_samples), dtype=np.uint8)), axis=1)
         digital_triggers = np.tile(digital_triggers, (1, 2))
         motor_stay = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
         motor_stay[0, -4 * self.motor_jog_samples:] = 0

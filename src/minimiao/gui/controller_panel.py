@@ -108,7 +108,7 @@ class ControlPanel(QWidget):
         self.QSpinBox_scmos_gain = cw.SpinBoxWidget(0, 300, 1, 0)
         self.QDoubleSpinBox_scmos_t_clean = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.009)
         self.QDoubleSpinBox_scmos_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
-        self.QDoubleSpinBox_scmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.050)
+        self.QDoubleSpinBox_scmos_t_standby = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.002)
 
         scmos_scroll_layout.addRow(cw.LabelWidget(str('sCMOS')))
         scmos_scroll_layout.addRow(cw.FrameWidget())
@@ -366,7 +366,7 @@ class ControlPanel(QWidget):
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["2D_WideField", "3D_WideField",
                                                                          "2D_SIM", "3D_SIM",
-                                                                         "2D_NSIM"])
+                                                                         "2D_NLSIM"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
@@ -472,7 +472,7 @@ class ControlPanel(QWidget):
                 self.QSpinBox_scmos_coordinate_bin.value()]
 
     def get_scmos_exposure(self):
-        return self.QDoubleSpinBox_scmos_t_exposure.value()
+        return self.QDoubleSpinBox_scmos_t_exposure.value(), self.QDoubleSpinBox_scmos_t_standby.value(),
 
     def get_scmos_gain(self):
         return self.QSpinBox_scmos_gain.value()
@@ -583,6 +583,11 @@ class ControlPanel(QWidget):
         self.QLCDNumber_piezo_position_z.display(ps)
 
     @pyqtSlot(bool)
+    def set_laser_405(self, checked: bool):
+        power = self.QDoubleSpinBox_laserpower_405.value()
+        self.Signal_set_laser.emit(["405"], checked, power)
+
+    @pyqtSlot(bool)
     def set_laser_488_0(self, checked: bool):
         power = self.QDoubleSpinBox_laserpower_488_0.value()
         self.Signal_set_laser.emit(["488_0"], checked, power)
@@ -591,11 +596,6 @@ class ControlPanel(QWidget):
     def set_laser_488_1(self, checked: bool):
         power = self.QDoubleSpinBox_laserpower_488_1.value()
         self.Signal_set_laser.emit(["488_1"], checked, power)
-
-    @pyqtSlot(bool)
-    def set_laser_405(self, checked: bool):
-        power = self.QDoubleSpinBox_laserpower_405.value()
-        self.Signal_set_laser.emit(["405"], checked, power)
 
     def get_lasers(self):
         lasers = []

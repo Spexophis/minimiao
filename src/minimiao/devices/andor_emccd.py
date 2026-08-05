@@ -102,7 +102,7 @@ class EMCCDCamera:
         self.cooler_on()
         self.set_trigger_mode(1)
         self.set_readout_mode(4)
-        # self.set_frame_transfer(0)
+        self.set_frame_transfer(0)
 
     def close(self):
         self.cooler_off()
@@ -281,7 +281,7 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def set_trigger_mode(self, ind):
+    def set_trigger_mode(self, ind, f=0):
         """
         0 - Internal
         1 - External
@@ -292,6 +292,11 @@ class EMCCDCamera:
         ret = self.sdk.SetTriggerMode(ind)
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info("Trigger Mode Set to {}".format(Trigger_Mode[ind]))
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+        ret = self.sdk.SetFastExtTrigger(f)
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info(f"Fast External Trigger disabled")
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
@@ -358,14 +363,16 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def prepare_live(self, aq=5, preset=2):
+    def prepare_live(self, aq=3, preset=2):
         self.set_roi()
-        self.set_acquisition_mode(aq)
         self.set_preset_mode(preset)
+        self.set_acquisition_mode(aq)
         self.set_exposure_time()
         self.set_gain()
         self.get_acquisition_timings()
         self.get_buffer_size()
+        if aq == 3:
+            self.set_kinetics_num(self.buffer_size)
 
     def start_live(self):
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)

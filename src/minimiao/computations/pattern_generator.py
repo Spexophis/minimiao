@@ -33,11 +33,10 @@ def generate_binary_phase_1bit(size=(2048, 1536), period=(8, 0), phase=(0, 0), v
     return None
 
 
-def generate_binary_phase_8bit(bit_indices, bit_sequences):
-    if len(bit_sequences) != len(bit_indices):
-        raise Exception("Error: bit index and bit sequence length does not match")
+def generate_binary_phase_8bit(bit_sequences):
+    bit_indices = [0, 1, 2, 3, 4, 5, 6, 7]
     width, height = bit_sequences[0].shape
-    patterns = np.zeros((8, width, height))
+    patterns = np.zeros((8, width, height), dtype=np.uint8)
     pattern = np.zeros((width, height), dtype=np.uint8)
     for i, bn in enumerate(bit_indices):
         patterns[bn] = bit_sequences[i]
@@ -53,6 +52,55 @@ def save_to_bmp(data, svd, fn, bt=1):
         img.save(svd + fn + r"_1bit.bmp", format='BMP')
     else:
         img.save(svd + fn + r"_8bit.bmp", format='BMP')
+
+
+def generate_binary_phase_dots(size=(2048, 1536), period=(8, 8), phase=(0, 0),
+                               geometry='checker', threshold=None,
+                               value=255, typ=np.uint8):
+    """Binary (0 / value) phase pattern that synthesizes a dot array at the
+    sample, given an order-selection mask in the intermediate pupil.
+
+    geometry : 'checker' | 'square' | 'hex'
+    period   : (period_x, period_y) in SLM pixels. 'hex' uses period_x only.
+    phase    : (offset_x, offset_y) in pixels; shifts the pattern rigidly.
+    threshold: binarization level for the cosine modes. None -> median,
+               which equalizes the 0/pi areas and nulls the zero order.
+    """
+    width, height = size
+    period_x, period_y = period
+    offset_x, offset_y = phase
+
+    xx, yy = np.meshgrid(np.arange(width), np.arange(height))
+    xx = xx + offset_x
+    yy = yy + offset_y
+
+    if geometry == 'checker':
+        if period_x > 0 and period_y > 0:
+            mask = ((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2))
+        elif period_x > 0:
+            mask = (xx % period_x) < (period_x // 2)
+        elif period_y > 0:
+            mask = (yy % period_y) < (period_y // 2)
+        else:
+            return None
+        return np.where(mask, value, 0).astype(typ)
+
+    if geometry == 'square':
+        if period_x <= 0 or period_y <= 0:
+            return None
+        field = np.cos(2 * np.pi * xx / period_x) + np.cos(2 * np.pi * yy / period_y)
+    elif geometry == 'hex':
+        if period_x <= 0:
+            return None
+        field = np.zeros((height, width))
+        for angle in np.deg2rad((0.0, 60.0, 120.0)):
+            field += np.cos(2 * np.pi * (np.cos(angle) * xx +
+                                         np.sin(angle) * yy) / period_x)
+    else:
+        raise ValueError(f'unknown geometry: {geometry!r}')
+
+    level = np.median(field) if threshold is None else threshold
+    return np.where(field < level, value, 0).astype(typ)
 
 
 def generate_fresnel_lens_pattern(size=(1272, 1024), ps=12.5e-6, wl=488e-9,

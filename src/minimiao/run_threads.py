@@ -42,12 +42,7 @@ class CameraAcquisitionThread(threading.Thread):
             self.condition.notify()  # Wake up thread immediately
         self.join(timeout=timeout)
         if self.is_alive():
-            self.cam.logg.error(
-                "CameraAcquisitionThread did not exit within %.1fs; "
-                "camera USB may be frozen;"
-                "hardware power-cycle may be required",
-                timeout,
-            )
+            self.cam.logg.error("CameraAcquisitionThread did not exit within %.1fs; ", timeout)
 
     def is_running(self):
         return self._running

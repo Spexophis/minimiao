@@ -9,6 +9,16 @@ import json
 import os
 import sys
 
+try:
+    from .devices import ni_daq
+except ImportError as e:
+    from minimiao.devices import ni_daq
+
+try:
+    ni_daq.warm_up_native_library()
+except Exception as e:
+    print(f"NI-DAQmx warm-up failed (continuing anyway): {e}")
+
 from PyQt6.QtWidgets import QApplication, QFileDialog
 
 try:

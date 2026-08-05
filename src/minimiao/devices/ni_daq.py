@@ -20,6 +20,11 @@ from minimiao import logger
 warnings.filterwarnings("error", category=nidaqmx.DaqWarning)
 
 
+def warm_up_native_library():
+    with nidaqmx.Task():
+        pass
+
+
 class NIDAQ:
 
     def __init__(self, logg=None):

@@ -74,7 +74,7 @@ class ThorCMOS:
         available_cameras = sdk.discover_available_cameras()
         if len(available_cameras) < 1:
             self.logg.error(f"No ThorCMOS found")
-            return None
+            return None, None
         else:
             self.logg.info(f"Found {len(available_cameras)} ThorCMOS {available_cameras[0]}")
             return sdk, available_cameras[0]
@@ -91,8 +91,8 @@ class ThorCMOS:
         self.camera.frame_rate_control_value = 50
         self.camera.is_frame_rate_control_enabled = True
         self.camera.frames_per_trigger_zero_for_unlimited = 1
-        # self.camera.image_poll_timeout_ms = 0  # 1 second polling timeout
-        self.set_acquisition_mode(1)
+        self.camera.image_poll_timeout_ms = 0
+        self.set_acquisition_mode(2)
         self.set_trigger_polarity(0)
 
     def close(self):
