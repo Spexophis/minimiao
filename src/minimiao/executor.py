@@ -656,7 +656,7 @@ class CommandExecutor(QObject):
     def focus_finding(self):
         try:
             pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
-            center_pos, axis_length, step_size = pos_z[0], 0.96, 0.06
+            center_pos, axis_length, step_size = pos_z[0], 2.0, 0.1
             start = center_pos - axis_length
             end = center_pos + axis_length
             zps = np.arange(start, end + step_size, step_size)

@@ -41,6 +41,8 @@ Acquisition_Mode = {1: "Single Scan",
 
 
 class EMCCDCamera:
+    LIVE_KINETICS_SERIES_LENGTH = 40000
+
     class CameraSettings:
         def __init__(self):
             self.temperature = None
@@ -372,7 +374,7 @@ class EMCCDCamera:
         self.get_acquisition_timings()
         self.get_buffer_size()
         if aq == 3:
-            self.set_kinetics_num(self.buffer_size)
+            self.set_kinetics_num(self.LIVE_KINETICS_SERIES_LENGTH)
 
     def start_live(self):
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)
