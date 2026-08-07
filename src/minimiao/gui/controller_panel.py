@@ -161,7 +161,7 @@ class ControlPanel(QWidget):
         self.QPushButton_deck_position_zero = cw.PushButtonWidget('Zero')
         self.QPushButton_move_deck_up = cw.PushButtonWidget('Up')
         self.QPushButton_move_deck_down = cw.PushButtonWidget('Down')
-        self.QSpinBox_deck_direction = cw.SpinBoxWidget(-1, 1, 2, 1)
+        self.QSpinBox_deck_direction = cw.SpinBoxWidget(-100000, 100000, 1, 100)
         self.QDoubleSpinBox_deck_velocity = cw.DoubleSpinBoxWidget(0.02, 1.50, 0.02, 2, 0.02)
         self.QPushButton_move_deck = cw.PushButtonWidget('Move', checkable=True)
 

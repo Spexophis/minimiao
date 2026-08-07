@@ -39,9 +39,10 @@ Acquisition_Mode = {1: "Single Scan",
                     4: "Fast Kinetics",
                     5: "Run Till Abort"}
 
+LIVE_KINETICS_SERIES_LENGTH = 40000
+
 
 class EMCCDCamera:
-    LIVE_KINETICS_SERIES_LENGTH = 40000
 
     class CameraSettings:
         def __init__(self):
@@ -49,7 +50,7 @@ class EMCCDCamera:
             self.gain = 0
             self.t_clean = 0.0
             self.t_readout = 0.04
-            self.t_exposure = 0.01
+            self.t_exposure = 0.04
             self.t_accumulate = None
             self.t_kinetic = 0.05
             self.fps = 1 / self.t_kinetic
@@ -374,7 +375,7 @@ class EMCCDCamera:
         self.get_acquisition_timings()
         self.get_buffer_size()
         if aq == 3:
-            self.set_kinetics_num(self.LIVE_KINETICS_SERIES_LENGTH)
+            self.set_kinetics_num(LIVE_KINETICS_SERIES_LENGTH)
 
     def start_live(self):
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)

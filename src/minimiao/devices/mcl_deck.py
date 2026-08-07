@@ -6,7 +6,6 @@
 import ctypes as ct
 import os
 import sys
-import threading
 
 from minimiao import logger
 
@@ -40,8 +39,8 @@ class MCLMicroDrive:
                              [3, -1, 'Axis 3 reverse limit'],  # 111 <-> '1101111' <-> position 4
                              [3, 1, 'Axis 3 forward limit']]  # 095 <-> '1011111' <-> position 5
         self.total_range = 23  # mm
+        self.step_distance = 8 * self.step_size
         self.position = 0
-        self.move_thread = None
 
     def __del__(self):
         pass
@@ -120,13 +119,16 @@ class MCLMicroDrive:
         if error_number != 0:
             self.logg.error('Error while waiting: ' + self.error_dictionary[error_number])
 
-    def _move_relative(self, axis, distance, velocity=1.5):
-        error_code = self.mcl_deck.MCL_MDMove(ct.c_uint(axis), ct.c_double(velocity), ct.c_double(distance),
+    def _move_relative(self, axis, distance, velocity, wt):
+        error_code = self.mcl_deck.MCL_MDMove(ct.c_uint(axis),
+                                              ct.c_double(velocity),
+                                              ct.c_double(distance),
                                               self.handle)
-        self.wait()
+        if wt:
+            self.wait()
         return error_code
 
-    def move_relative(self, axis, distance, velocity=1.5):
+    def move_relative(self, axis, distance, velocity, wt=True):
         """
         Moves a single axis by distance with velocity.
         """
@@ -136,13 +138,14 @@ class MCLMicroDrive:
         elif velocity < self.velocity_min:
             self.logg.error('Given velocity is too low. Velocity is set to minimum value.')
             velocity = self.velocity_min
-        error_number = self._move_relative(axis, distance, velocity)
+        error_number = self._move_relative(axis, distance, velocity, wt)
         if error_number == 0:
-            self.position = self.get_position_steps_taken(3)
+            if wt:
+                self.get_position_steps_taken(3)
         else:
-            raise RuntimeError('Error while moving axis ' + str(axis) + ': ' + self.error_dictionary[error_number])
+            self.logg.error('Error moving axis' + str(axis) + ': ' + self.error_dictionary[error_number])
 
-    def get_position_steps_taken(self, axis):
+    def _get_position_steps_taken(self, axis):
         micro_steps = ct.pointer(ct.c_int())
         error_number = self.mcl_deck.MCL_MDCurrentPositionM(ct.c_int(axis), micro_steps, self.handle)
         if error_number == 0:
@@ -150,16 +153,21 @@ class MCLMicroDrive:
         else:
             self.logg.error(
                 'Error reading the position of axis' + str(axis) + ': ' + self.error_dictionary[error_number])
+            return None
+
+    def get_position_steps_taken(self, axis):
+        r = self._get_position_steps_taken(axis)
+        if r is not None:
+            self.position = self._get_position_steps_taken(axis)
 
     def move_deck(self, direction, velocity):
-        self.move_thread = MoveThread(self, direction, velocity)
-        self.move_thread.start()
+        if self.is_moving():
+            self.logg.error('Mad Deck is moving.')
+        else:
+            self.move_relative(axis=3, distance=direction * self.step_distance, velocity=velocity, wt=False)
 
     def stop_deck(self):
-        if self.move_thread is not None:
-            self.move_thread.stop()
-            self.move_thread.join()
-            self.move_thread = None
+        self.stop_moving()
 
     def is_moving(self):
         """
@@ -176,32 +184,7 @@ class MCLMicroDrive:
         """
         status = ct.pointer(ct.c_ushort())
         error_number = self.mcl_deck.MCL_MDStop(status, self.handle)
-        if error_number != 0:
+        if error_number == 0:
+            self.get_position_steps_taken(3)
+        else:
             self.logg.error("Error while stopping device: " + self.error_dictionary[error_number])
-
-
-class MoveThread(threading.Thread):
-    running = False
-    lock = threading.Lock()
-
-    def __init__(self, mdk, direction, velocity):
-        threading.Thread.__init__(self)
-        self.mdk = mdk
-        self.d = direction
-        self.v = velocity
-
-    def run(self):
-        self.running = True
-        while self.running:
-            if self.mdk.is_moving():
-                pass
-            else:
-                with self.lock:
-                    try:
-                        self.mdk.move_relative(3, self.d * 0.000762, velocity=self.v)
-                    except Exception as e:
-                        self.mdk.logg.error(f"MadDeck Error: {e}")
-                        self.stop()
-
-    def stop(self):
-        self.running = False

@@ -88,8 +88,7 @@ class CommandExecutor(QObject):
     def _initial_setup(self):
         try:
 
-            p = self.devs.deck.get_position_steps_taken(3)
-            self.ctrl_panel.display_deck_position(p)
+            self._update_deck_display()
 
             self.reset_piezo_positions()
 
@@ -159,8 +158,8 @@ class CommandExecutor(QObject):
             if _moving:
                 self.logg.info("MadDeck is moving")
             else:
-                self.devs.deck.move_relative(3, 0.000762, velocity=0.8)
-                self.ctrl_panel.display_deck_position(self.devs.deck.position)
+                self.devs.deck.move_relative(axis=3, distance=self.devs.deck.step_distance, velocity=self.devs.deck.velocity_min)
+                QTimer.singleShot(200, lambda: self._update_deck_display())
         except Exception as e:
             self.logg.error(f"MadDeck Error: {e}")
 
@@ -170,8 +169,8 @@ class CommandExecutor(QObject):
             if _moving:
                 self.logg.info("MadDeck is moving")
             else:
-                self.devs.deck.move_relative(3, -0.000762, velocity=0.8)
-                self.ctrl_panel.display_deck_position(self.devs.deck.position)
+                self.devs.deck.move_relative(axis=3, distance=-self.devs.deck.step_distance, velocity=self.devs.deck.velocity_min)
+                QTimer.singleShot(200, lambda: self._update_deck_display())
         except Exception as e:
             self.logg.error(f"MadDeck Error: {e}")
 
@@ -181,6 +180,10 @@ class CommandExecutor(QObject):
             self.devs.deck.move_deck(direction, velocity)
         else:
             self.devs.deck.stop_deck()
+            QTimer.singleShot(200, lambda: self._update_deck_display())
+
+    def _update_deck_display(self):
+        self.ctrl_panel.display_deck_position(self.devs.deck.position)
 
     def reset_piezo_positions(self):
         pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
@@ -300,18 +303,19 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Cobolt Laser Error: {e}")
 
     def set_lasers(self, lasers):
-        pw_405 = self.ctrl_panel.get_cobolt_laser_power("488_1")
-        pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
-        try:
-            self.devs.laser.set_modulation_mode(["405"], [pw_405])
-            self.devs.laser.laser_on(["405"])
-        except Exception as e:
-            self.logg.error(f"Cobolt Laser Error: {e}")
-        try:
-            self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
-            self.devs.laser.laser_on(["488_1"])
-        except Exception as e:
-            self.logg.error(f"Cobolt Laser Error: {e}")
+        # pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
+        # try:
+        #     self.devs.laser.set_modulation_mode(["405"], [pw_405])
+        #     self.devs.laser.laser_on(["405"])
+        # except Exception as e:
+        #     self.logg.error(f"Cobolt Laser Error: {e}")
+        # pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        # try:
+        #     self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
+        #     self.devs.laser.laser_on(["488_1"])
+        # except Exception as e:
+        #     self.logg.error(f"Cobolt Laser Error: {e}")\
+        pass
 
     def lasers_off(self):
         try:
