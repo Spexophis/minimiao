@@ -48,11 +48,11 @@ class EMCCDCamera:
         def __init__(self):
             self.temperature = None
             self.gain = 0
-            self.t_clean = 0.0
-            self.t_readout = 0.04
-            self.t_exposure = 0.04
+            self.t_clean = 0.0016
+            self.t_readout = 0.03893
+            self.t_exposure = 0.0403
             self.t_accumulate = None
-            self.t_kinetic = 0.05
+            self.t_kinetic = 0.0809
             self.fps = 1 / self.t_kinetic
             self.bin_h = 1
             self.bin_v = 1
@@ -105,42 +105,13 @@ class EMCCDCamera:
         self.cooler_on()
         self.set_trigger_mode(1)
         self.set_readout_mode(4)
-        self.set_frame_transfer(0)
+        self.set_readout_rate(va=4, hs=0, vs=0)
 
     def close(self):
         self.cooler_off()
         ret = self.sdk.ShutDown()
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info("Andor EMCCD Shut Down")
-        else:
-            self.logg.error(atmcd_errors.Error_Codes(ret))
-
-    def load_preset_modes(self):
-        preset_fn = r"C:\ProgramData\AndorSolis\usermodes.xml"
-        preset_fnb = preset_fn.encode("mbcs")
-        ret = self.sdk.OA_Initialize(preset_fnb, len(preset_fnb))
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info(f"Camera Preset Acquisition Mode Loaded")
-            ret, mds = self.sdk.OA_GetUserModeNames()
-            if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-                raw_bytes = mds.value
-                text = raw_bytes.decode("utf-8", errors="replace")
-                mode_list = [x.strip() for x in text.split(',') if x.strip()]
-                self.logg.info(f"Camera Preset Acquisition Mode Available: {mode_list}")
-                self.preset_modes = mode_list
-            else:
-                self.logg.error(atmcd_errors.Error_Codes(ret))
-                self.preset_modes = []
-        else:
-            self.logg.error(atmcd_errors.Error_Codes(ret))
-            self.preset_modes = []
-
-    def set_preset_mode(self, ind):
-        mode_name = self.preset_modes[ind]
-        mode_name_b = mode_name.encode("mbcs")  # Windows encoding for Andor SDK2 char*
-        ret = self.sdk.OA_EnableMode(mode_name_b)
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info(f"Camera Acquisition Mode set to Preset : {mode_name}")
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
@@ -284,7 +255,7 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def set_trigger_mode(self, ind, f=0):
+    def set_trigger_mode(self, ind):
         """
         0 - Internal
         1 - External
@@ -295,11 +266,6 @@ class EMCCDCamera:
         ret = self.sdk.SetTriggerMode(ind)
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
             self.logg.info("Trigger Mode Set to {}".format(Trigger_Mode[ind]))
-        else:
-            self.logg.error(atmcd_errors.Error_Codes(ret))
-        ret = self.sdk.SetFastExtTrigger(f)
-        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info(f"Fast External Trigger disabled")
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
@@ -366,16 +332,15 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def prepare_live(self, aq=3, preset=2):
+    def prepare_live(self, aq=3):
         self.set_roi()
-        self.set_preset_mode(preset)
         self.set_acquisition_mode(aq)
         self.set_exposure_time()
         self.set_gain()
-        self.get_acquisition_timings()
-        self.get_buffer_size()
         if aq == 3:
             self.set_kinetics_num(LIVE_KINETICS_SERIES_LENGTH)
+        self.get_acquisition_timings()
+        self.get_buffer_size()
 
     def start_live(self):
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)

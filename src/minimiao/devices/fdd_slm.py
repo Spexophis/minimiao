@@ -170,6 +170,11 @@ class QXGA:
             t_total = 2 * 810.667e-6
             t_on = 2 * 499.947e-6 + 310.72e-6
             t_end = 770.133e-6 + t_total / 2
+        elif "1ms_lit_pair" in slm_seq:
+            self.logg.info("500us_lit_pair")
+            t_total = 2 * 1310.72e-6
+            t_on = 2 * 1000e-6 + 310.72e-6
+            t_end = 1270.187e-6 + t_total / 2
         elif "5ms_lit_pair" in slm_seq:
             self.logg.info("5ms_lit_pair")
             t_total = 2 * 5310.72e-6

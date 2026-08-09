@@ -85,6 +85,8 @@ class ControlPanel(QWidget):
         self.QSpinBox_emccd_coordinate_bin = cw.SpinBoxWidget(0, 1024, 1, 1)
         self.QSpinBox_emccd_gain = cw.SpinBoxWidget(0, 300, 1, 0)
         self.QDoubleSpinBox_emccd_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
+        self.QDoubleSpinBox_emccd_t_interval = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.04)
+        self.QDoubleSpinBox_emccd_t_transfer = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.008)
         self.QLCDNumber_emccd_frame_rate = cw.LCDNumberWidget(25, 4)
 
         emccd_scroll_layout.addRow(cw.LabelWidget(str('EMCCD')))
@@ -98,6 +100,8 @@ class ControlPanel(QWidget):
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Bin')), self.QSpinBox_emccd_coordinate_bin)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('EMGain')), self.QSpinBox_emccd_gain)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('Exposure / s')), self.QDoubleSpinBox_emccd_t_exposure)
+        emccd_scroll_layout.addRow(cw.LabelWidget(str('Interval / s')), self.QDoubleSpinBox_emccd_t_interval)
+        emccd_scroll_layout.addRow(cw.LabelWidget(str('Transfer / s')), self.QDoubleSpinBox_emccd_t_transfer)
         emccd_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_emccd_frame_rate)
 
         self.QSpinBox_scmos_coordinate_x = cw.SpinBoxWidget(0, 2048, 1, 0)
@@ -257,7 +261,7 @@ class ControlPanel(QWidget):
         laser_488_1_scroll_area, laser_488_1_scroll_layout = cw.create_scroll_area()
 
         self.QRadioButton_laser_405 = cw.RadioButtonWidget('405 nm')
-        self.QDoubleSpinBox_laserpower_405 = cw.DoubleSpinBoxWidget(0, 200, 0.1, 1, 0.0)
+        self.QDoubleSpinBox_laserpower_405 = cw.DoubleSpinBoxWidget(0, 250, 0.1, 1, 0.0)
         self.QPushButton_laser_405 = cw.PushButtonWidget('ON', checkable=True)
         self.QRadioButton_laser_488_0 = cw.RadioButtonWidget('488 nm #0')
         self.QDoubleSpinBox_laserpower_488_0 = cw.DoubleSpinBoxWidget(0, 200, 0.1, 1, 0.0)
@@ -356,7 +360,7 @@ class ControlPanel(QWidget):
         acq_scroll_area, acq_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_imaging_camera_selection = cw.ComboBoxWidget(list_items=["EMCCD", "sCMOS"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Wide Field"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["Widefield", "SIM", "NLSIM"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QPushButton_dpc = cw.PushButtonWidget("DPC", checkable=True)
@@ -452,6 +456,9 @@ class ControlPanel(QWidget):
 
     def get_emccd_exposure(self):
         return self.QDoubleSpinBox_emccd_t_exposure.value()
+
+    def get_camera_times(self):
+        return self.QDoubleSpinBox_emccd_t_interval.value(), self.QDoubleSpinBox_emccd_t_transfer.value()
 
     def get_emccd_gain(self):
         return self.QSpinBox_emccd_gain.value()

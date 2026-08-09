@@ -87,27 +87,33 @@ class CommandExecutor(QObject):
 
     def _initial_setup(self):
         try:
-
             self._update_deck_display()
-
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        try:
             self.reset_piezo_positions()
-
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        try:
             self.devs.motor.move_to(0)
             self.devs.motor.set_velocity(100)
             self.set_motor_step(14.5)
-
-            self.laser_lists = list(self.devs.laser.lasers.keys())
-
-            for key in self.devs.slm.ord_dict.keys():
-                self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
-
-            self.devs.img_cam.load_preset_modes()
-
-            self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
-
-            self.logg.info("Finish setting up controllers")
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
+        try:
+            self.laser_lists = list(self.devs.laser.lasers.keys())
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        try:
+            for key in self.devs.slm.ord_dict.keys():
+                self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        try:
+            self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        self.logg.info("Finish setting up controllers")
 
     @pyqtSlot()
     def check_emdccd_temperature(self):
@@ -303,19 +309,18 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Cobolt Laser Error: {e}")
 
     def set_lasers(self, lasers):
-        # pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
-        # try:
-        #     self.devs.laser.set_modulation_mode(["405"], [pw_405])
-        #     self.devs.laser.laser_on(["405"])
-        # except Exception as e:
-        #     self.logg.error(f"Cobolt Laser Error: {e}")
-        # pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
-        # try:
-        #     self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
-        #     self.devs.laser.laser_on(["488_1"])
-        # except Exception as e:
-        #     self.logg.error(f"Cobolt Laser Error: {e}")\
-        pass
+        pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
+        try:
+            self.devs.laser.set_modulation_mode(["405"], [pw_405])
+            self.devs.laser.laser_on(["405"])
+        except Exception as e:
+            self.logg.error(f"Cobolt Laser Error: {e}")
+        pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        try:
+            self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
+            self.devs.laser.laser_on(["488_1"])
+        except Exception as e:
+            self.logg.error(f"Cobolt Laser Error: {e}")
 
     def lasers_off(self):
         try:
@@ -356,6 +361,15 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
 
+    def prepare_camera(self):
+        self.devs.img_cam.set_roi()
+        self.devs.img_cam.set_acquisition_mode(3)
+        self.devs.img_cam.set_exposure_time()
+        self.devs.img_cam.set_gain()
+        self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
+        self.devs.img_cam.set_kinetics_num(20000)
+        self.devs.img_cam.get_acquisition_timings()
+
     def prepare_video(self, vd_mod):
         self.update_trigger_parameters()
         self.lasers = self.ctrl_panel.get_lasers()
@@ -365,12 +379,21 @@ class CommandExecutor(QObject):
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
-        self.devs.img_cam.prepare_live()
+        interval_t, transfer_t = self.ctrl_panel.get_camera_times()
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
                                           exposure_time=self.devs.img_cam.t_exposure,
                                           standby_time=self.devs.img_cam.t_readout,
-                                          frame_rate=self.devs.img_cam.fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+                                          frame_rate=self.devs.img_cam.fps,
+                                          interval_time=interval_t, transfer_time=transfer_t)
+        if vd_mod == "Widefield":
+            dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+        elif vd_mod == "SIM":
+            dtr, chs = self.trg.generate_sim_triggers(0)
+        elif vd_mod == "NLSIM":
+            dtr, chs = self.trg.generate_nlsim_triggers(0)
+        else:
+            raise Exception(f"Invalid Live Mode")
+        self.prepare_camera()
         self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
@@ -562,7 +585,6 @@ class CommandExecutor(QObject):
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
-        self.devs.img_cam.prepare_live()
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
                                           exposure_time=self.devs.img_cam.t_exposure,
                                           standby_time=self.devs.img_cam.t_readout,
@@ -595,8 +617,8 @@ class CommandExecutor(QObject):
             pos = aqn
         else:
             raise Exception(f"Invalid Acquisition Mode")
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x,
-                                  self.devs.img_cam.pixels_y)
+        self.prepare_camera()
+        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return pos
 
