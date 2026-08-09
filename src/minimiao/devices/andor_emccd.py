@@ -103,7 +103,7 @@ class EMCCDCamera:
     def _configure_camera(self):
         self.get_sn()
         self.cooler_on()
-        self.set_trigger_mode(1, invert=0)  # flip invert to 1 (falling edge) to test the light-leak hypothesis
+        self.set_trigger_mode(1)
         self.set_readout_mode(4)
         self.set_frame_transfer(0)
 
@@ -381,6 +381,7 @@ class EMCCDCamera:
     def prepare_live(self, aq=3, preset=2):
         self.set_roi()
         self.set_preset_mode(preset)
+        self.set_trigger_mode(1)
         self.set_acquisition_mode(aq)
         self.set_exposure_time()
         self.set_gain()
@@ -494,6 +495,7 @@ class EMCCDCamera:
         self.set_roi()
         self.set_acquisition_mode(aq)
         self.set_preset_mode(preset)
+        self.set_trigger_mode(1)
         self.set_exposure_time()
         self.set_gain()
         self.get_acquisition_timings()
