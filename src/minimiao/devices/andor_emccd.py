@@ -103,7 +103,7 @@ class EMCCDCamera:
     def _configure_camera(self):
         self.get_sn()
         self.cooler_on()
-        self.set_trigger_mode(1)
+        self.set_trigger_mode(1, invert=0)  # flip invert to 1 (falling edge) to test the light-leak hypothesis
         self.set_readout_mode(4)
         self.set_frame_transfer(0)
 
@@ -284,7 +284,7 @@ class EMCCDCamera:
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
-    def set_trigger_mode(self, ind, f=0):
+    def set_trigger_mode(self, ind, f=0, invert=0):
         """
         0 - Internal
         1 - External
@@ -299,7 +299,19 @@ class EMCCDCamera:
             self.logg.error(atmcd_errors.Error_Codes(ret))
         ret = self.sdk.SetFastExtTrigger(f)
         if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
-            self.logg.info(f"Fast External Trigger disabled")
+            self.logg.info(f"Fast External Trigger {'enabled' if f else 'disabled'}")
+        else:
+            self.logg.error(atmcd_errors.Error_Codes(ret))
+        self.set_trigger_invert(invert)
+
+    def set_trigger_invert(self, invert=0):
+        """
+        0 - Rising edge
+        1 - Falling edge
+        """
+        ret = self.sdk.SetTriggerInvert(invert)
+        if ret == atmcd_errors.Error_Codes.DRV_SUCCESS:
+            self.logg.info("Trigger Invert Set to {}".format("Falling edge" if invert else "Rising edge"))
         else:
             self.logg.error(atmcd_errors.Error_Codes(ret))
 
