@@ -2172,13 +2172,13 @@ class HamamatsuCamera:
             self.bin_h = 1
             self.bin_v = 1
             self.start_h = 1
-            self.end_h = 1024
+            self.end_h = 2048
             self.start_v = 1
-            self.end_v = 1024
-            self.pixels_x = 1024
-            self.pixels_y = 1024
+            self.end_v = 2048
+            self.pixels_x = 2048
+            self.pixels_y = 2048
             self.img_size = self.pixels_x * self.pixels_y
-            self.ps = 6.5  # micron
+            self.ps = 6.5  # micron, ORCA-Flash4.0 V3 (C13440-20CU)
             self.buffer_size = None
             self.acq_num = 0
             self.acq_first = 0
@@ -2298,9 +2298,9 @@ class HamamatsuCamera:
         else:
             self.logg.error(f"Failed to Set ROI Vertical Size: {v_size}")
         binn = self.dcam.prop_setgetvalue(self.properties['BINNING'], h_bin)
-        if re is not False:
-            self.bin_h, self.bin_v = binn
-            self.logg.info(f"Set Binning: {re}")
+        if binn is not False:
+            self.bin_h = self.bin_v = int(binn)
+            self.logg.info(f"Set Binning: {binn}")
         else:
             self.logg.error(f"Failed to Set Binning: {h_bin}")
             self.bin_h = 1
@@ -2492,26 +2492,30 @@ class HamamatsuCamera:
             else:
                 self.logg.error("Failed to Set EXPOSURE TIME: {}".format(Dcamapi.lasterr()))
 
-    def start_data_acquisition(self):
+    def start_data_acquisition(self, n, fd, fn):
         re = self.dcam.buf_alloc(self.buffer_size)
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
-            self.logg.info('Start live image')
+            self.logg.info('Acquisition started')
         else:
             self.logg.error(format(Dcamapi.lasterr()))
 
     def stop_data_acquisition(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()
+            self.data = None
         re = self.dcam.cap_stop()
         if re:
-            self.logg.info('Live image stopped')
+            self.logg.info('Acquisition stopped')
             re = self.dcam.buf_release()
             if re is False:
                 self.logg.error('Error: Failed to buf_release with error {}'.format(self.dcam.lasterr().name))
