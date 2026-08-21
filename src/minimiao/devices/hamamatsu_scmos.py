@@ -3,6 +3,7 @@
 
 import platform
 import threading
+import time
 from collections import deque
 from ctypes import *
 from enum import IntEnum
@@ -2435,6 +2436,62 @@ class HamamatsuCamera:
     def get_last_image(self):
         if self.data is not None:
             return self.data.get_last_element()
+        else:
+            return None
+
+    def start_snap(self):
+        """
+        Start a capture that is read frame by frame with get_last_snap() instead of
+        by the acquisition thread. prepare_live() must have run first: it sets the
+        trigger properties and buffer_size.
+        """
+        re = self.dcam.buf_alloc(self.buffer_size)
+        if re is False:
+            self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
+            return False
+        self._frames_read = 0
+        re = self.dcam.cap_start(self.is_sequence)
+        if re:
+            self.logg.info('Start snap shot')
+        else:
+            self.logg.error(format(Dcamapi.lasterr()))
+
+    def stop_snap(self):
+        re = self.dcam.cap_stop()
+        if re:
+            self.logg.info('Snap shot stopped')
+            re = self.dcam.buf_release()
+            if re is False:
+                self.logg.error('Error: Failed to buf_release with error {}'.format(self.dcam.lasterr().name))
+        else:
+            self.logg.error(format(Dcamapi.lasterr()))
+
+    def get_last_snap(self, timeout=1.2):
+        deadline = time.monotonic() + timeout
+        while self.check_new_acquisition() is None:
+            if time.monotonic() >= deadline:
+                self.logg.error("Timeout waiting for new camera frame")
+                return None
+            time.sleep(0.03)
+        frame = self.dcam.buf_getlastframedata()
+        if frame is False:
+            self.logg.error('Error: Failed to get frame data with error {}'.format(self.dcam.lasterr().name))
+            return None
+        cap_transfer_info = self.dcam.cap_transferinfo()
+        if cap_transfer_info is not False:
+            self._frames_read = cap_transfer_info.nFrameCount
+        return frame
+
+    def check_new_acquisition(self):
+        """
+        True if the camera has transferred a frame that get_last_snap() has not
+        returned yet, otherwise None.
+        """
+        cap_transfer_info = self.dcam.cap_transferinfo()
+        if cap_transfer_info is False:
+            return None
+        if cap_transfer_info.nFrameCount > self._frames_read:
+            return True
         else:
             return None
 
