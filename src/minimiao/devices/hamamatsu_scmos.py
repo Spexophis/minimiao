@@ -2199,6 +2199,7 @@ class HamamatsuCamera:
             self._configure_camera()
         self.data = None
         self.acq_thread = None
+        self._frames_read = 0
 
     def __del__(self):
         pass
@@ -2378,6 +2379,7 @@ class HamamatsuCamera:
             return False
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._frames_read = 0
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2402,24 +2404,33 @@ class HamamatsuCamera:
             self.logg.error(format(Dcamapi.lasterr()))
 
     def get_images(self):
+        if self.data is None:
+            return
         cap_transfer_info = self.dcam.cap_transferinfo()
         if cap_transfer_info is False:
             self.logg.error('Error: Failed to get cap_transfer_info with error {}'.format(self.dcam.lasterr().name))
-            return None
-        last, num = cap_transfer_info.nNewestFrameIndex, cap_transfer_info.nFrameCount
-        if num < 1:
-            return None
-        if num > self.buffer_size:
+            return
+        newest_index = cap_transfer_info.nNewestFrameIndex
+        total = cap_transfer_info.nFrameCount
+        if total < 1 or newest_index < 0:
+            return
+        number_of_images = total - self._frames_read
+        if number_of_images < 1:
+            return
+        if number_of_images > self.buffer_size:
+            self.logg.warning('Dropped {} frames: ring buffer wrapped between polls'.format(
+                number_of_images - self.buffer_size))
             number_of_images = self.buffer_size
-            start_frame_index = (last + 1) % self.buffer_size
-        else:
-            number_of_images = num
-            start_frame_index = 0
+        # nFrameCount is cumulative since cap_start, so the newest frame sitting at
+        # ring position nNewestFrameIndex has absolute id total - 1.
+        last_id = total - 1
+        first_id = total - number_of_images
         dat = []
-        for i in range(0, number_of_images, 1):
-            index = (start_frame_index + i) % self.buffer_size
+        for i in range(number_of_images):
+            index = (newest_index - (number_of_images - 1 - i)) % self.buffer_size
             dat.append(self.dcam.buf_getframedata(index))
-        self.data.add_element(dat, start_frame_index, last)
+        self._frames_read = total
+        self.data.add_element(dat, [first_id, last_id])
 
     def get_last_image(self):
         if self.data is not None:
@@ -2497,12 +2508,13 @@ class HamamatsuCamera:
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
+        self.data = run_threads.CameraDataList(max_length=self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._frames_read = 0
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
-            self.logg.info('Start live image')
+            self.logg.info('Start data acquisition')
         else:
             self.logg.error(format(Dcamapi.lasterr()))
 
