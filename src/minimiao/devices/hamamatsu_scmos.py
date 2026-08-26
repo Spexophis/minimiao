@@ -2420,7 +2420,7 @@ class HamamatsuCamera:
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = run_threads.CameraDataList(max_length=self.buffer_size)
+        self.data = run_threads.CameraDataList(max_length=self.buffer_size, logg=self.logg)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         self._frames_read = 0
         re = self.dcam.cap_start(self.is_sequence)
@@ -2464,14 +2464,23 @@ class HamamatsuCamera:
             self.logg.warning('Dropped {} frames: ring buffer wrapped between polls'.format(
                 number_of_images - self.buffer_size))
             number_of_images = self.buffer_size
-        last_id = total - 1
         first_id = total - number_of_images
         dat = []
+        ids = []
         for i in range(number_of_images):
             index = (newest_index - (number_of_images - 1 - i)) % self.buffer_size
-            dat.append(self.dcam.buf_getframedata(index))
+            frame = self.dcam.buf_getframedata(index)
+            if frame is False:
+                # buf_getframedata returns False, not an image, when the frame
+                # cannot be copied out of the ring buffer. Keep the good frames.
+                self.logg.error('Error: Failed to read frame {} at buffer index {} with error {}'.format(
+                    first_id + i, index, self.dcam.lasterr().name))
+                continue
+            dat.append(frame)
+            ids.append(first_id + i)
         self._frames_read = total
-        self.data.add_element(dat, [first_id, last_id])
+        if dat:
+            self.data.add_element(dat, ids)
 
     def get_last_image(self):
         if self.data is not None:
@@ -2480,20 +2489,27 @@ class HamamatsuCamera:
             return None
 
     def prepare_data_acquisition(self, n=None):
-        self.buffer_size = n
+        # self.buffer_size is the size of the DCAM ring buffer and is set by
+        # start_data_acquisition, which is what allocates it.
+        self.acq_num = n
 
     def start_data_acquisition(self, n, fd, fn):
-        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
-        self.acq_thread = run_threads.CameraAcquisitionThread(self)
-        self._frames_read = 0
-        re = self.dcam.buf_alloc(n * 2)
+        # buffer_size must stay equal to the number of frames actually
+        # allocated: get_images() wraps buffer indices with it, and a stale
+        # value from prepare_live() points at frames that were never allocated.
+        self.buffer_size = n * 2
+        re = self.dcam.buf_alloc(self.buffer_size)
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
+        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn,
+                                               logg=self.logg)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._frames_read = 0
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
-            self.logg.info('Start live image')
+            self.logg.info('Start data acquisition')
         else:
             self.logg.error(format(Dcamapi.lasterr()))
 

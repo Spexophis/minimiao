@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 
 
+import logging
 import threading
 import time
 import traceback
@@ -13,6 +14,8 @@ from queue import Queue, Empty
 import numpy as np
 import tifffile as tf
 from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+
+_LOGGER = logging.getLogger('shared_logger')
 
 
 class CameraAcquisitionThread(threading.Thread):
@@ -34,7 +37,11 @@ class CameraAcquisitionThread(threading.Thread):
                 if not self._running:
                     break
 
-                self.cam.get_images()
+                try:
+                    self.cam.get_images()
+                except Exception:
+                    logg = getattr(self.cam, 'logg', None) or _LOGGER
+                    logg.error("Error reading images from camera:\n%s", traceback.format_exc())
 
     def stop(self, timeout=5.0):
         with self.condition:
@@ -56,9 +63,17 @@ class CameraDataList:
         save_to_disk=False,
         save_dir=None,
         file_prefix="stack",
+        logg=None,
     ):
         self.max_length = max_length
         self.save_to_disk = save_to_disk
+        self.logg = logg or _LOGGER
+
+        # Shape every frame in this buffer must have; set by the first frame
+        # that is accepted. Frames of any other shape cannot be stacked and
+        # are discarded instead of taking the acquisition thread down.
+        self._frame_shape = None
+        self.dropped_frames = 0
 
         # In normal mode: rolling display buffer
         # In saving mode: batch buffer that resets after each full stack
@@ -97,18 +112,16 @@ class CameraDataList:
     def add_element(self, elements, ids=None):
         """
         elements: iterable of ndarray images
-        ids: optional tuple like (start_id, end_id)
+        ids: optional inclusive (start_id, end_id) pair, or one id per element
         """
         elements = list(elements)
         if len(elements) == 0:
             return
 
-        if ids is not None:
-            frame_ids = list(range(ids[0], ids[1] + 1))
-            if len(frame_ids) != len(elements):
-                raise ValueError("Number of ids does not match number of elements")
-        else:
-            frame_ids = [None] * len(elements)
+        frame_ids = self._resolve_frame_ids(len(elements), ids)
+        elements, frame_ids = self._valid_frames(elements, frame_ids)
+        if len(elements) == 0:
+            return
 
         last = elements[-1]
 
@@ -120,6 +133,67 @@ class CameraDataList:
         # Live display/update callback
         if self.callback is not None and last is not None:
             self.callback(last)
+
+    def _resolve_frame_ids(self, n_elements, ids):
+        """
+        Accept either an inclusive (start_id, end_id) pair or one id per frame.
+        Bookkeeping problems are logged, never raised: losing frame ids must
+        not cost us the frames themselves.
+        """
+        if ids is None:
+            return [None] * n_elements
+
+        ids = list(ids)
+
+        if (len(ids) == 2 and ids[0] is not None and ids[1] is not None
+                and (ids[1] - ids[0] + 1) == n_elements):
+            return list(range(ids[0], ids[1] + 1))
+
+        if len(ids) == n_elements:
+            return ids
+
+        self.logg.warning(
+            "Frame ids %s do not match %d frames; storing them without ids",
+            ids, n_elements
+        )
+        return [None] * n_elements
+
+    def _valid_frames(self, elements, frame_ids):
+        """
+        Keep only entries that are real images of a single, consistent shape.
+
+        The camera SDKs hand back False (not an array) when a frame cannot be
+        copied out of the ring buffer. Mixing that - or a frame of a different
+        shape - into np.stack() raises "all input arrays must have the same
+        shape" inside the acquisition thread and kills the acquisition.
+        """
+        kept = []
+        kept_ids = []
+
+        for element, frame_id in zip(elements, frame_ids):
+            image = element if isinstance(element, np.ndarray) else np.asarray(element)
+
+            if image.ndim < 2 or image.size == 0:
+                self.dropped_frames += 1
+                self.logg.error(
+                    "Discarding frame %s: expected an image, got %r", frame_id, element
+                )
+                continue
+
+            if self._frame_shape is None:
+                self._frame_shape = image.shape
+            elif image.shape != self._frame_shape:
+                self.dropped_frames += 1
+                self.logg.error(
+                    "Discarding frame %s: shape %s does not match %s",
+                    frame_id, image.shape, self._frame_shape
+                )
+                continue
+
+            kept.append(image)
+            kept_ids.append(frame_id)
+
+        return kept, kept_ids
 
     def _add_element_normal_mode(self, elements, frame_ids):
         """
