@@ -1,17 +1,23 @@
-# Copyright (C) 2021-2022 Hamamatsu Photonics K.K.. All right reserved.
-
+# Copyright (C) 2021-2025 Hamamatsu Photonics K.K.. All right reserved.
 
 import platform
-import threading
-from collections import deque
 from ctypes import *
 from enum import IntEnum
 
 import numpy as np
+import time
 from minimiao import run_threads, logger
 
-__date__ = '2021-06-30'
-__copyright__ = 'Copyright (C) 2021-2024 Hamamatsu Photonics K.K.'
+__date__ = '2025-04-16'
+__copyright__ = 'Copyright (C) 2021-2025 Hamamatsu Photonics K.K.'
+
+# License: BSD 3-Clause License (https://github.com/numpy/numpy/blob/main/LICENSE.txt)
+# allocated to receive the image data
+
+# ==== load shared library ====
+
+# abosorb platform dependency
+
 __platform_system = platform.system()
 if __platform_system == 'Windows':
     __dll = windll.LoadLibrary('dcamapi.dll')
@@ -83,6 +89,7 @@ class DCAMERR(IntEnum):
     REQUIREDSNAP = -2147481540  # 0x8000083c, the capture mode is sequence on using device memory.
     LESSSYSTEMMEMORY = -2147481537  # 0x8000083f, the sysmte memory size is too small. PC doesn't have enough memory or is limited memory by 32bit OS.
     INVALID_SELECTEDLINES = -2147481534  # 0x80000842, the combination of selected lines values are invalid. e.g. DCAM_IDPROP_SELECTEDLINES_VPOS + DCAM_IDPROP_SELECTEDLINES_VSIZE is greater than the number of vertical lines of sensor.
+    INVALID_REALTIMEGAINCORRECTREGIONS = -2147481533  # 0x80000843, the combination of hpos and hsize for realtime correct region is invalid. e.g. DCAM_IDPROP_REALTIMECORRECTREGION_HPOS + DCAM_IDPROP_REALTIMECORRECTREGION_HSIZE is grater than the number of horizontal pixel.
     NOTSUPPORT = -2147479805  # 0x80000f03, camera does not support the function or property with current settings
     # camera or bus trouble
     FAILREADCAMERA = -2097147902  # 0x83001002, failed to read data from camera
@@ -212,6 +219,10 @@ class DCAMAPI_INITOPTION(IntEnum):
     ENDMARK = 0x00000000
 
 
+class DCAMDATA_KIND(IntEnum):
+    NONE = 0x00000000
+
+
 class DCAM_CODEPAGE(IntEnum):
     SHIFT_JIS = 932  # Shift JIS
     UTF16_LE = 1200  # UTF-16 (Little Endian)
@@ -219,6 +230,21 @@ class DCAM_CODEPAGE(IntEnum):
     UTF7 = 65000  # UTF-7 translation
     UTF8 = 65001  # UTF-8 translation
     NONE = 0
+
+
+class DCAMDEV_CAPDOMAIN(IntEnum):
+    FUNCTION = 0x00000000
+
+
+class DCAMDEV_CAPFLAG:
+    class FUNCTION(IntEnum):
+        """
+        DCAMDEV_CAPFLAG_*
+        """
+        FRAMESTAMP = 0x00000001
+        TIMESTAMP = 0x00000002
+        CAMERASTAMP = 0x00000004
+        NONE = 0x00000000
 
 
 class DCAM_IDPROP(IntEnum):
@@ -305,6 +331,7 @@ class DCAM_IDPROP(IntEnum):
     REALTIMEGAINCORRECT_LEVEL = 3146112  # 0x00300180, R/W, mode,   "REALTIME GAIN CORRECT LEVEL"
     REALTIMEGAINCORRECT_INTERVAL = 3146128  # 0x00300190, R/W,  mode,   "REALTIME GAIN CORRECT INTERVAL"
     NUMBEROF_REALTIMEGAINCORRECTREGION = 3146144  # 0x003001A0
+    FULLWELL_MODE = 3146160  # 0x003001B0, R/W, mode,   "FULLWELL MODE"
     # color features
     VIVIDCOLOR = 3146240  # 0x00300200, R/W, mode,  "VIVID COLOR"
     WHITEBALANCEMODE = 3146256  # 0x00300210, R/W, mode,    "WHITEBALANCE MODE"
@@ -313,6 +340,7 @@ class DCAM_IDPROP(IntEnum):
     # 0x00300310 is reserved
     REALTIMEGAINCORRECTREGION_HPOS = 3149824  # 0x00301000, R/W,    long,   "REALTIME GAIN CORRECT REGION HPOS"
     REALTIMEGAINCORRECTREGION_HSIZE = 3153920  # 0x00302000, R/W,   long,   "REALTIME GAIN CORRECT REGION HSIZE"
+    # - 0x00304FFF for 256 REGIONs at least
     _REALTIMEGAINCORRECTIONREGION = 16  # 0x00000010, the offset of ID for Nth REALTIME GAIN CORRECT REGION parameter
     # Group: ALU
     # ALU
@@ -369,6 +397,7 @@ class DCAM_IDPROP(IntEnum):
     READOUT_DIRECTION = 4194608  # 0x00400130, R/W, mode,   "READOUT DIRECTION"
     READOUT_UNIT = 4194624  # 0x00400140, R/O, mode,    "READOUT UNIT"
     SHUTTER_MODE = 4194640  # 0x00400150, R/W, mode,    "SHUTTER MODE"
+    READOUT_FREQUENCY = 4194656  # 0x00400160, R/W, frequency, "READOUT FREQUENCY"
     # sensor mode
     SENSORMODE = 4194832  # 0x00400210, R/W, mode,  "SENSOR MODE"
     SENSORMODE_LINEBUNDLEHEIGHT = 4194896  # 0x00400250, R/W, long, "SENSOR MODE LINE BUNDLEHEIGHT"
@@ -558,6 +587,30 @@ class DCAMDEV_OPEN(Structure):
     def __init__(self):
         self.size = sizeof(DCAMDEV_OPEN)
         self.index = 0
+
+
+class DCAMDEV_CAPABILITY(Structure):
+    _pack_ = 8
+    _fields_ = [
+        ('size', c_int32),
+        ('domain', c_int32),
+        ('capflag', c_int32),  # out
+        ('kind', c_int32)
+    ]
+
+    def __init__(self):
+        self.size = sizeof(DCAMDEV_CAPABILITY)
+        self.domain = DCAMDEV_CAPDOMAIN.FUNCTION
+        self.kind = DCAMDATA_KIND.NONE
+
+    def is_support_framestamp(self):
+        return True if self.capflag & DCAMDEV_CAPFLAG.FUNCTION.FRAMESTAMP else False
+
+    def is_support_timestamp(self):
+        return True if self.capflag & DCAMDEV_CAPFLAG.FUNCTION.TIMESTAMP else False
+
+    def is_support_camerastamp(self):
+        return True if self.capflag & DCAMDEV_CAPFLAG.FUNCTION.CAMERASTAMP else False
 
 
 class DCAMDEV_STRING(Structure):
@@ -1082,6 +1135,10 @@ class DCAMPROP:
         MEDIUM = 3
         LARGE = 4
 
+    class FULLWELL_MODE(IntEnum):
+        STANDARD = 0
+        HIGH = 1
+
     class MODE(IntEnum):
         OFF = 1
         ON = 2
@@ -1303,6 +1360,9 @@ dcamdev_open.restype = DCAMERR
 dcamdev_close = __dll.dcamdev_close
 dcamdev_close.argtypes = [c_void_p]
 dcamdev_close.restype = DCAMERR
+dcamdev_getcapability = __dll.dcamdev_getcapability
+dcamdev_getcapability.argtypes = [c_void_p, POINTER(DCAMDEV_CAPABILITY)]
+dcamdev_getcapability.restype = DCAMERR
 dcamdev_getstring = __dll.dcamdev_getstring
 dcamdev_getstring.argtypes = [c_void_p, POINTER(DCAMDEV_STRING)]
 dcamdev_getstring.restype = DCAMERR
@@ -1659,6 +1719,25 @@ class Dcam:
             return False
 
         return paramdevstr.text.decode()
+
+    def dev_getcapability(self):
+        """Get capability of function
+
+        Get capability of function
+
+        Returns:
+            DCAMDEV_CAPABILITY: Capability of function
+            bool: False if error happened. lasterr() returns the DCAMERR value.
+        """
+        if not self.is_opened():
+            return self.__result(DCAMERR.INVALIDHANDLE)  # instance is not opened yet.
+
+        capability = DCAMDEV_CAPABILITY()
+        ret = self.__result(dcamdev_getcapability(self.__hdcam, byref(capability)))
+        if ret is False:
+            return False
+
+        return capability
 
     # dcamprop functions
 
@@ -2162,24 +2241,23 @@ class Dcam:
 class HamamatsuCamera:
     class CameraSettings:
         def __init__(self):
-            self.t_clean = 0
-            self.t_readout = 0.002
+            self.t_clean = 0.001
+            self.t_readout = 0.004
             self.t_exposure = 0
             self.t_accumulate = 0
             self.t_kinetic = 0
-            self.line_interval = 1e-05
-            self.line_exposure = 0.001
+            self.fps = 20
             self.bin_h = 1
             self.bin_v = 1
-            self.start_h = 1
-            self.end_h = 1024
-            self.start_v = 1
-            self.end_v = 1024
-            self.pixels_x = 1024
-            self.pixels_y = 1024
+            self.start_h = 0
+            self.end_h = 2047
+            self.start_v = 0
+            self.end_v = 2047
+            self.pixels_x = 2048
+            self.pixels_y = 2048
             self.img_size = self.pixels_x * self.pixels_y
             self.ps = 6.5  # micron
-            self.buffer_size = None
+            self.buffer_size = 128
             self.acq_num = 0
             self.acq_first = 0
             self.acq_last = 0
@@ -2199,15 +2277,7 @@ class HamamatsuCamera:
             self._configure_camera()
         self.data = None
         self.acq_thread = None
-
-    def __del__(self):
-        pass
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
+        self._frames_read = 0
 
     def __getattr__(self, item):
         if hasattr(self._settings, item):
@@ -2251,14 +2321,49 @@ class HamamatsuCamera:
     def _configure_camera(self):
         re = self.dcam.prop_setgetvalue(self.properties['DEFECT CORRECT MODE'], 2)
         if re is not False:
-            self.logg.info("Set DEFECT CORRECT MODE: ON")
+            self.logg.info("Set DEFECT CORRECT MODE:" + DCAMPROP.DEFECTCORRECT_MODE(2).name)
         else:
             self.logg.error("Failed to Set DEFECT CORRECT MODE: {}".format(Dcamapi.lasterr()))
         re = self.dcam.prop_setgetvalue(self.properties['READOUT SPEED'], 2)
         if re is not False:
-            self.logg.info("Set READOUT SPEED: Fast")
+            self.logg.info("Set READOUT SPEED:" + DCAMPROP.READOUTSPEED(0x7FFFFFFF).name)
         else:
             self.logg.error("Failed to Set READOUT SPEED: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['READOUT DIRECTION'], 5)
+        if re is not False:
+            self.logg.info("Set READOUT DIRECTION:" + DCAMPROP.READOUT_DIRECTION(5).name)
+        else:
+            self.logg.error("Failed to Set READOUT DIRECTION: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 1)
+        if re is not False:
+            self.logg.info("Set SENSOR MODE:" + DCAMPROP.SENSORMODE(1).name)
+        else:
+            self.logg.error("Failed to Set SENSOR MODE: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER SOURCE'], 2)
+        if re is not False:
+            self.logg.info("Set TRIGGER SOURCE:" + DCAMPROP.TRIGGERSOURCE(2).name)
+        else:
+            self.logg.error("Failed to Set TRIGGER SOURCE: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER MODE'], 1)
+        if re is not False:
+            self.logg.info("Set TRIGGER MODE:" + DCAMPROP.TRIGGER_MODE(1).name)
+        else:
+            self.logg.error("Failed to Set TRIGGER MODE: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER POLARITY'], 2)
+        if re is not False:
+            self.logg.info("Set TRIGGER POLARITY:" + DCAMPROP.TRIGGERPOLARITY(2).name)
+        else:
+            self.logg.error("Failed to Set TRIGGER POLARITY: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER ACTIVE'], 1)
+        if re is not False:
+            self.logg.info("Set TRIGGER ACTIVE:" + DCAMPROP.TRIGGERACTIVE(1).name)
+        else:
+            self.logg.error("Failed to Set TRIGGER ACTIVE: {}".format(Dcamapi.lasterr()))
+        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER GLOBAL EXPOSURE'], 5)
+        if re is not False:
+            self.logg.info("Set TRIGGER GLOBAL EXPOSURE:" + DCAMPROP.TRIGGER_GLOBALEXPOSURE(5).name)
+        else:
+            self.logg.error("Failed to Set TRIGGER GLOBAL EXPOSURE: {}".format(Dcamapi.lasterr()))
 
     def close(self):
         re = self.dcam.dev_close()
@@ -2272,104 +2377,43 @@ class HamamatsuCamera:
         else:
             self.logg.error("Failed to close DCAM API")
 
-    def set_roi(self, h_bin, v_bin, h_start, h_size, v_start, v_size):
-        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY HPOS'], h_start)
+    def set_roi(self):
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY HSIZE'], self.pixels_x)
         if re is not False:
-            self.start_h = re
-            self.logg.info(f"Set ROI Horizontal Start: {re}")
-        else:
-            self.logg.error(f"Failed to Set ROI Horizontal Start: {h_start}")
-        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY HSIZE'], h_size)
-        if re is not False:
-            self.pixels_x = re
             self.logg.info(f"Set ROI Horizontal Size: {re}")
         else:
-            self.logg.error(f"Failed to Set ROI Horizontal Size: {h_size}")
-        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY VPOS'], v_start)
+            self.logg.error(f"Failed to Set ROI Horizontal Size: {self.pixels_x}")
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY HPOS'], self.start_h)
         if re is not False:
-            self.start_v = re
-            self.logg.info(f"Set ROI Vertical Start: {re}")
+            self.logg.info(f"Set ROI Horizontal Start: {re}")
         else:
-            self.logg.error(f"Failed to Set ROI Vertical Start: {v_start}")
-        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY VSIZE'], v_size)
+            self.logg.error(f"Failed to Set ROI Horizontal Start: {self.start_h}")
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY VSIZE'], self.pixels_y)
         if re is not False:
-            self.pixels_y = re
             self.logg.info(f"Set ROI Vertical Size: {re}")
         else:
-            self.logg.error(f"Failed to Set ROI Vertical Size: {v_size}")
-        binn = self.dcam.prop_setgetvalue(self.properties['BINNING'], h_bin)
+            self.logg.error(f"Failed to Set ROI Vertical Size: {self.pixels_y}")
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY VPOS'], self.start_v)
         if re is not False:
-            self.bin_h, self.bin_v = binn
+            self.logg.info(f"Set ROI Vertical Start: {re}")
+        else:
+            self.logg.error(f"Failed to Set ROI Vertical Start: {self.start_v}")
+        re = self.dcam.prop_setgetvalue(self.properties['BINNING'], self.bin_h)
+        if re is not False:
             self.logg.info(f"Set Binning: {re}")
         else:
-            self.logg.error(f"Failed to Set Binning: {h_bin}")
-            self.bin_h = 1
+            self.logg.error(f"Failed to Set Binning: {self.bin_h}")
         self.img_size = self.pixels_x * self.pixels_y
 
+    def set_exposure_time(self):
+        re = self.dcam.prop_setgetvalue(self.properties['EXPOSURE TIME'], self.t_exposure)
+        if re is not False:
+            self.logg.info(f"Set EXPOSURE TIME: {re}")
+        else:
+            self.logg.error(f"Failed to Set EXPOSURE TIME: {re}")
+
     def prepare_live(self):
-        self.buffer_size = 8
-        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER SOURCE'], 2)
-        if re is not False:
-            self.logg.info("Set TRIGGER SOURCE: External")
-        else:
-            self.logg.error("Failed to Set TRIGGER SOURCE: {}".format(Dcamapi.lasterr()))
-        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER POLARITY'], 2)
-        if re is not False:
-            self.logg.info("Set TRIGGER POLARITY: POSITIVE")
-        else:
-            self.logg.error("Failed to Set TRIGGER POLARITY: {}".format(Dcamapi.lasterr()))
-        if self.mode == "Normal":
-            re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 1)
-            if re is not False:
-                self.logg.info("Set SENSOR MODE: AREA")
-            else:
-                self.logg.error("Failed to Set SENSOR MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER MODE'], 1)
-            if re is not False:
-                self.logg.info("Set TRIGGER MODE: Normal")
-            else:
-                self.logg.error("Failed to Set TRIGGER MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER ACTIVE'], 2)
-            if re is not False:
-                self.logg.info("Set TRIGGER ACTIVE: LEVEL")
-            else:
-                self.logg.error("Failed to Set TRIGGER ACTIVE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER GLOBAL EXPOSURE'], 5)
-            if re is not False:
-                self.logg.info("Set TRIGGER GLOBAL EXPOSURE: GLOBAL RESET")
-            else:
-                self.logg.error("Failed to Set TRIGGER GLOBAL EXPOSURE: {}".format(Dcamapi.lasterr()))
-        if self.mode == "LightSheet":
-            re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 12)
-            if re is not False:
-                self.logg.info("Set SENSOR MODE: AREA")
-            else:
-                self.logg.error("Failed to Set SENSOR MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER MODE'], 6)
-            if re is not False:
-                self.logg.info("Set TRIGGER MODE: Normal")
-            else:
-                self.logg.error("Failed to Set TRIGGER MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER ACTIVE'], 1)
-            if re is not False:
-                self.logg.info("Set TRIGGER ACTIVE: LEVEL")
-            else:
-                self.logg.error("Failed to Set TRIGGER ACTIVE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER GLOBAL EXPOSURE'], 3)
-            if re is not False:
-                self.logg.info("Set TRIGGER GLOBAL EXPOSURE: GLOBAL RESET")
-            else:
-                self.logg.error("Failed to Set TRIGGER GLOBAL EXPOSURE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['INTERNAL LINE INTERVAL'], self.line_interval)
-            if re is not False:
-                self.logg.info("Set INTERNAL LINE INTERVAL: {}".format(re))
-            else:
-                self.logg.error("Failed to Set INTERNAL LINE INTERVAL: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['EXPOSURE TIME'], self.line_exposure)
-            if re is not False:
-                self.logg.info("Set EXPOSURE TIME: {}".format(re))
-            else:
-                self.logg.error("Failed to Set EXPOSURE TIME: {}".format(Dcamapi.lasterr()))
+        self.buffer_size = 128
 
     def start_live(self):
         re = self.dcam.buf_alloc(self.buffer_size)
@@ -2378,6 +2422,7 @@ class HamamatsuCamera:
             return False
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._frames_read = 0
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2402,24 +2447,31 @@ class HamamatsuCamera:
             self.logg.error(format(Dcamapi.lasterr()))
 
     def get_images(self):
+        if self.data is None:
+            return
         cap_transfer_info = self.dcam.cap_transferinfo()
         if cap_transfer_info is False:
             self.logg.error('Error: Failed to get cap_transfer_info with error {}'.format(self.dcam.lasterr().name))
-            return None
-        last, num = cap_transfer_info.nNewestFrameIndex, cap_transfer_info.nFrameCount
-        if num < 1:
-            return None
-        if num > self.buffer_size:
+            return
+        newest_index = cap_transfer_info.nNewestFrameIndex
+        total = cap_transfer_info.nFrameCount
+        if total < 1 or newest_index < 0:
+            return
+        number_of_images = total - self._frames_read
+        if number_of_images < 1:
+            return
+        if number_of_images > self.buffer_size:
+            self.logg.warning('Dropped {} frames: ring buffer wrapped between polls'.format(
+                number_of_images - self.buffer_size))
             number_of_images = self.buffer_size
-            start_frame_index = (last + 1) % self.buffer_size
-        else:
-            number_of_images = num
-            start_frame_index = 0
+        last_id = total - 1
+        first_id = total - number_of_images
         dat = []
-        for i in range(0, number_of_images, 1):
-            index = (start_frame_index + i) % self.buffer_size
+        for i in range(number_of_images):
+            index = (newest_index - (number_of_images - 1 - i)) % self.buffer_size
             dat.append(self.dcam.buf_getframedata(index))
-        self.data.add_element(dat, start_frame_index, last)
+        self._frames_read = total
+        self.data.add_element(dat, [first_id, last_id])
 
     def get_last_image(self):
         if self.data is not None:
@@ -2429,76 +2481,15 @@ class HamamatsuCamera:
 
     def prepare_data_acquisition(self, n=None):
         self.buffer_size = n
-        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER SOURCE'], 2)
-        if re is not False:
-            self.logg.info("Set TRIGGER SOURCE: External")
-        else:
-            self.logg.error("Failed to Set TRIGGER SOURCE: {}".format(Dcamapi.lasterr()))
-        re = self.dcam.prop_setgetvalue(self.properties['TRIGGER POLARITY'], 2)
-        if re is not False:
-            self.logg.info("Set TRIGGER POLARITY: POSITIVE")
-        else:
-            self.logg.error("Failed to Set TRIGGER POLARITY: {}".format(Dcamapi.lasterr()))
-        if self.mode == "Normal":
-            re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 1)
-            if re is not False:
-                self.logg.info("Set SENSOR MODE: AREA")
-            else:
-                self.logg.error("Failed to Set SENSOR MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER MODE'], 1)
-            if re is not False:
-                self.logg.info("Set TRIGGER MODE: Normal")
-            else:
-                self.logg.error("Failed to Set TRIGGER MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER ACTIVE'], 2)
-            if re is not False:
-                self.logg.info("Set TRIGGER ACTIVE: LEVEL")
-            else:
-                self.logg.error("Failed to Set TRIGGER ACTIVE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER GLOBAL EXPOSURE'], 5)
-            if re is not False:
-                self.logg.info("Set TRIGGER GLOBAL EXPOSURE: GLOBAL RESET")
-            else:
-                self.logg.error("Failed to Set TRIGGER GLOBAL EXPOSURE: {}".format(Dcamapi.lasterr()))
-        if self.mode == "LightSheet":
-            re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 12)
-            if re is not False:
-                self.logg.info("Set SENSOR MODE: AREA")
-            else:
-                self.logg.error("Failed to Set SENSOR MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER MODE'], 6)
-            if re is not False:
-                self.logg.info("Set TRIGGER MODE: Normal")
-            else:
-                self.logg.error("Failed to Set TRIGGER MODE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER ACTIVE'], 1)
-            if re is not False:
-                self.logg.info("Set TRIGGER ACTIVE: LEVEL")
-            else:
-                self.logg.error("Failed to Set TRIGGER ACTIVE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['TRIGGER GLOBAL EXPOSURE'], 3)
-            if re is not False:
-                self.logg.info("Set TRIGGER GLOBAL EXPOSURE: GLOBAL RESET")
-            else:
-                self.logg.error("Failed to Set TRIGGER GLOBAL EXPOSURE: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['INTERNAL LINE INTERVAL'], self.line_interval)
-            if re is not False:
-                self.logg.info("Set INTERNAL LINE INTERVAL: {}".format(re))
-            else:
-                self.logg.error("Failed to Set INTERNAL LINE INTERVAL: {}".format(Dcamapi.lasterr()))
-            re = self.dcam.prop_setgetvalue(self.properties['EXPOSURE TIME'], self.line_exposure)
-            if re is not False:
-                self.logg.info("Set EXPOSURE TIME: {}".format(re))
-            else:
-                self.logg.error("Failed to Set EXPOSURE TIME: {}".format(Dcamapi.lasterr()))
 
-    def start_data_acquisition(self):
-        re = self.dcam.buf_alloc(self.buffer_size)
+    def start_data_acquisition(self, n, fd, fn):
+        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._frames_read = 0
+        re = self.dcam.buf_alloc(n * 2)
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False
-        self.data = DataList(self.buffer_size)
-        self.acq_thread = AcquisitionThread(self)
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2507,8 +2498,12 @@ class HamamatsuCamera:
             self.logg.error(format(Dcamapi.lasterr()))
 
     def stop_data_acquisition(self):
-        self.acq_thread.stop()
-        self.acq_thread = None
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()   # flush + join the background TIFF-writer thread
+            self.data = None
         re = self.dcam.cap_stop()
         if re:
             self.logg.info('Live image stopped')
@@ -2522,4 +2517,33 @@ class HamamatsuCamera:
         if self.data is not None:
             return self.data.get_elements()
         else:
+            return None
+
+    def start_snap(self):
+        re = self.dcam.buf_alloc(1)
+        if re is False:
+            self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
+            return
+        re = self.dcam.cap_snapshot()
+        if re:
+            self.logg.info('Start snap shot')
+        else:
+            self.logg.error(format(Dcamapi.lasterr()))
+
+    def stop_snap(self):
+        re = self.dcam.cap_stop()
+        if re:
+            self.logg.info('Live image stopped')
+            re = self.dcam.buf_release()
+            if re is False:
+                self.logg.error('Error: Failed to buf_release with error {}'.format(self.dcam.lasterr().name))
+        else:
+            self.logg.error(format(Dcamapi.lasterr()))
+
+    def get_last_snap(self, timeout=1200):
+        if self.dcam.wait_capevent_frameready(timeout):
+            frame = self.dcam.buf_getlastframedata()
+            return frame
+        else:
+            self.logg.error('Wait for Snapshot Timeout')
             return None

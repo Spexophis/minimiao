@@ -297,7 +297,7 @@ def phase_polynomial_fit(F0_complex, q_grid, nu_max):
 
 def _fft_setup(image, pixel_size, NA, wavelength):
     """Shared FFT + pupil-mask setup used by all run_* functions."""
-    nu_max = 2 * NA / wavelength  # cyc/µm  (incoherent cutoff = NA/λ)
+    nu_max = 0.5 * NA / wavelength  # cyc/µm  (incoherent cutoff = NA/λ)
     H, W = image.shape
     F_full = np.fft.fftshift(np.fft.fft2(image.astype(np.float64)))
     freq_x = np.fft.fftshift(np.fft.fftfreq(W, d=pixel_size))

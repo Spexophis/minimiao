@@ -76,3 +76,4 @@ class CoboltLaser:
             if self._h.get(ln, False):
                 self.lasers[ln].modulation_mode(pw[ind])
                 self.lasers[ln].digital_modulation(enable=1)
+                self.lasers[ln].send_cmd('l1')

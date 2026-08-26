@@ -204,6 +204,32 @@ def generate_split_grating(beam_num=5, spacing=32, pixel_nums=(1024, 1272), iter
     return field
 
 
+def simulate_binary_phase_pattern(size=(1024, 1024), period=(8, 0), phase=(0, 0), value=1, cutoff=100):
+    width, height = size
+    period_x, period_y = period
+    offset_x, offset_y = phase
+    x = np.arange(width)
+    y = np.arange(height)
+    xx, yy = np.meshgrid(x, y)
+    xx += offset_x
+    yy += offset_y
+    if period_x > 0 and period_y > 0:
+        pattern = np.where(((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2)), value, 0)
+    elif period_x > 0 and period_y == 0:
+        pattern = np.where(((xx % period_x) < (period_x // 2)), value, 0)
+    elif period_x == 0 and period_y > 0:
+        pattern = np.where(((yy % period_y) < (period_y // 2)), value, 0)
+    else:
+        pattern = np.ones(size)
+    pattern_field = 1.0 * np.exp(1j * np.pi * pattern)
+    pupil_field = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(pattern_field)))
+    pupil_maks = ((xx - width // 2) ** 2 + (yy - height // 2) ** 2) <= cutoff ** 2
+    pupil_filtered = pupil_maks * pupil_field
+    focal_field = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(pupil_filtered)))
+    focal_intensity = np.abs(focal_field) ** 2
+    return np.abs(pupil_filtered), focal_intensity
+
+
 def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, NA=1.3,
                            grating_period=1.20001e-6, duty_cycle=0.5, phase_depth=np.pi, orientation_deg=0, grating_shift=0.0,
                            order_filter_radius_factor=0.18, verbose=False):

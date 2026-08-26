@@ -74,9 +74,9 @@ class TriggerSequence:
         self.frame_time = 0.05  # s
         self.frame_samples = int(np.ceil(self.frame_time * self.sample_rate))
         # motor
-        self.motor_jog_pulse = 0.001
+        self.motor_jog_pulse = 0.0008
         self.motor_jog_samples = int(np.ceil(self.motor_jog_pulse * self.sample_rate))
-        self.motor_rot_time = 0.05
+        self.motor_rot_time = 0.06
         self.motor_rot_samples = int(np.ceil(self.motor_rot_time * self.sample_rate))
 
     def update_sampling_rate(self, sample_rate=None):

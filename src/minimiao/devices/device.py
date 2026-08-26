@@ -7,10 +7,10 @@ from minimiao import logger
 
 try:
     from . import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, thorlab_scmos, \
-        thorlabs_motor, neopixel_ring
+        thorlabs_motor, neopixel_ring, hamamatsu_scmos
 except ImportError as e:
     from minimiao.devices import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, \
-        thorlab_scmos, thorlabs_motor, neopixel_ring
+        thorlab_scmos, thorlabs_motor, neopixel_ring, hamamatsu_scmos
 
 
 class DeviceManager:
@@ -19,7 +19,8 @@ class DeviceManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         try:
-            self.img_cam = andor_emccd.EMCCDCamera(logg=self.logg)
+            # self.img_cam = andor_emccd.EMCCDCamera(logg=self.logg)
+            self.img_cam = hamamatsu_scmos.HamamatsuCamera(logg=self.logg)
         except Exception as e:
             from . import mock_cam
             self.img_cam = mock_cam.MockCamera()
