@@ -37,6 +37,7 @@ class ControlPanel(QWidget):
     Signal_plot_profile = pyqtSignal()
     Signal_add_profile = pyqtSignal()
     Signal_dpc = pyqtSignal(bool)
+    Signal_dpc_acquire = pyqtSignal(bool, int)
     Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
 
@@ -364,6 +365,7 @@ class ControlPanel(QWidget):
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_fft = cw.PushButtonWidget("FFT", checkable=True, enable=False)
         self.QPushButton_dpc = cw.PushButtonWidget("DPC", checkable=True)
+        self.QPushButton_dpc_acquire = cw.PushButtonWidget("DPC Acquire", checkable=True)
         self.QComboBox_profile_axis = cw.ComboBoxWidget(list_items=["X", "Y"])
         self.QPushButton_plot_profile = cw.PushButtonWidget("Plot Profile")
         self.QPushButton_add_profile = cw.PushButtonWidget("Add Profile")
@@ -389,6 +391,7 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_fft, 3, 2, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_dpc_acquire, 4, 2, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Profile Axis')), 3, 0, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_profile_axis, 3, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_plot_profile, 4, 0, 1, 1)
@@ -428,6 +431,7 @@ class ControlPanel(QWidget):
         self.QPushButton_video.clicked.connect(self.run_video)
         self.QPushButton_fft.clicked.connect(self.run_fft)
         self.QPushButton_dpc.clicked.connect(self.run_dpc)
+        self.QPushButton_dpc_acquire.clicked.connect(self.run_dpc_acquisition)
         self.QPushButton_plot_profile.clicked.connect(self.run_plot_profile)
         self.QPushButton_add_profile.clicked.connect(self.run_add_profile)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
@@ -706,8 +710,19 @@ class ControlPanel(QWidget):
     def run_dpc(self):
         if self.QPushButton_dpc.isChecked():
             self.Signal_dpc.emit(True)
+            self.QPushButton_dpc_acquire.setEnabled(False)
         else:
             self.Signal_dpc.emit(False)
+            self.QPushButton_dpc_acquire.setEnabled(True)
+
+    @pyqtSlot()
+    def run_dpc_acquisition(self):
+        if self.QPushButton_dpc_acquire.isChecked():
+            self.Signal_dpc_acquire.emit(True, self.QSpinBox_acquisition_number.value())
+            self.QPushButton_dpc.setEnabled(False)
+        else:
+            self.Signal_dpc_acquire.emit(False, 0)
+            self.QPushButton_dpc.setEnabled(True)
 
     def get_profile_axis(self):
         return self.QComboBox_profile_axis.currentText()

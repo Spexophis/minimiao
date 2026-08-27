@@ -371,42 +371,229 @@ def dpc_reconstruct(frames):
 
 class DPCCameraDataList:
     """
-    Rolling buffer for a DPC camera. Raw frames arrive one at a time from
-    the acquisition thread (same as CameraDataList) but must always be
-    consumed in complete groups of 4 (top/bottom/left/right illumination),
-    since a DPC image only makes sense once all 4 are available. Frames are
-    staged until a full group accumulates, then immediately reconstructed
-    via dpc_reconstruct(); only the reconstructed DPC images are exposed.
+    Buffer for a DPC camera. Raw frames arrive one at a time from the
+    acquisition thread (same as CameraDataList) but must always be consumed in
+    complete groups of 4 (top/bottom/left/right illumination), since a DPC
+    image only makes sense once all 4 are available. Frames are staged until a
+    full group accumulates, then immediately reconstructed via
+    dpc_reconstruct(); the reconstructed DPC images are what is exposed.
+
+    Groups are non-overlapping: the staging window is cleared after every
+    reconstruction, so each raw frame belongs to exactly one group and keeps
+    its illumination position inside that group.
+
+    With save_to_disk=True the buffer behaves like CameraDataList in saving
+    mode: reconstructed DPC images accumulate until max_length of them are
+    held, then the whole stack is handed to a background writer and a new stack
+    is started. Both the reconstructed DPC stack and the raw frames it came
+    from are written, so a quantitative (deconvolved) reconstruction can still
+    be done offline.
     """
 
-    def __init__(self, max_length, group_size=4):
+    def __init__(
+        self,
+        max_length,
+        group_size=4,
+        save_to_disk=False,
+        save_dir=None,
+        file_prefix="dpc",
+    ):
         self.group_size = group_size
         self.max_length = max_length
-        self.data_list = deque(maxlen=max_length)        # reconstructed dpc_combined images
-        self.raw_group_list = deque(maxlen=max_length)    # matching raw 4-frame windows
+        self.save_to_disk = save_to_disk
+
+        # In normal mode: rolling display buffers
+        # In saving mode: batch buffers that reset after each full stack
+        if self.save_to_disk:
+            self.data_list = []           # reconstructed dpc_combined images
+            self.raw_group_list = []      # matching raw 4-frame windows
+            self.ind_list = []
+        else:
+            self.data_list = deque(maxlen=max_length)
+            self.raw_group_list = deque(maxlen=max_length)
+            self.ind_list = deque(maxlen=max_length)
+
         self._window = deque(maxlen=group_size)
+        self._id_window = deque(maxlen=group_size)
         self.callback = None
         self._lock = threading.Lock()
 
+        # ---------- disk saving ----------
+        self.save_dir = Path(save_dir) if save_dir is not None else None
+        self.file_prefix = file_prefix
+        self._stack_save_count = 0
+
+        self._save_queue = None
+        self._save_thread = None
+        self._stop_saver = threading.Event()
+
+        if self.save_to_disk:
+            if self.save_dir is None:
+                raise ValueError("save_dir must be provided when save_to_disk=True")
+
+            self.save_dir.mkdir(parents=True, exist_ok=True)
+
+            self._save_queue = Queue()
+            self._save_thread = threading.Thread(
+                target=self._save_worker,
+                daemon=True
+            )
+            self._save_thread.start()
+
     def add_element(self, elements, ids=None):
+        """
+        elements: iterable of raw camera frames, in acquisition order
+        ids: optional tuple like (start_id, end_id)
+        """
         elements = list(elements)
         if not elements:
             return
 
+        if ids is not None:
+            frame_ids = list(range(ids[0], ids[1] + 1))
+            if len(frame_ids) != len(elements):
+                raise ValueError("Number of ids does not match number of elements")
+        else:
+            frame_ids = [None] * len(elements)
+
         ready_groups = []
         with self._lock:
-            for element in elements:
+            for element, frame_id in zip(elements, frame_ids):
                 self._window.append(element)
+                self._id_window.append(frame_id)
                 if len(self._window) == self.group_size:
-                    ready_groups.append(list(self._window))
+                    ready_groups.append((list(self._window), list(self._id_window)))
+                    self._window.clear()
+                    self._id_window.clear()
 
-        for group in ready_groups:
+        for group, group_ids in ready_groups:
             _, _, dpc_combined = dpc_reconstruct(group)
-            with self._lock:
-                self.data_list.append(dpc_combined)
-                self.raw_group_list.append(group)
+            if self.save_to_disk:
+                self._add_group_saving_mode(dpc_combined, group, group_ids)
+            else:
+                self._add_group_normal_mode(dpc_combined, group, group_ids)
+
+            # Live display/update callback
             if self.callback is not None:
                 self.callback(dpc_combined)
+
+    def _add_group_normal_mode(self, dpc_combined, group, group_ids):
+        """
+        Rolling-buffer behavior when save_to_disk=False.
+        """
+        with self._lock:
+            self.data_list.append(dpc_combined)
+            self.raw_group_list.append(group)
+
+            valid_ids = [i for i in group_ids if i is not None]
+            if valid_ids:
+                self.ind_list.extend(valid_ids)
+
+    def _add_group_saving_mode(self, dpc_combined, group, group_ids):
+        """
+        Batch-saving behavior: collect DPC images until max_length of them are
+        held, hand the full stack off to the writer, then start a new stack.
+        """
+        with self._lock:
+            self.data_list.append(dpc_combined)
+            self.raw_group_list.append(group)
+            self.ind_list.extend(group_ids)
+
+            if len(self.data_list) < self.max_length:
+                return
+
+            stack_index, stack_ids, dpc_group, raw_group = self._take_stack()
+
+        self._queue_stack(stack_index, stack_ids, dpc_group, raw_group)
+
+    def _take_stack(self):
+        """
+        Hand off the buffered stack and reset. Caller must hold the lock.
+        """
+        dpc_group = self.data_list
+        raw_group = self.raw_group_list
+        stack_ids = list(self.ind_list)
+        self.data_list = []
+        self.raw_group_list = []
+        self.ind_list = []
+        stack_index = self._stack_save_count
+        self._stack_save_count += 1
+        return stack_index, stack_ids, dpc_group, raw_group
+
+    def _queue_stack(self, stack_index, stack_ids, dpc_group, raw_group):
+        """
+        Build the arrays outside the lock, so get_images() is never blocked by
+        the numpy work, and queue them for the writer.
+        """
+        dpc_stack = np.stack(
+            [np.asarray(img, dtype=np.float32) for img in dpc_group],
+            axis=0
+        )
+        raw_stack = np.stack(
+            [np.array(frame, copy=True) for grp in raw_group for frame in grp],
+            axis=0
+        )
+        self._save_queue.put((stack_index, stack_ids, dpc_stack, raw_stack))
+
+    def _save_worker(self):
+        """
+        Background worker that saves one full DPC stack per file, plus the raw
+        frames that stack was reconstructed from.
+        """
+        while not self._stop_saver.is_set() or not self._save_queue.empty():
+            try:
+                stack_index, stack_ids, dpc_stack, raw_stack = self._save_queue.get(timeout=0.1)
+            except Empty:
+                continue
+
+            valid_ids = [i for i in stack_ids if i is not None]
+
+            if valid_ids:
+                suffix = (
+                    f"_{stack_index:06d}"
+                    f"_ids_{valid_ids[0]}_{valid_ids[-1]}"
+                )
+            else:
+                suffix = f"_{stack_index:06d}"
+
+            tf.imwrite(self.save_dir / f"{self.file_prefix}_dpc{suffix}.tiff", dpc_stack)
+            tf.imwrite(self.save_dir / f"{self.file_prefix}_raw{suffix}.tiff", raw_stack)
+
+            self._save_queue.task_done()
+
+    def flush(self):
+        """
+        Queue whatever partial stack is buffered. A DPC acquisition is stopped
+        by hand, so the last stack is normally incomplete and would otherwise
+        be lost.
+        """
+        if not self.save_to_disk:
+            return
+
+        with self._lock:
+            if not self.data_list:
+                return
+            stack_index, stack_ids, dpc_group, raw_group = self._take_stack()
+
+        self._queue_stack(stack_index, stack_ids, dpc_group, raw_group)
+
+    def wait_until_saved(self):
+        """
+        Wait until all queued stacks have been written to disk.
+        """
+        if self.save_to_disk and self._save_queue is not None:
+            self._save_queue.join()
+
+    def close(self):
+        """
+        Save the partial stack still buffered, then finish the queued stacks
+        cleanly.
+        """
+        if self.save_to_disk and self._save_thread is not None:
+            self.flush()
+            self._save_queue.join()
+            self._stop_saver.set()
+            self._save_thread.join(timeout=5.0)
 
     def get_last_element(self):
         with self._lock:
@@ -418,9 +605,6 @@ class DPCCameraDataList:
 
     def on_update(self, callback):
         self.callback = callback
-
-    def close(self):
-        pass
 
 
 class TaskWorker(QThread):
