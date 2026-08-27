@@ -449,9 +449,16 @@ class CommandExecutor(QObject):
             self.viewer.fft_mode = True
         else:
             self.viewer.fft_mode = False
-            if getattr(self.viewer, "fft_worker", None) is not None:
-                self.viewer.fft_worker.stop()
-                self.viewer.fft_worker = None
+            self.stop_fft_worker()
+
+    def stop_fft_worker(self):
+        worker = getattr(self.viewer, "fft_worker", None)
+        if worker is None:
+            return
+        if not worker.stop():
+            self.logg.error("FFT worker did not finish; keeping the reference so a running QThread is not destroyed")
+            return
+        self.viewer.fft_worker = None
 
     @pyqtSlot()
     def profile_plot(self):
@@ -522,9 +529,13 @@ class CommandExecutor(QObject):
         self.devs.dpc_cam.data.on_update(self.viewer.dpc_worker.push_frame)
 
     def stop_dpc_worker(self):
-        if getattr(self.viewer, "dpc_worker", None) is not None:
-            self.viewer.dpc_worker.stop()
-            self.viewer.dpc_worker = None
+        worker = getattr(self.viewer, "dpc_worker", None)
+        if worker is None:
+            return
+        if not worker.stop():
+            self.logg.error("DPC worker did not finish; keeping the reference so a running QThread is not destroyed")
+            return
+        self.viewer.dpc_worker = None
 
     def prepare_dpc(self):
         t_readout = self.setup_dpc_camera()
@@ -553,10 +564,11 @@ class CommandExecutor(QObject):
             self.devs.daq.stop_dpc_sequences()
             self.dpc_off()
             self.devs.dpc_cam.stop_live()
-            self.stop_dpc_worker()
             self.logg.info("DPC live stopped")
         except Exception as e:
             self.logg.error(f"Error stopping DPC: {e}")
+        finally:
+            self.stop_dpc_worker()
 
     @pyqtSlot(bool, int)
     def dpc_acquisition(self, sw: bool, acq_num: int):
@@ -597,10 +609,11 @@ class CommandExecutor(QObject):
             self.devs.daq.stop_dpc_sequences()
             self.dpc_off()
             self.devs.dpc_cam.stop_data_acquisition()
-            self.stop_dpc_worker()
             self.logg.info("DPC acquisition stopped")
         except Exception as e:
             self.logg.error(f"Error stopping DPC acquisition: {e}")
+        finally:
+            self.stop_dpc_worker()
 
     def run_task(self, task, iteration=1, parent=None):
         if getattr(self, "task_worker", None) is not None and self.task_worker.isRunning():

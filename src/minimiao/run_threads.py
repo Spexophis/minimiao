@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 
 
+import math
 import threading
 import time
 import traceback
@@ -12,7 +13,7 @@ from queue import Queue, Empty
 
 import numpy as np
 import tifffile as tf
-from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QThread, QMutex, QWaitCondition, pyqtSignal, pyqtSlot
 
 
 class CameraAcquisitionThread(threading.Thread):
@@ -241,103 +242,134 @@ class CameraDataList:
         self.callback = callback
 
 
-class FFTWorker(QThread):
-    fft_ready = pyqtSignal(object)
+def _to_uint16(arr):
+    """
+    Scale an array to the full uint16 range for display.
+    """
+    mn = float(arr.min())
+    mx = float(arr.max())
+    if mx <= mn:
+        return np.zeros_like(arr, dtype=np.uint16)
+    return ((arr - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
+
+
+class PeriodicFrameWorker(QThread):
+    """
+    Base for the display workers that turn the newest camera frame into a
+    derived image at a fixed rate.
+
+    The pacing sleep waits on a condition variable instead of msleep(), so
+    stop() interrupts it straight away rather than leaving the thread inside a
+    sleep of up to one whole frame period. stop() then joins with a real
+    timeout -- QThread.wait() counts milliseconds, so the wait(2) this used to
+    do was a 2 ms join, not 2 s -- and reports whether the thread actually
+    finished. Callers must not drop their last reference to a worker that is
+    still running: destroying a live QThread makes Qt print
+    "QThread: Destroyed while thread '' is still running" and can abort the
+    process.
+    """
 
     def __init__(self, fps=10, parent=None):
         super().__init__(parent)
+        self.setObjectName(type(self).__name__)
         self.fps = float(fps)
         self._running = True
         self._latest = None
-        self._win = None  # cached window for ROI
+        self._mutex = QMutex()
+        self._wake = QWaitCondition()
 
-    def stop(self):
-        self._running = False
-        self.wait(2)
+    def stop(self, timeout_ms=2000):
+        """
+        Ask the loop to finish and join it. Returns True if the thread
+        finished, False if it was still running when the timeout expired.
+        """
+        self._mutex.lock()
+        try:
+            self._running = False
+            self._wake.wakeAll()
+        finally:
+            self._mutex.unlock()
+        return self.wait(timeout_ms)
 
-    def push_frame(self, frame_u16: np.ndarray):
-        if frame_u16 is None or frame_u16.ndim != 2:
+    def push_frame(self, frame: np.ndarray):
+        if frame is None or frame.ndim != 2:
             return
-        f = frame_u16
-        self._latest = np.array(f, copy=True)
+        self._latest = np.array(frame, copy=True)
+
+    def _sleep(self, seconds):
+        """
+        Pacing sleep that stop() can cut short. Returns False once stopped.
+
+        The remaining time is rounded up, never truncated: a gap under a
+        millisecond would otherwise become a 0 ms wait, and the loop would
+        busy-spin through the tail of every period instead of sleeping.
+        """
+        if seconds <= 0:
+            return self._running
+        msecs = max(1, math.ceil(seconds * 1000))
+        self._mutex.lock()
+        try:
+            if self._running:
+                self._wake.wait(self._mutex, msecs)
+            return self._running
+        finally:
+            self._mutex.unlock()
+
+    def compute(self, img):
+        """Turn a raw frame into the uint16 image to display."""
+        raise NotImplementedError
+
+    def emit_result(self, out):
+        """Emit the subclass's ready signal."""
+        raise NotImplementedError
+
+    def run(self):
+        period = 1.0 / max(self.fps, 0.1)
+        next_t = time.perf_counter()
+
+        while self._running:
+            now = time.perf_counter()
+            if now < next_t:
+                self._sleep(next_t - now)
+                continue
+            next_t = now + period
+
+            img = self._latest
+            if img is None:
+                continue
+
+            self.emit_result(self.compute(img))
+
+
+class FFTWorker(PeriodicFrameWorker):
+    fft_ready = pyqtSignal(object)
+
+    def __init__(self, fps=10, parent=None):
+        super().__init__(fps=fps, parent=parent)
+        self._win = None  # cached window for ROI
 
     def _ensure_window(self, n: int):
         if self._win is None or self._win.shape[0] != n:
             w1 = np.hanning(n).astype(np.float32)
             self._win = np.outer(w1, w1)
 
-    def run(self):
-        period = 1.0 / max(self.fps, 0.1)
-        next_t = time.perf_counter()
+    def compute(self, img):
+        self._ensure_window(img.shape[0])
+        ft = np.fft.fftshift(np.fft.fft2(img * self._win))
+        return _to_uint16(np.log1p(np.abs(ft)).astype(np.float32))
 
-        while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
-
-            if self._latest is None:
-                continue
-
-            img = self._latest
-            n = img.shape[0]
-            self._ensure_window(n)
-
-            ft = np.fft.fftshift(np.fft.fft2(img * self._win))
-            mag = np.log1p(np.abs(ft)).astype(np.float32)
-
-            mn = float(mag.min())
-            mx = float(mag.max())
-            if mx <= mn:
-                out = np.zeros_like(mag, dtype=np.uint16)
-            else:
-                out = ((mag - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
-
-            self.fft_ready.emit(out)
+    def emit_result(self, out):
+        self.fft_ready.emit(out)
 
 
-class DPCWorker(QThread):
+class DPCWorker(PeriodicFrameWorker):
     dpc_ready = pyqtSignal(object)
 
-    def __init__(self, fps=10, parent=None):
-        super().__init__(parent)
-        self.fps = float(fps)
-        self._running = True
-        self._latest = None
+    def compute(self, img):
+        return _to_uint16(img)
 
-    def stop(self):
-        self._running = False
-        self.wait(2)
-
-    def push_frame(self, dpc_image: np.ndarray):
-        if dpc_image is None or dpc_image.ndim != 2:
-            return
-        self._latest = np.array(dpc_image, copy=True)
-
-    def run(self):
-        period = 1.0 / max(self.fps, 0.1)
-        next_t = time.perf_counter()
-
-        while self._running:
-            now = time.perf_counter()
-            if now < next_t:
-                self.msleep(int((next_t - now) * 1000))
-                continue
-            next_t = now + period
-
-            if self._latest is None:
-                continue
-
-            img = self._latest
-            mn = float(img.min())
-            mx = float(img.max())
-            if mx <= mn:
-                out = np.zeros_like(img, dtype=np.uint16)
-            else:
-                out = ((img - mn) * (65535.0 / (mx - mn))).astype(np.uint16)
-
-            self.dpc_ready.emit(out)
+    def emit_result(self, out):
+        self.dpc_ready.emit(out)
 
 
 def dpc_reconstruct(frames):
