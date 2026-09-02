@@ -68,9 +68,15 @@ class NeoPixel:
             y_all = np.concatenate([y_all, y_led]) if len(y_all) else y_led
         return y_all
 
-    def half_ring(self, num, start, color):
+    def single_led(self, num, n, color):
         c = [[0, 0, 0, 0]] * num
         h = int(num / 2)
+        c[n] = color
+        x = self.led_ring(colors=c)
+        return x
+
+    def half_ring(self, num, start, h, color):
+        c = [[0, 0, 0, 0]] * num
         for i in range(h):
             idx = (start + i) % num
             c[idx] = color
@@ -83,10 +89,14 @@ class NeoPixel:
         off = self.led_ring([[0, 0, 0, 0]] * 24)
         color = [0, 0, 0, 0]
         color[c] = amp
-        xhp = self.half_ring(24, 0, color)
-        xhn = self.half_ring(24, 12, color)
-        yhp = self.half_ring(24, 6, color)
-        yhn = self.half_ring(24, 18, color)
+        # xhp = self.single_led(24, 0, color)
+        # xhn = self.single_led(24, 12, color)
+        # yhp = self.single_led(24, 6, color)
+        # yhn = self.single_led(24, 18, color)
+        xhp = self.half_ring(24, 0, 10, color)
+        xhn = self.half_ring(24, 12, 10, color)
+        yhp = self.half_ring(24, 6, 10, color)
+        yhn = self.half_ring(24, 18, 10, color)
         led_seq = np.hstack((xhp, hd, off, rd, xhn, hd, off, rd, yhp, hd, off, rd, yhn, hd, off, rd))
         stby = np.zeros(xhp.shape)
         expo = np.ones(int(expo * self.sample_rate))

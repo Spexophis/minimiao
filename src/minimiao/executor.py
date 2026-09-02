@@ -70,10 +70,11 @@ class CommandExecutor(QObject):
         # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_fft.connect(self.fft)
-        self.ctrl_panel.Signal_dpc.connect(self.dpc)
         self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
         self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
+        self.ctrl_panel.Signal_dpc.connect(self.dpc)
+        self.ctrl_panel.Signal_dpc_acquire.connect(self.dpc_acquisition)
         self.svd.connect(self.save_data)
         self.sig_plt.connect(self.viewer.plot_trace)
         # DM
@@ -501,23 +502,38 @@ class CommandExecutor(QObject):
         else:
             self.stop_dpc()
 
-    def prepare_dpc(self):
+    def setup_dpc_camera(self):
         x, y, nx, ny, bn = self.ctrl_panel.get_scmos_roi()
         self.devs.dpc_cam.bin_h, self.devs.dpc_cam.bin_v = bn, bn
         self.devs.dpc_cam.start_h, self.devs.dpc_cam.end_h = x, x + nx - 1
         self.devs.dpc_cam.start_v, self.devs.dpc_cam.end_v = y, y + ny - 1
         self.devs.dpc_cam.t_exposure, t_readout = self.ctrl_panel.get_scmos_exposure()
-        self.devs.dpc_cam.prepare_live()
-        dpc_seqs = self.devs.led.dpc_sequences(1, 128, self.devs.dpc_cam.t_exposure, t_readout)
+        return t_readout
+
+    def write_dpc_illumination(self, t_readout):
+        dpc_seqs = self.devs.led.dpc_sequences(1, 255, self.devs.dpc_cam.t_exposure, t_readout)
         self.devs.daq.write_dpc_sequences(dpc_seqs, finite=False)
+
+    def start_dpc_worker(self):
+        if getattr(self.viewer, "dpc_worker", None) is None:
+            self.viewer.dpc_worker = run_threads.DPCWorker(fps=10)
+            self.viewer.dpc_worker.dpc_ready.connect(self.viewer.on_dpc_frame, Qt.ConnectionType.QueuedConnection)
+            self.viewer.dpc_worker.start()
+        self.devs.dpc_cam.data.on_update(self.viewer.dpc_worker.push_frame)
+
+    def stop_dpc_worker(self):
+        if getattr(self.viewer, "dpc_worker", None) is not None:
+            self.viewer.dpc_worker.stop()
+            self.viewer.dpc_worker = None
+
+    def prepare_dpc(self):
+        t_readout = self.setup_dpc_camera()
+        self.devs.dpc_cam.prepare_live()
+        self.write_dpc_illumination(t_readout)
 
     def start_dpc(self):
         try:
-            if getattr(self.viewer, "dpc_worker", None) is None:
-                self.viewer.dpc_worker = run_threads.DPCWorker(fps=10)
-                self.viewer.dpc_worker.dpc_ready.connect(self.viewer.on_dpc_frame, Qt.ConnectionType.QueuedConnection)
-                self.viewer.dpc_worker.start()
-            self.devs.dpc_cam.data.on_update(self.viewer.dpc_worker.push_frame)
+            self.start_dpc_worker()
             self.devs.dpc_cam.start_live()
             self.devs.daq.run_dpc_sequences()
             self.logg.info("DPC live started")
@@ -537,12 +553,54 @@ class CommandExecutor(QObject):
             self.devs.daq.stop_dpc_sequences()
             self.dpc_off()
             self.devs.dpc_cam.stop_live()
-            if getattr(self.viewer, "dpc_worker", None) is not None:
-                self.viewer.dpc_worker.stop()
-                self.viewer.dpc_worker = None
+            self.stop_dpc_worker()
             self.logg.info("DPC live stopped")
         except Exception as e:
             self.logg.error(f"Error stopping DPC: {e}")
+
+    @pyqtSlot(bool, int)
+    def dpc_acquisition(self, sw: bool, acq_num: int):
+        if sw:
+            fn = self.vw.get_file_dialog()
+            tim = time.strftime("%Y%m%d%H%M%S")
+            if fn is not None:
+                file_name = tim + "_DPC_" + fn
+            else:
+                file_name = tim + "_DPC"
+            try:
+                self.prepare_dpc_acquisition(file_name, acq_num)
+            except Exception as e:
+                self.logg.error(f"Error preparing DPC acquisition: {e}")
+                self.stop_dpc_acquisition()
+                return
+            self.start_dpc_acquisition()
+        else:
+            self.stop_dpc_acquisition()
+
+    def prepare_dpc_acquisition(self, labl: str, acq_num: int):
+        t_readout = self.setup_dpc_camera()
+        self.devs.dpc_cam.prepare_data_acquisition(n=acq_num, fd=self.path, fn=labl)
+        self.write_dpc_illumination(t_readout)
+
+    def start_dpc_acquisition(self):
+        try:
+            self.start_dpc_worker()
+            self.devs.dpc_cam.start_data_acquisition()
+            self.devs.daq.run_dpc_sequences()
+            self.logg.info("DPC acquisition started")
+        except Exception as e:
+            self.logg.error(f"Error starting DPC acquisition: {e}")
+            self.stop_dpc_acquisition()
+
+    def stop_dpc_acquisition(self):
+        try:
+            self.devs.daq.stop_dpc_sequences()
+            self.dpc_off()
+            self.devs.dpc_cam.stop_data_acquisition()
+            self.stop_dpc_worker()
+            self.logg.info("DPC acquisition stopped")
+        except Exception as e:
+            self.logg.error(f"Error stopping DPC acquisition: {e}")
 
     def run_task(self, task, iteration=1, parent=None):
         if getattr(self, "task_worker", None) is not None and self.task_worker.isRunning():

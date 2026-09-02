@@ -15,22 +15,31 @@ def generate_uniform_phase(size=(1536, 2048), ph=0, typ=np.uint8):
         return np.zeros(size, dtype=typ)
 
 
-def generate_binary_phase_1bit(size=(2048, 1536), period=(8, 0), phase=(0, 0), value=255, typ=np.uint8):
+def generate_binary_phase_1bit(size=(2048, 1536), period=(8, 0), phase=(0, 0), duty=0.5, value=255, typ=np.uint8):
     width, height = size
     period_x, period_y = period
     offset_x, offset_y = phase
-    x = np.arange(width)
-    y = np.arange(height)
-    xx, yy = np.meshgrid(x, y)
-    xx += offset_x
-    yy += offset_y
-    if period_x > 0 and period_y > 0:
-        return np.where(((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2)), value, 0).astype(typ)
-    if period_x > 0 and period_y == 0:
-        return np.where(((xx % period_x) < (period_x // 2)), value, 0).astype(typ)
-    if period_x == 0 and period_y > 0:
-        return np.where(((yy % period_y) < (period_y // 2)), value, 0).astype(typ)
-    return None
+    duty_x, duty_y = duty if np.iterable(duty) else (duty, duty)
+
+    def on_width(period, duty):
+        return int(np.clip(round(duty * period), 1, period - 1))
+
+    xx, yy = np.meshgrid(np.arange(width), np.arange(height))
+    xx = xx + offset_x
+    yy = yy + offset_y
+
+    mask_x = (xx % period_x) < on_width(period_x, duty_x) if period_x > 0 else None
+    mask_y = (yy % period_y) < on_width(period_y, duty_y) if period_y > 0 else None
+
+    if mask_x is not None and mask_y is not None:
+        mask = mask_x ^ mask_y
+    elif mask_x is not None:
+        mask = mask_x
+    elif mask_y is not None:
+        mask = mask_y
+    else:
+        return None
+    return np.where(mask, value, 0).astype(typ)
 
 
 def generate_binary_phase_8bit(bit_sequences):
@@ -204,23 +213,30 @@ def generate_split_grating(beam_num=5, spacing=32, pixel_nums=(1024, 1272), iter
     return field
 
 
-def simulate_binary_phase_pattern(size=(1024, 1024), period=(8, 0), phase=(0, 0), value=1, cutoff=100):
+def simulate_binary_phase_pattern(size=(1024, 1024), period=(8, 0), phase=(0, 0), duty=0.5, value=1, cutoff=100):
     width, height = size
     period_x, period_y = period
     offset_x, offset_y = phase
-    x = np.arange(width)
-    y = np.arange(height)
-    xx, yy = np.meshgrid(x, y)
-    xx += offset_x
-    yy += offset_y
-    if period_x > 0 and period_y > 0:
-        pattern = np.where(((xx % period_x) < (period_x // 2)) ^ ((yy % period_y) < (period_y // 2)), value, 0)
-    elif period_x > 0 and period_y == 0:
-        pattern = np.where(((xx % period_x) < (period_x // 2)), value, 0)
-    elif period_x == 0 and period_y > 0:
-        pattern = np.where(((yy % period_y) < (period_y // 2)), value, 0)
+    duty_x, duty_y = duty if np.iterable(duty) else (duty, duty)
+
+    def on_width(period, duty):
+        return int(np.clip(round(duty * period), 1, period - 1))
+
+    xx, yy = np.meshgrid(np.arange(width), np.arange(height))
+    xx = xx + offset_x
+    yy = yy + offset_y
+
+    mask_x = (xx % period_x) < on_width(period_x, duty_x) if period_x > 0 else None
+    mask_y = (yy % period_y) < on_width(period_y, duty_y) if period_y > 0 else None
+    if mask_x is not None and mask_y is not None:
+        mask = mask_x ^ mask_y
+    elif mask_x is not None:
+        mask = mask_x
+    elif mask_y is not None:
+        mask = mask_y
     else:
-        pattern = np.ones(size)
+        return None
+    pattern = np.where(mask, value, 0)
     pattern_field = 1.0 * np.exp(1j * np.pi * pattern)
     pupil_field = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(pattern_field)))
     pupil_maks = ((xx - width // 2) ** 2 + (yy - height // 2) ** 2) <= cutoff ** 2

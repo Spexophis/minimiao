@@ -157,17 +157,18 @@ class ThorCMOS:
             self.data.close()
             self.data = None
 
-    def prepare_acquisition(self, n):
+    def prepare_data_acquisition(self, n, fd, fn):
         self.set_roi()
         self.set_exposure_time()
-        self.data = run_threads.DPCCameraDataList(max_length=n)
+        self.data = run_threads.DPCCameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
 
-    def start_acquisition(self):
-        self.camera.arm(4)
+    def start_data_acquisition(self, buffer_size=16):
+        self.camera.arm(buffer_size)
         self.acq_thread.start()
+        self.logg.info("Acquisition started")
 
-    def stop_acquisition(self):
+    def stop_data_acquisition(self):
         self.camera.disarm()
         if self.acq_thread is not None:
             self.acq_thread.stop()
@@ -175,8 +176,11 @@ class ThorCMOS:
         if self.data is not None:
             self.data.close()
             self.data = None
+        self.logg.info("Acquisition stopped")
 
     def get_images(self):
+        if self.data is None:
+            return
         while True:
             frame = self.camera.get_pending_frame_or_null()
             if frame is None:
@@ -184,10 +188,16 @@ class ThorCMOS:
             image_buffer_copy = np.copy(frame.image_buffer)
             numpy_shaped_image = image_buffer_copy.reshape(self.camera.image_height_pixels,
                                                            self.camera.image_width_pixels)
-            self.data.add_element([numpy_shaped_image], [frame.frame_count])
+            self.data.add_element([numpy_shaped_image], [frame.frame_count, frame.frame_count])
 
     def get_last_image(self):
         if self.data is not None:
             return self.data.get_last_element()
+        else:
+            return None
+
+    def get_data(self):
+        if self.data is not None:
+            return self.data.get_elements()
         else:
             return None

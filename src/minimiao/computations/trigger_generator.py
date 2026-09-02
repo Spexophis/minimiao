@@ -212,6 +212,11 @@ class TriggerSequence:
             digital_channels = [0, 2, 3]
             return digital_triggers, digital_channels
 
+    def generate_sim_scan(self, nph=6):
+        digital_triggers, digital_channels = self.generate_sim_triggers(nph)
+
+
+
     def generate_nlsim_triggers(self, nph=12):
         act_samples = self.digital_ends[0] - self.digital_starts[0]
         if act_samples > 0:
