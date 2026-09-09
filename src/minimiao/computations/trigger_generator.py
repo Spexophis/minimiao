@@ -24,7 +24,7 @@ class TriggerSequence:
         self.piezo_steps = [0.032, 0.032, 0.16]
         self.piezo_ranges = [0.16, 0.16, 0.8]
         self.piezo_positions = [30., 30., 30.]
-        self.piezo_return_time = 0.06
+        self.piezo_return_time = 0.064
         self.return_samples = int(np.ceil(self.piezo_return_time * self.sample_rate))
         self.piezo_steps = [step_size / conv_factor for step_size, conv_factor in
                             zip(self.piezo_steps, self.piezo_conv_factors)]
@@ -74,9 +74,9 @@ class TriggerSequence:
         self.frame_time = 0.05  # s
         self.frame_samples = int(np.ceil(self.frame_time * self.sample_rate))
         # motor
-        self.motor_jog_pulse = 0.0008
+        self.motor_jog_pulse = 0.001
         self.motor_jog_samples = int(np.ceil(self.motor_jog_pulse * self.sample_rate))
-        self.motor_rot_time = 0.06
+        self.motor_rot_time = 0.2
         self.motor_rot_samples = int(np.ceil(self.motor_rot_time * self.sample_rate))
 
     def update_sampling_rate(self, sample_rate=None):
@@ -176,6 +176,15 @@ class TriggerSequence:
             digital_triggers[2, self.slm_start_samples:self.slm_start_samples + self.trigger_pulse_samples] = 1
         return digital_triggers, digital_channels
 
+    def generate_widefield_scan(self):
+        digital_triggers, digital_channels = self.generate_digital_triggers(0, 0)
+        pos = self.piezo_scan_pos[2]
+        piezo_channel = [2]
+        piezo_sequence = np.repeat(self.piezo_scan_positions[2], digital_triggers.shape[1])
+        piezo_sequence = shift_array(piezo_sequence, self.return_samples, fill=piezo_sequence[0], direction="backward")
+        digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[2])
+        return digital_triggers, digital_channels, piezo_sequence, piezo_channel, pos
+
     def generate_sim_triggers(self, nph=6):
         act_samples = self.digital_ends[0] - self.digital_starts[0]
         if act_samples > 0:
@@ -214,8 +223,12 @@ class TriggerSequence:
 
     def generate_sim_scan(self, nph=6):
         digital_triggers, digital_channels = self.generate_sim_triggers(nph)
-
-
+        pos = self.piezo_scan_pos[2]
+        piezo_channel = [2]
+        piezo_sequence = np.repeat(self.piezo_scan_positions[2], digital_triggers.shape[1])
+        piezo_sequence = shift_array(piezo_sequence, self.return_samples, fill=piezo_sequence[0], direction="backward")
+        digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[2])
+        return digital_triggers, digital_channels, piezo_sequence, piezo_channel, pos
 
     def generate_nlsim_triggers(self, nph=12):
         act_samples = self.digital_ends[0] - self.digital_starts[0]

@@ -84,7 +84,7 @@ class NeoPixel:
         return x
 
     def dpc_sequences(self, c, amp, expo, rdt):
-        hd = np.zeros(int(expo * self.sample_rate))
+        hd = np.zeros(int((expo + 0.002) * self.sample_rate))
         rd = np.zeros(int(rdt * self.sample_rate))
         off = self.led_ring([[0, 0, 0, 0]] * 24)
         color = [0, 0, 0, 0]
@@ -99,7 +99,8 @@ class NeoPixel:
         yhn = self.half_ring(24, 18, 10, color)
         led_seq = np.hstack((xhp, hd, off, rd, xhn, hd, off, rd, yhp, hd, off, rd, yhn, hd, off, rd))
         stby = np.zeros(xhp.shape)
-        expo = np.ones(int(expo * self.sample_rate))
+        expo = np.ones(int((expo + 0.002) * self.sample_rate))
+        expo[:int(0.002 * self.sample_rate)] = 0
         ot = np.zeros(off.shape)
         cam_seq = np.hstack((stby, expo, ot, rd, stby, expo, ot, rd, stby, expo, ot, rd, stby, expo, ot, rd))
         return np.vstack((led_seq, cam_seq))

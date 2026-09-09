@@ -98,7 +98,7 @@ class CommandExecutor(QObject):
         try:
             self.devs.motor.move_to(0)
             self.devs.motor.set_velocity(100)
-            self.set_motor_step(14.5)
+            self.set_motor_step(45)
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         try:
@@ -325,18 +325,16 @@ class CommandExecutor(QObject):
 
     def set_camera_roi(self):
         try:
-            # x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
-            # self.devs.img_cam.bin_h, self.devs.img_cam.bin_v = bn, bn
-            # self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
-            # self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
-            # self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
-            # self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
             x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
             self.devs.img_cam.bin_h, self.devs.img_cam.bin_v = bn, bn
-            self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
             self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
             self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+            self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
             self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
+            # self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
+            # self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
+            # self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+            # self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
 
@@ -363,15 +361,13 @@ class CommandExecutor(QObject):
             self.logg.error(f"Trigger Error: {e}")
 
     def prepare_camera(self):
-        # self.devs.img_cam.set_roi()
-        # self.devs.img_cam.set_acquisition_mode(3)
-        # self.devs.img_cam.set_exposure_time()
-        # self.devs.img_cam.set_gain()
-        # self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
-        # self.devs.img_cam.set_kinetics_num(20000)
-        # self.devs.img_cam.get_acquisition_timings()
         self.devs.img_cam.set_roi()
+        self.devs.img_cam.set_acquisition_mode(3)
         self.devs.img_cam.set_exposure_time()
+        self.devs.img_cam.set_gain()
+        self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
+        self.devs.img_cam.set_kinetics_num(20000)
+        self.devs.img_cam.get_acquisition_timings()
 
     def prepare_video(self, vd_mod):
         self.update_trigger_parameters()
@@ -622,9 +618,16 @@ class CommandExecutor(QObject):
             fn = self.vw.get_file_dialog()
             tim = time.strftime("%Y%m%d%H%M%S")
             if fn is not None:
-                file_name = tim + "_" + acq_mod + "_" + fn
+                folder_name = self.path + "/" + tim + "_" + acq_mod + "_" + fn
+                fn = acq_mod + "_" + fn
             else:
-                file_name = tim + "_" + acq_mod
+                folder_name = self.path + "/" + tim + "_" + acq_mod
+                fn = acq_mod
+            if not os.path.exists(folder_name):
+                os.makedirs(folder_name)
+                self.logg.info(f"Created folder: {folder_name}")
+            else:
+                self.logg.info(f"Folder already exists: {folder_name}")
             try:
                 pn = self.prepare_acquisition(acq_mod, acq_num)
             except Exception as e:
@@ -632,7 +635,7 @@ class CommandExecutor(QObject):
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
-            self.start_acquisition(file_name, pn)
+            self.start_acquisition(folder_name, fn, pn)
         else:
             self.stop_acquisition()
 
@@ -655,7 +658,7 @@ class CommandExecutor(QObject):
                                          finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_WideField":
-            dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(1, self.lasers, 0)
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan()
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
@@ -663,13 +666,14 @@ class CommandExecutor(QObject):
             dtr, chs = self.trg.generate_sim_triggers(aqn)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
                                          finite=False, trg=False)
-            pos = aqn
+            pos = aqn * 2
         elif aqm == "3D_SIM":
-            dtr, ptr, dchs, pchs, pos = self.trg.generate_piezo_scan(aqn, self.lasers, 0)
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(aqn)
+            self.devs.daq.set_piezo_position([ptr[0]], [2])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
-            pos *= aqn
+            pos = pos * 2 * aqn
         elif aqm == "2D_NLSIM":
             dtr, chs = self.trg.generate_nlsim_triggers(aqn)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
@@ -682,10 +686,10 @@ class CommandExecutor(QObject):
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return pos
 
-    def start_acquisition(self, labl: str, acq_num: int):
+    def start_acquisition(self, fdn: str, labl: str, acq_num: int):
         try:
             self.devs.slm.activate()
-            self.devs.img_cam.start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
+            self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.devs.daq.run_triggers()
         except Exception as e:

@@ -19,8 +19,8 @@ class DeviceManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         try:
-            # self.img_cam = andor_emccd.EMCCDCamera(logg=self.logg)
-            self.img_cam = hamamatsu_scmos.HamamatsuCamera(logg=self.logg)
+            self.img_cam = andor_emccd.EMCCDCamera(logg=self.logg)
+            # self.img_cam = hamamatsu_scmos.HamamatsuCamera(logg=self.logg)
         except Exception as e:
             from . import mock_cam
             self.img_cam = mock_cam.MockCamera()

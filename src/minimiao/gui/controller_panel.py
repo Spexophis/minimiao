@@ -338,7 +338,7 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_motor_step = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 14.5)
         self.QPushButton_motor_fwd = cw.PushButtonWidget("Forward")
         self.QPushButton_motor_bwd = cw.PushButtonWidget("Backward")
-        self.QDoubleSpinBox_motor_home = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 5)
+        self.QDoubleSpinBox_motor_home = cw.DoubleSpinBoxWidget(-180, 360, 1, 1, 5)
         self.QPushButton_motor_home = cw.PushButtonWidget("Home")
 
         slm_scroll_layout.addWidget(cw.LabelWidget(str('SLM')), 0, 0, 1, 1)
