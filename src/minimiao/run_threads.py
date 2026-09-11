@@ -245,7 +245,7 @@ class CameraDataList:
 class ImgLiveWorker(QThread):
     img_ready = pyqtSignal(object)
 
-    def __init__(self, data=None, fps=10, parent=None):
+    def __init__(self, data=None, fps=12, parent=None):
         super().__init__(parent)
         self.data = data
         self.period_ms = max(1, int(1000 / max(float(fps), 0.1)))

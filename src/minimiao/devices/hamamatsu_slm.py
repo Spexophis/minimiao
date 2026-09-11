@@ -111,9 +111,9 @@ class HamamatsuSLM:
         pattern = Image.open(file)
         self.pattern = np.array(pattern, dtype=np.uint8)
 
-    def load_pattern(self, pfd, slot_no=0):
-        self.read_pattern(pfd)
-        self.display_pattern(slot_no)
+    def load_pattern(self, pfd=None, slot_no=0):
+        if pfd is not None:
+            self.read_pattern(pfd)
         array = self.pattern.flatten()
         if len(array) != self.array_size:
             raise ValueError(
@@ -125,6 +125,7 @@ class HamamatsuSLM:
             self.logg.info(f"Pattern Loaded to Slot: {slot_no}")
         else:
             self.logg.error(f"Failed to load pattern")
+        self.display_pattern(slot_no)
 
     def display_pattern(self, slot_no=0):
         ret = self.lib.Change_DispSlot(self.bid, slot_no)

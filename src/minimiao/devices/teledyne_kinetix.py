@@ -294,7 +294,7 @@ class KinetixCamera:
         except Exception as e:
             self.logg.error(f"Error reading pixel time: {e}")
 
-    def prepare_live(self, port=1, speed=0, gain=1,
+    def prepare_live(self, port=0, speed=0, gain=1,
                      exp_mode=1792, expose_out=0):
         """Configure camera for live / preview acquisition."""
         self.set_readout_port(port)
