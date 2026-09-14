@@ -121,14 +121,11 @@ class DeformableMirror:
             self.az = None
             Z, dZdx, dZdy = tz.zernike_basis(self.nlx, self.nly, self.n_zernike, mask=msk, normalize_to="circle")
             self.zernike, dZdx_orth, dZdy_orth, T = tz.gs_orthogonalize(Z, msk, dZdx, dZdy)
-            self.zslopes = np.zeros((2 * self.nlx * self.nly, self.n_zernike))
-            for j in range(self.n_zernike):
-                if j == 0:
-                    self.zslopes[:self.nls, j] = dZdx_orth[j].flatten()
-                    self.zslopes[self.nls:, j] = dZdy_orth[j].flatten()
-                else:
-                    self.zslopes[:self.nls, j] = (dZdx_orth[j] / np.std(dZdx_orth[j])).flatten()
-                    self.zslopes[self.nls:, j] = (dZdy_orth[j] / np.std(dZdy_orth[j])).flatten()
+            # x and y slopes must share one scale factor: normalizing them
+            # separately rewrites the direction of the mode, and for tilt (whose
+            # slope is purely along one axis) it amplifies the round-off left in
+            # the other axis to the magnitude of the signal.
+            self.zslopes = tz.stack_slopes(dZdx_orth, dZdy_orth)
             self._get_beam_zernike()
         except Exception as e:
             self.logg.error(f"Error Loading DM {self.dm_name} control file: {e}")
