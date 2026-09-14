@@ -8,9 +8,11 @@ Computes Zernike polynomials and their analytical x/y derivatives on a rectangul
 using the Noll indexing convention.
 """
 
+import warnings
+
 import numpy as np
 from math import factorial
-from typing import Optional, Tuple, List
+from typing import NamedTuple, Optional, Tuple, List
 
 
 num_znk = 64
@@ -563,6 +565,472 @@ def convert_coefficients(coeffs_orth: np.ndarray, T: np.ndarray) -> np.ndarray:
     return T.T @ coeffs_orth
 
 
+# ══════════════════════════════════════════════════════════════════════
+#  SUB-APERTURE (BEAM-SIZED) ZERNIKE MODES
+# ══════════════════════════════════════════════════════════════════════
+
+class SubApertureModes(NamedTuple):
+    """
+    Zernike modes confined to a sub-aperture of the DM.
+
+    Attributes
+    ----------
+    phase        : (nz, ny, nx) — mode shapes, zero outside ``support_mask``
+    dphase_dx    : (nz, ny, nx) — dφ/dx
+    dphase_dy    : (nz, ny, nx) — dφ/dy
+    beam_mask    : (ny, nx) bool — the sub-aperture itself (ρ ≤ 1)
+    support_mask : (ny, nx) bool — every pixel the modes are allowed to move
+                   (beam + blending ring for ``edge="hermite"``)
+    scale        : (nz,) — factor each raw mode was divided by (see ``normalize``)
+
+    Notes
+    -----
+    Derivatives are with respect to coordinates normalized to the *sub-aperture*
+    radius (ρ = 1 at the sub-aperture edge), the same convention as
+    :func:`zernike_basis`. To convert to per-pixel slopes divide by ``radius``.
+    """
+    phase: np.ndarray
+    dphase_dx: np.ndarray
+    dphase_dy: np.ndarray
+    beam_mask: np.ndarray
+    support_mask: np.ndarray
+    scale: np.ndarray
+
+
+def _zernike_norm(n: int, m: int) -> float:
+    """Noll normalization factor (unit RMS over the unit circle)."""
+    return np.sqrt(n + 1.0) if m == 0 else np.sqrt(2.0 * (n + 1.0))
+
+
+def _angular_part(m: int, theta: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Angular factor Θ(θ) and its derivative dΘ/dθ."""
+    abs_m = abs(m)
+    if m > 0:
+        return np.cos(abs_m * theta), -abs_m * np.sin(abs_m * theta)
+    if m < 0:
+        return np.sin(abs_m * theta), abs_m * np.cos(abs_m * theta)
+    return np.ones_like(theta), np.zeros_like(theta)
+
+
+def _radial_second_derivative(n: int, m: int, rho: np.ndarray) -> np.ndarray:
+    """
+    Compute d²R_n^|m|/dρ² analytically.
+    """
+    abs_m = abs(m)
+    d2R = np.zeros_like(rho)
+    num_terms = (n - abs_m) // 2 + 1
+
+    for s in range(num_terms):
+        power = n - 2 * s
+        if power < 2:
+            continue  # second derivative of a constant or of ρ is 0
+        coeff = ((-1) ** s * factorial(n - s) /
+                 (factorial(s) *
+                  factorial((n + abs_m) // 2 - s) *
+                  factorial((n - abs_m) // 2 - s)))
+        d2R = d2R + coeff * power * (power - 1) * rho ** (power - 2)
+
+    return d2R
+
+
+def _hermite_blend(t: np.ndarray, order: int = 2
+                   ) -> Tuple[Tuple[np.ndarray, ...], Tuple[np.ndarray, ...]]:
+    """
+    Hermite blend from a given (value, slope, curvature) at t=0 down to
+    (0, 0, 0) at t=1:
+
+        f(t) = p·H0(t) + v·H1(t) + a·H2(t)
+
+    order=1 : cubic   — matches value and slope   (C¹ join, ~7 % less stroke)
+    order=2 : quintic — also matches curvature    (C² join, nothing for the
+              mirror to ring against)
+
+    Every basis function and its derivatives vanish at t = 1, so the blend
+    reaches the surrounding flat area with no step, no kink and — for
+    order=2 — no curvature jump.
+    """
+    t2 = t * t
+    t3 = t2 * t
+
+    if order == 1:
+        H0 = 1.0 - 3.0 * t2 + 2.0 * t3
+        H1 = t - 2.0 * t2 + t3
+        H2 = np.zeros_like(t)
+        dH0 = -6.0 * t + 6.0 * t2
+        dH1 = 1.0 - 4.0 * t + 3.0 * t2
+        dH2 = np.zeros_like(t)
+        return (H0, H1, H2), (dH0, dH1, dH2)
+
+    if order != 2:
+        raise ValueError(f"blend order must be 1 or 2, got {order}")
+
+    t4 = t3 * t
+    t5 = t4 * t
+
+    H0 = 1.0 - 10.0 * t3 + 15.0 * t4 - 6.0 * t5
+    H1 = t - 6.0 * t3 + 8.0 * t4 - 3.0 * t5
+    H2 = 0.5 * t2 - 1.5 * t3 + 1.5 * t4 - 0.5 * t5
+
+    dH0 = -30.0 * t2 + 60.0 * t3 - 30.0 * t4
+    dH1 = 1.0 - 18.0 * t2 + 32.0 * t3 - 15.0 * t4
+    dH2 = t - 4.5 * t2 + 6.0 * t3 - 2.5 * t4
+
+    return (H0, H1, H2), (dH0, dH1, dH2)
+
+
+def _smoothstep(s: np.ndarray, order: int = 2) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Smoothstep S(s) rising 0 → 1 on s ∈ [0, 1], and its derivative.
+
+    order=1 : cubic  (C¹ at both ends)
+    order=2 : quintic (C² at both ends) — preferred, a DM cannot reproduce a
+              curvature discontinuity and would ring around it.
+    """
+    if order == 1:
+        return 3.0 * s ** 2 - 2.0 * s ** 3, 6.0 * s * (1.0 - s)
+    if order == 2:
+        return (6.0 * s ** 5 - 15.0 * s ** 4 + 10.0 * s ** 3,
+                30.0 * s ** 2 * (1.0 - s) ** 2)
+    raise ValueError(f"smoothstep order must be 1 or 2, got {order}")
+
+
+def aperture_from_mask(mask: np.ndarray) -> Tuple[float, float, float]:
+    """
+    Estimate the centre and radius of a (roughly circular) illuminated area.
+
+    Parameters
+    ----------
+    mask : (ny, nx) bool array — e.g. the lenslets lit during the full-pupil
+           influence-function calibration.
+
+    Returns
+    -------
+    cx, cy : float — centroid in pixel coordinates
+    radius : float — equal-area radius, sqrt(N_lit / π), in pixels
+    """
+    mask = np.asarray(mask, dtype=bool)
+    n_lit = int(mask.sum())
+    if n_lit == 0:
+        raise ValueError("Mask has no valid pixels.")
+
+    yy, xx = np.nonzero(mask)
+    return float(xx.mean()), float(yy.mean()), float(np.sqrt(n_lit / np.pi))
+
+
+def zernike_sub_aperture(
+        nx: int,
+        ny: int,
+        nz: int,
+        radius: float,
+        center: Optional[Tuple[float, float]] = None,
+        edge: str = "hermite",
+        edge_width: float = 0.25,
+        piston: str = "edge",
+        pupil_mask: Optional[np.ndarray] = None,
+        normalize: str = "rms",
+        blend_order: int = 2,
+) -> SubApertureModes:
+    """
+    Zernike modes defined on a sub-aperture of the DM, blended smoothly to a
+    flat surface outside it.
+
+    Use this when the influence function / control matrix was calibrated with
+    the beam filling the whole DM, but the beam actually used for imaging is
+    smaller: the aberration has to be written into the illuminated area only,
+    while the rest of the mirror stays at its flat command. Simply cropping a
+    Zernike to the beam leaves a step at the beam edge; the DM cannot reproduce
+    a step, so the fit spills ripples back into the beam and wastes stroke.
+    This function removes the step.
+
+    Parameters
+    ----------
+    nx, ny : int
+        Grid size (columns, rows) — the influence-function / lenslet grid.
+    nz : int
+        Number of Zernike modes, Noll index j = 1 … nz.
+    radius : float
+        Sub-aperture (beam) radius **in grid pixels**.
+    center : (cx, cy), optional
+        Sub-aperture centre in pixels. Defaults to the grid centre.
+    edge : {"hermite", "taper", "hard"}
+        How the mode reaches the flat surroundings:
+
+        * ``"hermite"`` — the mode is *exactly* the Zernike inside the beam,
+          and a ring of width ``edge_width`` **outside** the beam carries a
+          quintic-Hermite blend down to flat (C² continuous). Requires free
+          mirror area around the beam, which is exactly what is available when
+          the beam is smaller than the DM. Preferred: the wavefront seen by
+          the beam is undistorted.
+        * ``"taper"`` — the mode is apodized to zero over a ring of width
+          ``edge_width`` **inside** the beam. Needs no free area outside the
+          beam and costs no extra stroke, but the mode is attenuated near the
+          beam edge, so it is no longer a pure Zernike over the beam.
+        * ``"hard"`` — plain crop at the beam edge (discontinuous). Provided
+          for comparison / diagnostics only.
+    edge_width : float
+        Width of the blending ring, in units of ``radius``.
+    piston : {"edge", "mean", "none"}
+        Constant removed from the mode before blending:
+
+        * ``"edge"`` — the mode's value at the beam edge (nonzero only for the
+          rotationally symmetric modes: defocus, spherical, …). This makes the
+          mode meet the surrounding flat area at zero, so the blending ring
+          only has to absorb the slope, not a step — a large saving in stroke
+          and in fitting error for defocus and spherical.
+        * ``"mean"`` — the mean over the beam (the usual Zernike convention).
+        * ``"none"`` — nothing removed.
+
+        Piston is not an aberration, so removing it changes nothing optically.
+        Note that with ``"edge"`` (or ``"mean"``) the piston mode itself, j=1,
+        becomes identically zero.
+    pupil_mask : (ny, nx) bool array, optional
+        Area the DM can actually control (e.g. the lenslets lit during
+        calibration). The modes are forced to zero outside it; a warning is
+        issued if that clips a non-negligible part of the blending ring.
+    normalize : {"rms", "none"}
+        ``"rms"`` scales every mode to unit RMS about its mean **over the
+        beam**, so a coefficient is an RMS wavefront amplitude in the beam and
+        amplitudes are comparable between modes. ``"none"`` keeps the Noll
+        normalization.
+    blend_order : {1, 2}
+        Continuity of the join with the flat area: 1 gives a C¹ join (value and
+        slope), 2 a C² join (also curvature). 2 is the safer default; 1 asks
+        for slightly less stroke in the blending ring.
+
+    Returns
+    -------
+    SubApertureModes — see that class.
+
+    Notes
+    -----
+    Confining a mode to a sub-aperture costs stroke in the blending ring, and
+    the cost climbs with radial order and with ``edge_width``. Measured for a
+    beam of 0.7 × the DM diameter, as the peak in the ring over the peak in the
+    beam (unit-RMS modes):
+
+        radial order n   1     2     3     4     5     6     7
+        edge_width 0.15  1.0   0.7   1.1   1.1   1.4   1.1   1.9
+        edge_width 0.25  1.0   0.7   1.2   1.3   1.8   1.5   2.8
+        edge_width 0.40  1.0   0.8   1.5   1.6   2.5   2.2   4.4
+
+    So a wider ring buys fidelity inside the beam, and low-order modes (what
+    sensorless AO usually scans) pay almost nothing for it. If high-order modes
+    run out of stroke, narrow the ring or switch to ``edge="taper"``.
+
+    Examples
+    --------
+    >>> modes = zernike_sub_aperture(28, 28, 15, radius=10.0)   # doctest: +SKIP
+    >>> phase = 0.2 * modes.phase[3]        # 0.2 RMS of defocus in the beam
+    """
+    if radius <= 0:
+        raise ValueError(f"radius must be > 0, got {radius}")
+    if edge not in ("hermite", "taper", "hard"):
+        raise ValueError(f"edge must be 'hermite', 'taper' or 'hard', got '{edge}'")
+    if piston not in ("edge", "mean", "none"):
+        raise ValueError(f"piston must be 'edge', 'mean' or 'none', got '{piston}'")
+    if normalize not in ("rms", "none"):
+        raise ValueError(f"normalize must be 'rms' or 'none', got '{normalize}'")
+    if edge != "hard" and not 0.0 < edge_width <= 1.0:
+        raise ValueError(f"edge_width must be in (0, 1], got {edge_width}")
+    if blend_order not in (1, 2):
+        raise ValueError(f"blend_order must be 1 or 2, got {blend_order}")
+
+    # --- coordinates normalized to the sub-aperture: ρ = 1 at the beam edge --
+    xx, yy = np.meshgrid(np.arange(nx, dtype=np.float64),
+                         np.arange(ny, dtype=np.float64))
+    if center is None:
+        cx, cy = (nx - 1) / 2.0, (ny - 1) / 2.0
+    else:
+        cx, cy = float(center[0]), float(center[1])
+
+    u = (xx - cx) / radius
+    v = (yy - cy) / radius
+    rho = np.sqrt(u ** 2 + v ** 2)
+    theta = np.arctan2(v, u)
+    rho_safe = np.where(rho > 1e-12, rho, 1e-12)
+
+    w = float(edge_width)
+    beam = rho <= 1.0
+    if edge == "hermite":
+        ring = (rho > 1.0) & (rho <= 1.0 + w)
+        support = beam | ring
+    else:
+        ring = np.zeros_like(beam)
+        support = beam.copy()
+
+    if pupil_mask is not None:
+        pupil_mask = np.asarray(pupil_mask, dtype=bool)
+        if pupil_mask.shape != (ny, nx):
+            raise ValueError(f"pupil_mask shape {pupil_mask.shape} != ({ny}, {nx})")
+        if not np.any(beam & pupil_mask):
+            raise ValueError("Sub-aperture does not overlap the pupil mask — "
+                             "check radius/center against the calibration mask.")
+        outside = ~pupil_mask
+    else:
+        outside = np.zeros_like(beam)
+
+    beam_valid = beam & ~outside      # domain for RMS normalization
+    beam_f = beam.astype(np.float64)
+
+    phase = np.zeros((nz, ny, nx))
+    dphase_dx = np.zeros((nz, ny, nx))
+    dphase_dy = np.zeros((nz, ny, nx))
+    scale = np.ones(nz)
+
+    # Apodization window, shared by all modes (edge="taper")
+    if edge == "taper":
+        s = np.clip((rho - (1.0 - w)) / w, 0.0, 1.0)
+        S, dS = _smoothstep(s, order=blend_order)
+        window = (1.0 - S) * beam_f
+        dwindow_drho = np.where(beam & (rho > 1.0 - w), -dS / w, 0.0)
+        dwindow_dx = dwindow_drho * u / rho_safe
+        dwindow_dy = dwindow_drho * v / rho_safe
+    if edge == "hermite":
+        t = np.clip((rho - 1.0) / w, 0.0, 1.0)
+        (H0, H1, H2), (dH0, dH1, dH2) = _hermite_blend(t, order=blend_order)
+        ring_f = ring.astype(np.float64)
+        cos_t = u / rho_safe
+        sin_t = v / rho_safe
+
+    clipped = 0.0
+    for j in range(1, nz + 1):
+        n, m = noll_to_nm(j)
+        norm = _zernike_norm(n, m)
+
+        # --- the Zernike itself, over the beam -------------------------------
+        z, dzdx, dzdy = _zernike_single(n, m, rho, theta, u, v, beam_f)
+
+        if piston == "edge":
+            # value of the mode on the beam edge, averaged over θ:
+            # N·R(1) for m = 0, and exactly 0 for every m ≠ 0
+            c = norm * float(_radial_polynomial(n, m, np.ones(1))[0]) if m == 0 else 0.0
+        elif piston == "mean":
+            c = float(z[beam_valid].mean()) if np.any(beam_valid) else 0.0
+        else:
+            c = 0.0
+        z = (z - c) * beam_f
+
+        # --- join it to the surrounding flat area ----------------------------
+        if edge == "hard":
+            p, px, py = z, dzdx, dzdy
+
+        elif edge == "taper":
+            p = z * window
+            px = dzdx * window + z * dwindow_dx
+            py = dzdy * window + z * dwindow_dy
+
+        else:  # hermite: continue the mode into the ring outside the beam
+            Theta, dTheta = _angular_part(m, theta)
+            one = np.ones(1)
+            r1 = float(_radial_polynomial(n, m, one)[0])
+            dr1 = float(_radial_derivative(n, m, one)[0])
+            d2r1 = float(_radial_second_derivative(n, m, one)[0])
+
+            # boundary value / radial slope / radial curvature at ρ = 1
+            P = norm * r1 * Theta - c
+            M = w * norm * dr1 * Theta
+            A = w * w * norm * d2r1 * Theta
+            dP = norm * r1 * dTheta
+            dM = w * norm * dr1 * dTheta
+            dA = w * w * norm * d2r1 * dTheta
+
+            f = P * H0 + M * H1 + A * H2
+            f_rho = (P * dH0 + M * dH1 + A * dH2) / w
+            f_theta = dP * H0 + dM * H1 + dA * H2
+
+            p = z + f * ring_f
+            px = dzdx + (f_rho * cos_t - f_theta * sin_t / rho_safe) * ring_f
+            py = dzdy + (f_rho * sin_t + f_theta * cos_t / rho_safe) * ring_f
+
+        # --- nothing outside the controllable pupil --------------------------
+        if np.any(outside):
+            clipped = max(clipped, float(np.abs(p[outside]).max(initial=0.0)))
+            p = np.where(outside, 0.0, p)
+            px = np.where(outside, 0.0, px)
+            py = np.where(outside, 0.0, py)
+
+        if normalize == "rms":
+            if np.any(beam_valid):
+                # RMS about the mean: a piston offset is not an aberration and
+                # must not count towards the amplitude, otherwise removing the
+                # edge piston from defocus would halve the defocus it delivers
+                rms = float(np.std(p[beam_valid]))
+                if rms <= 1e-12:
+                    rms = float(np.sqrt(np.mean(p[beam_valid] ** 2)))
+            else:
+                rms = 0.0
+            if rms > 1e-12:
+                scale[j - 1] = rms
+                p, px, py = p / rms, px / rms, py / rms
+            else:
+                # degenerate (e.g. piston with piston="edge") — leave it at zero
+                scale[j - 1] = 1.0
+
+        phase[j - 1], dphase_dx[j - 1], dphase_dy[j - 1] = p, px, py
+
+    if clipped > 0.01:
+        warnings.warn(
+            f"The sub-aperture blending ring reaches outside the pupil mask and was "
+            f"clipped (max clipped amplitude {clipped:.3g}, i.e. a step of that size "
+            f"at the pupil edge). Reduce 'radius' or 'edge_width', or use edge='taper'.",
+            RuntimeWarning, stacklevel=2)
+
+    support = support & ~outside
+    return SubApertureModes(phase, dphase_dx, dphase_dy, beam & ~outside, support, scale)
+
+
+def apply_transform(modes: np.ndarray, T: np.ndarray) -> np.ndarray:
+    """
+    Apply a mode-mixing matrix to a stack of maps: ``out[i] = Σ_j T[i,j]·modes[j]``.
+
+    Unlike :func:`gs_orthogonalize`, which rebuilds its output from the pixels
+    inside the mask only, this keeps whatever the modes carry outside the mask —
+    which is what sub-aperture modes need, since their blending ring lies
+    outside the beam used as the inner-product domain.
+    """
+    return np.tensordot(T, modes, axes=(1, 0))
+
+
+def stack_slopes(dZdx: np.ndarray, dZdy: np.ndarray,
+                 normalize: bool = True) -> np.ndarray:
+    """
+    Pack x/y derivatives into the (2·npix, nz) slope matrix a zonal control
+    matrix consumes: the x slopes of every pixel, then the y slopes.
+
+    Parameters
+    ----------
+    dZdx, dZdy : (nz, ny, nx) arrays
+    normalize : bool
+        Scale each mode by the RMS of its **combined** (x, y) slope vector, so
+        that one unit of coefficient means a comparable slope amplitude for
+        every mode. The two components must be scaled by the *same* factor:
+        normalizing x and y separately rewrites the direction of the mode, and
+        blows numerical noise up to full scale for modes whose slope is purely
+        along one axis (tilt).
+
+    Returns
+    -------
+    slopes : (2·ny·nx, nz)
+    """
+    nz, ny, nx = dZdx.shape
+    npix = ny * nx
+    slopes = np.zeros((2 * npix, nz))
+
+    for j in range(nz):
+        gx = dZdx[j].ravel()
+        gy = dZdy[j].ravel()
+        if normalize:
+            rms = np.sqrt(np.mean(gx ** 2 + gy ** 2) / 2.0)
+            if rms > 1e-12:
+                gx, gy = gx / rms, gy / rms
+            else:
+                gx, gy = np.zeros_like(gx), np.zeros_like(gy)
+        slopes[:npix, j] = gx
+        slopes[npix:, j] = gy
+
+    return slopes
+
+
 def verify_orthogonality(Z: np.ndarray, mask: np.ndarray, nz: int = None):
     """
     Verify orthogonality of the Zernike basis: <Zi, Zj> ≈ δij.
@@ -730,6 +1198,33 @@ if __name__ == "__main__":
     cross_rect = verify_orthogonality(Z_r_orth, mask_rect)
     print(f"  Max |off-diagonal| after GS: {np.abs(cross_rect - np.diag(np.diag(cross_rect))).max():.2e}")
 
+    # ── Sub-aperture (beam-sized) modes ──────────────────────────────
+    print(f"\n{'─' * 60}")
+    print(f"  Sub-aperture modes — beam smaller than the DM")
+    print(f"{'─' * 60}")
+    beam_ratio = 0.7
+    cx_p, cy_p, r_pupil = aperture_from_mask(mask)
+    print(f"  Pupil: centre ({cx_p:.1f}, {cy_p:.1f}), equal-area radius {r_pupil:.2f} px")
+    print(f"  Beam : {beam_ratio:.2f} x the DM diameter\n")
+    print(f"  {'edge':10s} {'beam px':>8s} {'support px':>11s} {'max step / px':>14s} {'peak |phase|':>13s}")
+    sub = {}
+    low = slice(1, 12)  # modes 2-12, the ones sensorless AO usually scans
+    for edge_mode in ("hard", "taper", "hermite"):
+        sub[edge_mode] = zernike_sub_aperture(nx, ny, nz, radius=beam_ratio * r_pupil,
+                                              center=(cx_p, cy_p), edge=edge_mode,
+                                              edge_width=0.25, pupil_mask=mask)
+        s = sub[edge_mode]
+        step = max(np.abs(np.diff(s.phase[low], axis=1)).max(),
+                   np.abs(np.diff(s.phase[low], axis=2)).max())
+        print(f"  {edge_mode:10s} {int(s.beam_mask.sum()):8d} {int(s.support_mask.sum()):11d} "
+              f"{step:14.4f} {np.abs(s.phase[low]).max():13.4f}")
+    print("  (step and peak over modes 2-12; a coarse 28x28 grid undersamples the high orders)")
+    s = sub["hermite"]
+    print(f"\n  Outside the support the modes are flat to "
+          f"{np.abs(s.phase[:, ~s.support_mask]).max():.1e}")
+    print(f"  RMS over the beam (modes 2-10): "
+          f"{np.round([np.std(s.phase[j][s.beam_mask]) for j in range(1, 10)], 4)}")
+
     # ── Plots ────────────────────────────────────────────────────────
     try:
         import matplotlib.pyplot as plt
@@ -791,6 +1286,33 @@ if __name__ == "__main__":
         plt.tight_layout()
         plt.savefig("zernike_gs_comparison.png", dpi=150, bbox_inches="tight")
         print("\nSaved to zernike_gs_comparison.png")
+        plt.show()
+
+        # Sub-aperture modes: hard crop vs taper vs blended ring
+        show = [1, 3, 5, 7, 10]
+        fig, axes = plt.subplots(3, len(show) + 1, figsize=(3.0 * (len(show) + 1), 8.5))
+        for row, edge_mode in enumerate(("hard", "taper", "hermite")):
+            s_modes = sub[edge_mode]
+            for col, j in enumerate(show):
+                v = np.abs(s_modes.phase[j]).max()
+                axes[row, col].imshow(s_modes.phase[j], cmap="RdBu_r", vmin=-v, vmax=v,
+                                      interpolation="none")
+                axes[row, col].contour(s_modes.beam_mask, [0.5], colors="k", linewidths=0.8)
+                axes[row, col].axis("off")
+                if row == 0:
+                    axes[row, col].set_title(zernike_names(nz)[j].split(") ")[-1], fontsize=9)
+            # radial cut through defocus
+            cut = s_modes.phase[3][int(round(cy_p))]
+            axes[row, -1].plot(cut, lw=1.2)
+            axes[row, -1].axvline(cx_p - beam_ratio * r_pupil, ls=":", c="k", lw=0.8)
+            axes[row, -1].axvline(cx_p + beam_ratio * r_pupil, ls=":", c="k", lw=0.8)
+            axes[row, -1].set_title(f"{edge_mode}: cut through defocus", fontsize=9)
+            axes[row, -1].set_xlabel("lenslet")
+        plt.suptitle(f"Zernike modes on a beam {beam_ratio:.2f} x the DM diameter "
+                     f"(dotted lines / black contour = beam edge)", fontsize=12)
+        plt.tight_layout()
+        plt.savefig("zernike_sub_aperture.png", dpi=150, bbox_inches="tight")
+        print("Saved to zernike_sub_aperture.png")
         plt.show()
 
     except Exception as e:
