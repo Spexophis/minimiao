@@ -372,8 +372,12 @@ class ControlPanel(QWidget):
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["2D_WideField", "3D_WideField",
                                                                          "2D_SIM", "3D_SIM",
-                                                                         "2D_NLSIM"])
+                                                                         "2D_NLSIM",
+                                                                         "2D_WideField_Timelapse", "3D_WideField_Timelapse",
+                                                                         "2D_SIM_Timelapse", "3D_SIM_Timelapse",
+                                                                         "2D_NLSIM_Timelapse"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
+        self.QSpinBox_acquisition_interval = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
 
@@ -389,13 +393,15 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(self.QPushButton_save_acquisition_timing_presets, 2, 3, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_acquire, 2, 4, 1, 1)
+        acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Interval / s')), 2, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QSpinBox_acquisition_interval, 3, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_acquire, 4, 4, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Profile Axis')), 3, 0, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_profile_axis, 3, 1, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_plot_profile, 4, 0, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_add_profile, 4, 1, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_dpc, 4, 3, 1, 1)
-        acq_scroll_layout.addWidget(self.QPushButton_dpc_acquire, 4, 4, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_dpc, 3, 2, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_dpc_acquire, 4, 2, 1, 1)
 
         group_layout = QVBoxLayout(group)
         group_layout.addWidget(acq_scroll_area)
@@ -674,6 +680,9 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def plot_trigger_sequence(self):
         self.Signal_plot_trigger.emit()
+
+    def get_acquisition_interval(self):
+        return self.QSpinBox_acquisition_interval.value()
 
     @pyqtSlot()
     def run_focus_finding(self):

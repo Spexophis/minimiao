@@ -679,6 +679,43 @@ class CommandExecutor(QObject):
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
                                          finite=False, trg=False)
             pos = aqn
+        elif aqm == "2D_WideField_Timelapse":
+            dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+            rt = self.ctrl_panel.get_acquisition_interval()
+            self.devs.daq.set_trigger_counter(delay=rt)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         finite=False, trg=True)
+            pos = aqn
+        elif aqm == "3D_WideField_Timelapse":
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan()
+            rt = self.ctrl_panel.get_acquisition_interval()
+            self.devs.daq.set_trigger_counter(delay=rt)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
+                                         analog_sequences=ptr, analog_channels=pchs,
+                                         finite=False, trg=True)
+        elif aqm == "2D_SIM_Timelapse":
+            dtr, chs = self.trg.generate_sim_triggers(aqn)
+            rt = self.ctrl_panel.get_acquisition_interval()
+            self.devs.daq.set_trigger_counter(delay=rt)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         finite=False, trg=True)
+            pos = aqn * 2
+        elif aqm == "3D_SIM_Timelapse":
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(aqn)
+            self.devs.daq.set_piezo_position([ptr[0]], [2])
+            rt = self.ctrl_panel.get_acquisition_interval()
+            self.devs.daq.set_trigger_counter(delay=rt)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
+                                         analog_sequences=ptr, analog_channels=pchs,
+                                         finite=False, trg=True)
+            pos = pos * 2 * aqn
+        elif aqm == "2D_NLSIM_Timelapse":
+            dtr, chs = self.trg.generate_nlsim_triggers(aqn)
+            rt = self.ctrl_panel.get_acquisition_interval()
+            self.devs.daq.set_trigger_counter(delay=rt)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         finite=False, trg=True)
+            pos = aqn
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.prepare_camera()

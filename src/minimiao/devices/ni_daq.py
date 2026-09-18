@@ -41,15 +41,16 @@ class NIDAQ:
                                  "Dev1/port0/line5", "Dev1/port0/line6", "Dev1/port0/line7"]
         self.led_channels = ["Dev2/port0/line0", "Dev2/port0/line1"]
         self.task_led = None
-        self.clock_external_start_terminal = "/Dev1/PFI1"
+        self.trigger_counter_channels = ["/Dev1/ctr1", "/Dev2/ctr1"]
+        self.trigger_counter_terminals = ["/Dev1/PFI2", "/Dev2/PFI2"]
+        self.trigger_delay = float(1.0)
+        self.trigger_duty_cycle = float(0.01)
+        self.clock_external_start_terminals = ["/Dev1/PFI1", "/Dev2/PFI1"]
         self.clock_counter_channels = ["/Dev1/ctr0", "/Dev2/ctr0"]
         self.clock_counter_terminals = ["/Dev1/PFI12", "/Dev2/PFI12"]
         self.run_mode = None
         self.retriggered = False
         self.sequence_samples = None
-
-    def __del__(self):
-        pass
 
     def close(self):
         for device in self.devices:
@@ -67,7 +68,7 @@ class NIDAQ:
 
     def _configure(self):
         try:
-            tasks = {"digital": None, "analog": None, "clock": None}
+            tasks = {"trigger": None, "clock": None, "digital": None, "analog": None}
             _active = {key: False for key in tasks.keys()}
             _running = {key: False for key in tasks.keys()}
             return tasks, _active, _running
@@ -180,6 +181,16 @@ class NIDAQ:
         if cls:
             self.task_led.close()
 
+    def set_trigger_counter(self, delay):
+        """
+        Set the trigger counter frequency (Hz) and duty cycle, independent of the sample clock.
+        Takes effect on the next write_triggers(..., trg=True).
+        """
+        if delay <= 0:
+            self.logg.error("Trigger delay must be > 0")
+            return
+        self.trigger_delay = float(delay)
+
     def write_clock_channel(self, samples_per_trigger, trigger=False):
         """
         Configure the counter clock.
@@ -201,10 +212,42 @@ class NIDAQ:
                     pass
                 self.tasks["clock"] = None
 
+            # Close any previous trigger task before recreating it
+            if self.tasks.get("trigger") is not None:
+                try:
+                    self.tasks["trigger"].close()
+                except Exception:
+                    pass
+                self.tasks["trigger"] = None
+
             # Retriggerable pulse generation must be finite
             if trigger and samples_per_trigger <= 0:
                 self.logg.error("Retriggerable clock generation requires samples_per_trigger > 0.")
                 return
+
+            if trigger:
+                # The retriggerable clock ignores triggers during a burst,
+                # so the trigger period must be longer than one sequence.
+                trigger_period = self.trigger_delay + samples_per_trigger / self.sample_rate
+                trigger_rate = 1 / trigger_period
+
+                self.tasks["trigger"] = nidaqmx.Task("trigger")
+
+                trg_channel = self.tasks["trigger"].co_channels.add_co_pulse_chan_freq(counter=self.trigger_counter_channels[0],
+                                                                                       freq=trigger_rate,
+                                                                                       duty_cycle=self.trigger_duty_cycle)
+
+                trg_channel.co_ctr_timebase_src = "20MHzTimebase"
+                trg_channel.co_pulse_term = self.trigger_counter_terminals[0]
+
+                self.tasks["trigger"].timing.cfg_implicit_timing(sample_mode=AcquisitionType.CONTINUOUS)
+
+                self.tasks["trigger"].control(TaskMode.TASK_COMMIT)
+
+                self._active["trigger"] = True
+                self._running["trigger"] = False
+
+                self.logg.info(f"Trigger counter configured: {trigger_rate} Hz, output on {self.trigger_counter_terminals[0]}.")
 
             self.tasks["clock"] = nidaqmx.Task("clock")
 
@@ -231,7 +274,7 @@ class NIDAQ:
             # External start trigger, optionally retriggerable
             if trigger:
                 self.tasks["clock"].triggers.start_trigger.cfg_dig_edge_start_trig(
-                    trigger_source=self.clock_external_start_terminal,
+                    trigger_source=self.clock_external_start_terminals[0],
                     trigger_edge=Edge.RISING)
 
                 self.tasks["clock"].triggers.start_trigger.retriggerable = True
@@ -541,7 +584,7 @@ class NIDAQ:
     def start_triggers(self):
         try:
             for key, _task in self.tasks.items():
-                if key == "clock":
+                if key in ("clock", "trigger"):
                     continue
 
                 if _task is None:
@@ -566,11 +609,15 @@ class NIDAQ:
                 self.tasks["clock"].start()
                 self._running["clock"] = True
 
+            if self.tasks.get("trigger") is not None and not self._running.get("trigger", False):
+                self.tasks["trigger"].start()
+                self._running["trigger"] = True
+
             self.logg.info("Trigger is running")
 
             if self.run_mode == AcquisitionType.FINITE and not self.retriggered:
                 for key, _task in self.tasks.items():
-                    if key == "clock":
+                    if key in ("clock", "trigger"):
                         continue
 
                     if _task is None:
@@ -580,6 +627,10 @@ class NIDAQ:
                         _task.wait_until_done(WAIT_INFINITELY)
                         _task.stop()
                         self._running[key] = False
+
+                if self.tasks.get("trigger") is not None and self._running.get("trigger", False):
+                    self.tasks["trigger"].stop()
+                    self._running["trigger"] = False
 
                 if self.tasks.get("clock") is not None and self._running.get("clock", False):
                     self.tasks["clock"].stop()
@@ -596,6 +647,13 @@ class NIDAQ:
                 self.logg.error("Assertion Error: %s", ae)
 
     def stop_triggers(self, _close=True):
+        if self.tasks.get("trigger") is not None and self._running.get("trigger", False):
+            try:
+                self.tasks["trigger"].stop()
+            except nidaqmx.DaqWarning as e:
+                self.logg.warning("DaqWarning caught as exception: %s", e)
+            self._running["trigger"] = False
+
         for key, _task in self.tasks.items():
             if _task is None:
                 continue
