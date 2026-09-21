@@ -37,6 +37,7 @@ class TriggerSequence:
         self.dot_pos = [np.arange(dot_start, galvo_stop, dot_step) for (dot_start, galvo_stop, dot_step) in
                         zip(self.galvo_starts, self.galvo_stops, self.dot_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.dot_pos]
+        self.galvo_fast_axis = 0
         # piezo scanner
         self.piezo_conv_factors = [10.]
         self.piezo_steps = [0.08]
@@ -67,12 +68,6 @@ class TriggerSequence:
         self.exposure_samples = int(np.ceil(self.exposure_time * self.sample_rate))
         self.trigger_pulse_width = 1e-4  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
 
     def update_sampling_rate(self, sample_rate=None):
         if sample_rate is not None:
@@ -226,7 +221,7 @@ class TriggerSequence:
         galvo_sequences[0] += galvo_offset_x
         digital_triggers = np.tile(digital_triggers, self.galvo_scan_pos[pch])
         gates = np.tile(gates, self.galvo_scan_pos[pch])
-        return digital_triggers, convert_list(galvo_sequences), dig_chs, gv_chs, pos, gates, dwl
+        return digital_triggers, convert_list(galvo_sequences, self.galvo_fast_axis), dig_chs, gv_chs, pos, gates, dwl
 
     def generate_galvo_point_scan(self, lasers, detectors):
         pos = 1
@@ -248,7 +243,7 @@ class TriggerSequence:
             digital_channels.extend(detect_ind)
         digital_triggers = [gate_ttl for _ in range(len(digital_channels))]
         gates = [gate_ttl for _ in range(len(gate_ind))]
-        return convert_list(digital_triggers), convert_list(galvo_sequences), digital_channels, gv_chs, pos, gates
+        return convert_list(digital_triggers), convert_list(galvo_sequences, self.galvo_fast_axis), digital_channels, gv_chs, pos, gates
 
     def _build_piezo_z_sequence(self, samples_per_z_total: int) -> np.ndarray:
         """
@@ -493,11 +488,14 @@ class TriggerSequence:
                 dig_chs, gv_chs, [0], total_pos, gates_3d)
 
 
-def convert_list(arrays):
+def convert_list(arrays, reverse=0):
     if len(arrays) == 1:
         return arrays[0]
     else:
-        return np.array(arrays)
+        if reverse == 1:
+            return np.array(arrays[::-1])
+        else:
+            return np.array(arrays)
 
 
 def smooth_ramp(start, end, samples, curve_half=0.02):

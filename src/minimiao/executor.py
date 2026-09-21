@@ -38,15 +38,12 @@ class CommandExecutor(QObject):
         self.detector = {0: [0, 1], 1: [0, 2]}
         self.task_worker = None
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def _set_signal_executions(self):
         # Galvo
         self.ctrl_panel.Signal_galvo_set.connect(self.set_galvo)
+        # Stand
+        self.ctrl_panel.Signal_stand_z_move.connect(self.set_stand_z_position)
+        self.ctrl_panel.Signal_obj_corr_move.connect(self.set_obj_corr_position)
         # Piezo
         self.ctrl_panel.Signal_piezo_move.connect(self.set_piezo_positions)
         # Lasers
@@ -101,9 +98,38 @@ class CommandExecutor(QObject):
 
     @pyqtSlot()
     def update_galvo_scanner(self):
+        self.trg.galvo_fast_axis = self.ctrl_panel.get_galvo_fast_axis()
         galvo_positions, galvo_ranges, dot_steps, offset, ret = self.ctrl_panel.get_galvo_scan_parameters()
         self.trg.update_galvo_scan_parameters(origins=galvo_positions, ranges=galvo_ranges, foci=dot_steps,
                                               offsets=offset, returns=ret)
+
+    @pyqtSlot(int)
+    def set_obj_corr_position(self, value_corr: int):
+        try:
+            self.devs.dmi.mov_corr(value_corr)
+            QTimer.singleShot(100, lambda: self.update_obj_corr_display())
+        except Exception as e:
+            self.logg.error(f"Piezo Error: {e}")
+
+    def update_obj_corr_display(self):
+        try:
+            self.ctrl_panel.display_obj_corr_position(self.devs.dmi.current_corr)
+        except Exception as e:
+            self.logg.error(f"Piezo Read Error: {e}")
+
+    @pyqtSlot(int)
+    def set_stand_z_position(self, value_z: int):
+        try:
+            self.devs.dmi.mov_z(value_z)
+            QTimer.singleShot(100, lambda: self.update_stand_z_display())
+        except Exception as e:
+            self.logg.error(f"Piezo Error: {e}")
+
+    def update_stand_z_display(self):
+        try:
+            self.ctrl_panel.display_stand_z_position(self.devs.dmi.current_z)
+        except Exception as e:
+            self.logg.error(f"Piezo Read Error: {e}")
 
     def reset_piezo_positions(self):
         pos_z = self.ctrl_panel.get_piezo_positions()
@@ -377,6 +403,10 @@ class CommandExecutor(QObject):
             self.run_resolft_scan(acq_num)
         elif acq_mod == "Point Scan 2D" and scan.lower().startswith("point"):
             self.run_point_scan(acq_num)
+        # if acq_mod == "RESOLFT Scan 3D" and scan.lower().startswith("resolft"):
+        #     self.run_resolft_scan_3d(acq_num)
+        elif acq_mod == "Point Scan 3D" and scan.lower().startswith("point"):
+            self.run_point_scan_3d(acq_num)
         else:
             self.logg.error(f"Invalid video mode")
 
@@ -599,6 +629,119 @@ class CommandExecutor(QObject):
     def run_point_scan(self, n: int):
         self.vw.get_dialog(txt="Point Scanning Acquisition")
         self.run_task(task=self.point_scan, iteration=n)
+
+    def prepare_point_scan_3d(self, tim):
+        self.lasers = self.ctrl_panel.get_lasers()
+        self.set_lasers(self.lasers)
+        self.update_trigger_parameters()
+        dn = self.ctrl_panel.get_detector()
+        self.viewer.set_plots(dn)
+
+        gate_channel = []
+        counter_channel = []
+        reader_channel = []
+        if dn[0] == 0:
+            gate_channel.append(0)
+            counter_channel.append(0)
+        if dn[0] == 1:
+            reader_channel = [0]
+        if dn[1] == 0:
+            gate_channel.append(1)
+            counter_channel.append(1)
+        if dn[1] == 1:
+            counter_channel.append(2)
+        reader_channel.extend([1, 2])
+
+        dtr, gtr, dch, gch, pos, gts = self.trg.generate_galvo_point_scan(self.lasers, gate_channel)
+        pdw = 1
+        self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                     digital_sequences=dtr, digital_channels=dch,
+                                     reader_channels=reader_channel, finite=True)
+
+        self.rec.point_scan_gate_mask = gts[0]
+        self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1],
+                                       n_pixels=self.trg.galvo_scan_pos[0],
+                                       dwell_samples=pdw)
+        self.rec.prepare_point_scan_live_recon()
+
+        if dtr.ndim == 1:
+            self.devs.daq.photon_counter_length = dtr.shape[0]
+        if dtr.ndim == 2:
+            self.devs.daq.photon_counter_length = dtr.shape[1]
+        if len(counter_channel) > 0:
+            self.devs.daq.prepare_photon_counter(counter_channel)
+            # Build slot map: hardware counter index → display slot index
+            mpd_slot_map = []
+            if dn[0] == 0:
+                mpd_slot_map.append(0)  # spot 0 is MPD → display slot 0
+            if dn[1] in (0, 1):
+                mpd_slot_map.append(1)  # spot 1 is MPD or PMT_photon → display slot 1
+
+            def _mpd_recon(counts, ind_list, ind):
+                self.rec.point_scan_live_recon(counts, ind_list, mpd_slot_map[ind])
+
+            self.devs.daq.mpd_data.on_update(_mpd_recon)
+        else:
+            self.devs.daq.clear_photon_counter()
+
+        if 0 in reader_channel and self.devs.daq.pmt_data is not None:
+            self.devs.daq.pmt_data.on_update(
+                lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
+            )
+
+        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
+        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+
+    def point_scan_3d(self):
+        tim = time.strftime("%Y%m%d%H%M%S")
+        try:
+            self.prepare_point_scan(tim)
+        except Exception as e:
+            self.logg.error(f"Error preparing point scanning: {e}")
+            return
+        try:
+            cpz = self.devs.dmi.current_z
+            psl = [-x + cpz for x in range(-1200, 1201, 40)]
+            self.set_stand_z_position(psl[0] + 400)
+            data = self.img_stack_iteration(psl)
+            self.set_stand_z_position(cpz)
+            fn = os.path.join(self.path, tim + "_point_scanning_3d_data.tif")
+            tf.imwrite(fn, data)
+        except Exception as e:
+            self.finish_point_scan_3d()
+            self.logg.error(f"Error running point scanning: {e}")
+            return
+        self.finish_point_scan_3d()
+
+    def img_stack_iteration(self, positions):
+        nz = len(positions)
+        imstack = np.zeros((2, nz, self.rec.point_scan_n_lines, self.rec.point_scan_n_pixels))
+        # res = np.zeros((3, nz, self.rec.scan_gate_len))
+        for n, pos in enumerate(positions):
+            self.set_stand_z_position(pos)
+            time.sleep(0.01)
+            self.one_scan()
+            imstack[0, n] = np.array(self.rec.live_rec[0]).astype(np.float32)
+            imstack[1, n] = np.array(self.rec.live_rec[1]).astype(np.float32)
+            # res[0, n] = np.arange(self.rec.scan_gate_len) / self.trg.sample_rate
+            # res[1, n] = np.array(self.rec.live_counts[0])
+            # res[2, n] = np.array(self.rec.live_counts[1])
+        return imstack
+
+    def finish_point_scan_3d(self):
+        try:
+            self.devs.daq.stop_photon_count()
+            self.devs.daq.stop_pmt_read()
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            self.reset_galvo_positions()
+            self.logg.info("Point scanning image acquired")
+        except Exception as e:
+            self.logg.error(f"Error stopping point scanning: {e}")
+
+    def run_point_scan_3d(self, n: int):
+        self.vw.get_dialog(txt="Point Scanning Acquisition")
+        self.run_task(task=self.point_scan_3d, iteration=n)
 
     def prepare_auto_roi(self):
         mth = self.ctrl_panel.get_live_mode()

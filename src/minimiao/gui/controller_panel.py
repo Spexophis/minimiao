@@ -13,6 +13,8 @@ from . import custom_widgets as cw
 
 class ControlPanel(QWidget):
     Signal_galvo_set = pyqtSignal(float, float)
+    Signal_stand_z_move = pyqtSignal(int)
+    Signal_obj_corr_move = pyqtSignal(int)
     Signal_piezo_move = pyqtSignal(str, float)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_daq_update = pyqtSignal(int)
@@ -54,6 +56,13 @@ class ControlPanel(QWidget):
         piezo_scroll_area, piezo_scroll_layout = cw.create_scroll_area("G")
         galvo_scroll_area, galvo_scroll_layout = cw.create_scroll_area("G")
 
+        self.QSpinBox_stand_z = cw.SpinBoxWidget(0, 834710, 100, 434700)
+        self.QLCDNumber_stand_z = cw.LCDNumberWidget(0, 6)
+        self.QPushButton_stand_z = cw.PushButtonWidget("Set Stand Z")
+        self.QSpinBox_obj_corr = cw.SpinBoxWidget(0, 10000, 1, 4650)
+        self.QLCDNumber_obj_corr = cw.LCDNumberWidget(0, 5)
+        self.QPushButton_obj_corr = cw.PushButtonWidget("Set Obj Corr")
+
         self.QDoubleSpinBox_stage_z = cw.DoubleSpinBoxWidget(0, 100, 0.04, 2, 20.00)
         self.QLCDNumber_stage_z = cw.LCDNumberWidget(20.00, 4)
         self.QDoubleSpinBox_step_z = cw.DoubleSpinBoxWidget(0, 50, 0.001, 4, 0.160)
@@ -77,6 +86,17 @@ class ControlPanel(QWidget):
         piezo_scroll_layout.addWidget(cw.FrameWidget(), 7, 0, 1, 3)
         piezo_scroll_layout.addWidget(self.QPushButton_focus_finding, 8, 0)
 
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Stand')), 9, 0)
+        piezo_scroll_layout.addWidget(cw.FrameWidget(), 10, 0, 1, 2)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Z position')), 11, 0)
+        piezo_scroll_layout.addWidget(self.QSpinBox_stand_z, 12, 0)
+        piezo_scroll_layout.addWidget(self.QLCDNumber_stand_z, 12, 1)
+        piezo_scroll_layout.addWidget(self.QPushButton_stand_z, 12, 2)
+        piezo_scroll_layout.addWidget(cw.LabelWidget(str('Corr position')), 13, 0)
+        piezo_scroll_layout.addWidget(self.QSpinBox_obj_corr, 14, 0)
+        piezo_scroll_layout.addWidget(self.QLCDNumber_obj_corr, 14, 1)
+        piezo_scroll_layout.addWidget(self.QPushButton_obj_corr, 14, 2)
+
         self.QSpinBox_galvo_frequency = cw.SpinBoxWidget(0, 300, 1, 100)
         self.QLCDNumber_galvo_frequency = cw.LCDNumberWidget(0, 3)
         self.QDoubleSpinBox_galvo_x = cw.DoubleSpinBoxWidget(-10, 10, 0.0001, 5, 0)
@@ -90,6 +110,7 @@ class ControlPanel(QWidget):
         self.QSpinBox_galvo_ramp_time = cw.SpinBoxWidget(0, 2000, 1, 240)
         self.QSpinBox_galvo_step_response = cw.SpinBoxWidget(0, 2000, 1, 320)
         self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 320)
+        self.QSpinBox_galvo_fast_axis = cw.SpinBoxWidget(0, 1, 1, 0)
         self.QComboBox_galvo_scan_presets = cw.ComboBoxWidget(list_items=[], length=200)
         self.QPushButton_save_galvo_scan_presets = cw.PushButtonWidget("Save Scan")
         self.QLineEdit_new_galvo_scan_preset = cw.LineEditWidget()
@@ -116,10 +137,12 @@ class ControlPanel(QWidget):
         galvo_scroll_layout.addWidget(self.QSpinBox_galvo_return_time, 6, 1)
         galvo_scroll_layout.addWidget(cw.LabelWidget(str('Galvo StpResp / us')), 7, 0)
         galvo_scroll_layout.addWidget(self.QSpinBox_galvo_step_response, 7, 1)
-        galvo_scroll_layout.addWidget(self.QComboBox_galvo_scan_presets, 8, 0, 1, 2)
-        galvo_scroll_layout.addWidget(self.QPushButton_save_galvo_scan_presets, 8, 2)
-        galvo_scroll_layout.addWidget(self.QLineEdit_new_galvo_scan_preset, 9, 0, 1, 2)
-        galvo_scroll_layout.addWidget(self.QPushButton_save_new_galvo_scan_preset, 9, 2)
+        galvo_scroll_layout.addWidget(cw.LabelWidget(str('Fast Axis')), 8, 0)
+        galvo_scroll_layout.addWidget(self.QSpinBox_galvo_fast_axis, 8, 1)
+        galvo_scroll_layout.addWidget(self.QComboBox_galvo_scan_presets, 9, 0, 1, 2)
+        galvo_scroll_layout.addWidget(self.QPushButton_save_galvo_scan_presets, 9, 2)
+        galvo_scroll_layout.addWidget(self.QLineEdit_new_galvo_scan_preset, 10, 0, 1, 2)
+        galvo_scroll_layout.addWidget(self.QPushButton_save_new_galvo_scan_preset, 10, 2)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(piezo_scroll_area)
@@ -213,10 +236,12 @@ class ControlPanel(QWidget):
 
         self.QComboBox_imaging_detector_0 = cw.ComboBoxWidget(list_items=["MPD_0", "PMT_0", "None"])
         self.QComboBox_imaging_detector_1 = cw.ComboBoxWidget(list_items=["MPD_1", "PMT_1", "None"])
-        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan", "Point Scan", "Point Scan 3D"])
+        self.QComboBox_live_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan", "Point Scan"])
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
-        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan 2D", "Point Scan 2D", "Static Point"])
+        self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan 2D", "Point Scan 2D",
+                                                                         "Point Scan 3D",
+                                                                         "Static Point"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")
@@ -246,6 +271,8 @@ class ControlPanel(QWidget):
         self.QComboBox_galvo_scan_presets.currentTextChanged.connect(self.load_selected_preset)
         self.QPushButton_save_galvo_scan_presets.clicked.connect(self.save_galvo_scan_preset)
         self.QPushButton_save_new_galvo_scan_preset.clicked.connect(self.create_new_galvo_preset)
+        self.QPushButton_stand_z.clicked.connect(self.set_stand_z)
+        self.QPushButton_obj_corr.clicked.connect(self.set_obj_corr)
         self.QDoubleSpinBox_stage_z.valueChanged.connect(self.set_piezo_z)
         self.QPushButton_laser_488_0.clicked.connect(self.set_laser_488_0)
         self.QPushButton_laser_488_1.clicked.connect(self.set_laser_488_1)
@@ -274,6 +301,9 @@ class ControlPanel(QWidget):
     def get_galvo_positions(self):
         return [self.QDoubleSpinBox_galvo_x.value(), self.QDoubleSpinBox_galvo_y.value()]
 
+    def get_galvo_fast_axis(self):
+        return self.QSpinBox_galvo_fast_axis.value()
+
     def get_galvo_scan_parameters(self):
         galvo_positions = [self.QDoubleSpinBox_galvo_x.value(), self.QDoubleSpinBox_galvo_y.value()]
         galvo_ranges = [self.QDoubleSpinBox_galvo_range_x.value(), self.QDoubleSpinBox_galvo_range_y.value()]
@@ -286,6 +316,22 @@ class ControlPanel(QWidget):
 
     def get_galvo_scan_set(self):
         return self.QComboBox_galvo_scan_presets.currentText()
+
+    @pyqtSlot()
+    def set_stand_z(self):
+        pos_z = self.QSpinBox_stand_z.value()
+        self.Signal_stand_z_move.emit(pos_z)
+
+    def display_stand_z_position(self, pos):
+        self.QLCDNumber_stand_z.display(pos)
+
+    @pyqtSlot()
+    def set_obj_corr(self):
+        pos_corr = self.QSpinBox_obj_corr.value()
+        self.Signal_obj_corr_move.emit(pos_corr)
+
+    def display_obj_corr_position(self, pos):
+        self.QLCDNumber_obj_corr.display(pos)
 
     @pyqtSlot(float)
     def set_piezo_z(self, pos_z: float):

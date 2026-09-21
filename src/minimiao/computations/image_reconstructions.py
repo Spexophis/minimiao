@@ -31,12 +31,6 @@ class ImgRecon:
 
         self.lock = threading.Lock()
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     @property
     def point_scan_gate_mask(self) -> np.ndarray:
         return self._point_scan_gate_mask

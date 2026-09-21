@@ -17,9 +17,3 @@ class ComputationManager:
         self.trg = trigger_generator.TriggerSequence(galvo=self.dev.gvs,
                                                      piezo=self.dev.pz,
                                                      logg=self.logg)
-
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging

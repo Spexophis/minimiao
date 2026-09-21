@@ -13,7 +13,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 class PhotonCountThread(threading.Thread):
 
-    def __init__(self, daq, ind, interval=0.001):
+    def __init__(self, daq, ind, interval=0.000001):
         threading.Thread.__init__(self)
         self.daq = daq
         self.ind = ind
@@ -113,7 +113,7 @@ class PhotonCountList:
 
 class PMTThread(threading.Thread):
 
-    def __init__(self, daq, interval=0.001):
+    def __init__(self, daq, interval=0.000001):
         threading.Thread.__init__(self)
         self.daq = daq
         self.interval = interval

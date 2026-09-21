@@ -26,12 +26,6 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self.dialog, self.dialog_text = None, None
 
-    @staticmethod
-    def setup_logging():
-        import logging
-        logging.basicConfig(format='%(levelname)s: %(message)s', level=logging.INFO)
-        return logging
-
     def closeEvent(self, event, **kwargs):
         self.aboutToClose.emit()
         self.ctrl_panel.save_spinbox_values()

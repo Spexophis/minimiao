@@ -3,6 +3,7 @@
 # Licensed under the MIT License.
 
 from minimiao import logger
+from . import leica_dmi
 from . import alpao_dm
 from . import cobolt_laser
 from . import ni_daq
@@ -16,6 +17,10 @@ class DeviceManager:
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
         self.cf = cf
+        try:
+            self.dmi = leica_dmi.LeicaDMI(logg=self.logg, config=self.config)
+        except Exception as e:
+            self.logg.error(f"{e}")
         try:
             self.laser = cobolt_laser.CoboltLaser(logg=self.logg, config=self.config)
         except Exception as e:
