@@ -523,3 +523,28 @@ class TriggerBox:
                 self.send(cmd)
         finally:
             self.raise_on_error = raise_
+
+
+if __name__ == '__main__':
+    print(TriggerBox.list_ports())
+
+    tb = TriggerBox("COM7")
+
+    seq = Sequence(sysclk_hz=10_000, external_trigger=False)
+    seq.add(
+        DigitalPulse(1, start_ms=10, stop_ms=95, freq_hz=100, width_us=200, output=1),
+        DigitalTrigger(3, start_ms=0, stop_ms=101, output=3),  # HIGH from start to stop
+        AnalogFixed(1, 0, 500, mv=2500),
+        AnalogRamp(2, 0, 1000, start_mv=0, stop_mv=5000),
+    )
+    seq.validate()  # raises ValueError on errors, emits warnings for risky settings
+    seq.commands()  # the command strings that will be sent
+    seq.plot()  # expected waveforms, no hardware needed
+
+    tb.upload(seq)  # RESET + config (validates first)
+    info = tb.arm()  # dict: raw, gclk4_prescaler, sysclk_hz, dig{n: (Hz, text)}
+    tb.run()
+    tb.wait_until_done()  # polls STATUS; timeout defaults to duration + 2 s
+    tb.stop()  # stop early; config kept, run() again without re-ARM
+
+    tb.close()

@@ -405,3 +405,29 @@ class DMD:
             self.close()
         except Exception:
             pass
+
+
+if __name__ == '__main__':
+
+    dmd = DMD()  # auto-finds alp4395.dll; or DMD(dll_path=r"...\alp4395.dll")
+    print(dmd.shape)  # (1080, 1920))
+    print(dmd.info())
+    print(dmd.temperatures())
+    print(dmd.free_memory)
+
+    seq = dmd.load(frames, picture_time_us=1000)
+    dmd.set_master()  # internal timing, SYNCH OUT pulse per frame
+    dmd.set_slave(rising_edge=True)  # each TRIGGER IN edge shows the next frame
+    dmd.set_step("rising")  # internal timing, each frame held until a trigger
+    dmd.set_orientation(invert=False, upside_down=False)
+    dmd.start(seq, continuous=True)  # loop until stop()
+    dmd.start(seq)  # one pass (or `repeat` passes)
+    dmd.wait()  # block until a one-pass run ends
+    dmd.stop()  # immediate halt
+    dmd.show(image)
+
+    dmd.free(seq)
+    dmd.free_all()     # release on-board memory
+    dmd.park()
+    dmd.wake()            # mirrors flat for long idle periods
+    dmd.close()
