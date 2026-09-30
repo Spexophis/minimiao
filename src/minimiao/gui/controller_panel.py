@@ -81,8 +81,8 @@ class ControlPanel(QWidget):
         self.QPushButton_emccd_cooler_switch = cw.PushButtonWidget('Cooler OFF', True, True, True)
         self.QSpinBox_emccd_coordinate_x = cw.SpinBoxWidget(0, 1024, 1, 1)
         self.QSpinBox_emccd_coordinate_y = cw.SpinBoxWidget(0, 1024, 1, 1)
-        self.QSpinBox_emccd_coordinate_nx = cw.SpinBoxWidget(0, 2048, 1, 1024)
-        self.QSpinBox_emccd_coordinate_ny = cw.SpinBoxWidget(0, 2048, 1, 1024)
+        self.QSpinBox_emccd_coordinate_nx = cw.SpinBoxWidget(0, 3000, 1, 1024)
+        self.QSpinBox_emccd_coordinate_ny = cw.SpinBoxWidget(0, 3000, 1, 1024)
         self.QSpinBox_emccd_coordinate_bin = cw.SpinBoxWidget(0, 1024, 1, 1)
         self.QSpinBox_emccd_gain = cw.SpinBoxWidget(0, 300, 1, 0)
         self.QDoubleSpinBox_emccd_t_exposure = cw.DoubleSpinBoxWidget(0, 10, 0.001, 5, 0.001)
@@ -335,6 +335,9 @@ class ControlPanel(QWidget):
         slm_scroll_area, slm_scroll_layout = cw.create_scroll_area("G")
 
         self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[], maxlen=256)
+        self.QSpinBox_sim_angles = cw.SpinBoxWidget(1, 999, 1, 1)
+        self.QSpinBox_sim_phases = cw.SpinBoxWidget(1, 999, 1, 1)
+        self.QRadioButton_motor_rotation = cw.RadioButtonWidget('Rotation')
         self.QDoubleSpinBox_motor_step = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 14.5)
         self.QPushButton_motor_fwd = cw.PushButtonWidget("Forward")
         self.QPushButton_motor_bwd = cw.PushButtonWidget("Backward")
@@ -343,13 +346,16 @@ class ControlPanel(QWidget):
 
         slm_scroll_layout.addWidget(cw.LabelWidget(str('SLM')), 0, 0, 1, 1)
         slm_scroll_layout.addWidget(self.QComboBox_slm_sequence, 1, 0, 1, 1)
-        slm_scroll_layout.addWidget(cw.LabelWidget(str('Motor')), 0, 1, 1, 1)
-        slm_scroll_layout.addWidget(cw.LabelWidget(str('Jog Step')), 0, 2, 1, 1)
-        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_step, 1, 2, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_fwd, 0, 3, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_bwd, 1, 3, 1, 1)
-        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_home, 0, 4, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_home, 1, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QSpinBox_sim_angles, 0, 1, 1, 1)
+        slm_scroll_layout.addWidget(self.QSpinBox_sim_phases, 1, 1, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Motor')), 0, 2, 1, 1)
+        slm_scroll_layout.addWidget(self.QRadioButton_motor_rotation, 1, 2, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Jog Step')), 0, 3, 1, 1)
+        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_step, 1, 3, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_fwd, 0, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_bwd, 1, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_home, 0, 5, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_motor_home, 1, 5, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(slm_scroll_area)
@@ -648,6 +654,9 @@ class ControlPanel(QWidget):
     def motor_step(self, step_size: float):
         self.Signal_motor_step.emit(step_size)
 
+    def get_motor_parameters(self):
+        return self.QDoubleSpinBox_motor_home.value(), self.QDoubleSpinBox_motor_step.value()
+
     @pyqtSlot()
     def motor_fwd(self):
         self.Signal_motor_move.emit(True)
@@ -683,6 +692,9 @@ class ControlPanel(QWidget):
 
     def get_acquisition_interval(self):
         return self.QSpinBox_acquisition_interval.value()
+
+    def get_sim_parameters(self):
+        return self.QSpinBox_sim_angles.value(), self.QSpinBox_sim_phases.value(), self.QRadioButton_motor_rotation.isChecked()
 
     @pyqtSlot()
     def run_focus_finding(self):

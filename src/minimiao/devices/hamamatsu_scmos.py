@@ -2329,9 +2329,9 @@ class HamamatsuCamera:
             self.logg.info("Set READOUT SPEED:" + DCAMPROP.READOUTSPEED(0x7FFFFFFF).name)
         else:
             self.logg.error("Failed to Set READOUT SPEED: {}".format(Dcamapi.lasterr()))
-        re = self.dcam.prop_setgetvalue(self.properties['READOUT DIRECTION'], 5)
+        re = self.dcam.prop_setgetvalue(self.properties['READOUT DIRECTION'], 1)
         if re is not False:
-            self.logg.info("Set READOUT DIRECTION:" + DCAMPROP.READOUT_DIRECTION(5).name)
+            self.logg.info("Set READOUT DIRECTION:" + DCAMPROP.READOUT_DIRECTION(1).name)
         else:
             self.logg.error("Failed to Set READOUT DIRECTION: {}".format(Dcamapi.lasterr()))
         re = self.dcam.prop_setgetvalue(self.properties['SENSOR MODE'], 1)

@@ -48,9 +48,6 @@ class DPP:
             self._configure_dpp()
             self.n_zernike = nz
 
-    def __del__(self):
-        pass
-
     def close(self):
         self.dpp.zero_outputs()
         self.dpp.close()
@@ -136,8 +133,6 @@ class DPP:
         fd = os.path.join(path, filename)
         df = pd.DataFrame(cmd, index=np.arange(nz), columns=["Amp"])
         df.to_excel(str(fd), index_label="Mode")
-        self.config["Adaptive Optics"]["Deformable Mirrors"]["PhaseForm"]["Initial Flat"] = str(fd)
-        self.config.write_config(self.config, self.config.cfd)
 
     def save_sensorless_results(self, fd, a, v, p):
         df1 = pd.DataFrame(v, index=a, columns=['Values'])

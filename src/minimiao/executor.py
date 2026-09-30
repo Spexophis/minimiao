@@ -327,14 +327,14 @@ class CommandExecutor(QObject):
         try:
             x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
             self.devs.img_cam.bin_h, self.devs.img_cam.bin_v = bn, bn
-            self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
-            self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
-            self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
-            self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
-            # self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
             # self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
             # self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+            # self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
             # self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
+            self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
+            self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
+            self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+            self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
 
@@ -362,12 +362,12 @@ class CommandExecutor(QObject):
 
     def prepare_camera(self):
         self.devs.img_cam.set_roi()
-        self.devs.img_cam.set_acquisition_mode(3)
+        # self.devs.img_cam.set_acquisition_mode(3)
         self.devs.img_cam.set_exposure_time()
-        self.devs.img_cam.set_gain()
-        self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
-        self.devs.img_cam.set_kinetics_num(20000)
-        self.devs.img_cam.get_acquisition_timings()
+        # self.devs.img_cam.set_gain()
+        # self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
+        # self.devs.img_cam.set_kinetics_num(20000)
+        # self.devs.img_cam.get_acquisition_timings()
 
     def prepare_video(self, vd_mod):
         self.update_trigger_parameters()
@@ -376,6 +376,11 @@ class CommandExecutor(QObject):
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
+        ang, phs, rot = self.ctrl_panel.get_sim_parameters()
+        rh, ra = self.ctrl_panel.get_motor_parameters()
+        self.home_motor(rh)
+        self.set_motor_step(ra)
+        self.trg.motor_jog = ra
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         interval_t, transfer_t = self.ctrl_panel.get_camera_times()
@@ -387,9 +392,9 @@ class CommandExecutor(QObject):
         if vd_mod == "Widefield":
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
         elif vd_mod == "SIM":
-            dtr, chs = self.trg.generate_sim_triggers(0)
+            dtr, chs = self.trg.generate_sim_triggers(ang, phs, rot)
         elif vd_mod == "NLSIM":
-            dtr, chs = self.trg.generate_nlsim_triggers(0)
+            dtr, chs = self.trg.generate_nlsim_triggers(ang, phs, rot)
         else:
             raise Exception(f"Invalid Live Mode")
         self.prepare_camera()
@@ -646,6 +651,11 @@ class CommandExecutor(QObject):
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
+        ang, phs, rot = self.ctrl_panel.get_sim_parameters()
+        rh, ra = self.ctrl_panel.get_motor_parameters()
+        self.home_motor(rh)
+        self.set_motor_step(ra)
+        self.trg.motor_jog = ra
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
@@ -654,26 +664,27 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_WideField":
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+            self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
                                          finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_WideField":
-            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan()
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
+            pos = pos * aqn
         elif aqm == "2D_SIM":
-            dtr, chs = self.trg.generate_sim_triggers(aqn)
+            dtr, chs = self.trg.generate_sim_triggers(ang, phs, rot)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
                                          finite=False, trg=False)
-            pos = aqn * 2
+            pos = ang * phs
         elif aqm == "3D_SIM":
-            dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(aqn)
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(ang, phs, rot)
             self.devs.daq.set_piezo_position([ptr[0]], [2])
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=False)
-            pos = pos * 2 * aqn
+            pos = pos * 2 * ang * phs
         elif aqm == "2D_NLSIM":
             dtr, chs = self.trg.generate_nlsim_triggers(aqn)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
@@ -683,16 +694,17 @@ class CommandExecutor(QObject):
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+            self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
                                          finite=False, trg=True)
             pos = aqn
         elif aqm == "3D_WideField_Timelapse":
-            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan()
+            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
                                          analog_sequences=ptr, analog_channels=pchs,
                                          finite=False, trg=True)
+            pos = pos * aqn
         elif aqm == "2D_SIM_Timelapse":
             dtr, chs = self.trg.generate_sim_triggers(aqn)
             rt = self.ctrl_panel.get_acquisition_interval()
@@ -774,7 +786,7 @@ class CommandExecutor(QObject):
         try:
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
-            self.devs.img_cam.stop_snap()
+            # self.devs.img_cam.stop_snap()
             self.devs.slm.deactivate()
             self.lasers_off()
             self.logg.info("Focus Finding Finish")
@@ -937,7 +949,7 @@ class CommandExecutor(QObject):
             za = []
             mv = []
             zp = [0] * self.devs.dfm.n_zernike
-            cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd]
+            cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd].copy()
             self.devs.slm.activate()
             time.sleep(0.04)
             self.logg.info("Sensorless AO iterations start")
@@ -974,25 +986,25 @@ class CommandExecutor(QObject):
                     temp[mode] += amp
                     cmds.append(temp)
                 images = self.sensorless_iteration(cmds)
-                # mts = self.image_assessment(mf, images)
-                # self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
-                # self.sig_plt.emit(mts, amprange)
-                # if err:
-                #     mts_err = [std] * len(mts)
-                #     pm = ipr.peak_find(amprange, mts, mts_err)
-                # else:
-                #     pm = ipr.peak_find(amprange, mts)
-                # if isinstance(pm, str):
-                #     self.logg.error(f"zernike mode #{mode} " + pm)
-                # else:
-                #     zp[mode] = pm
-                #     cmd[mode] += pm
-                #     self.devs.dfm.set_dpp(cmd)
-                #     self.logg.info("set mode %d at value of %.4f" % (mode, pm))
-                # for amp, mt in zip(amprange, mts):
-                #     results.append((mode, amp, mt))
-                # za.extend(amprange)
-                # mv.extend(mts)
+                mts = self.image_assessment(mf, images)
+                self.logg.info(f"zernike mode #{mode}, ({amprange}), ({mts})")
+                self.sig_plt.emit(mts, amprange)
+                if err:
+                    mts_err = [std] * len(mts)
+                    pm = ipr.peak_find(amprange, mts, mts_err)
+                else:
+                    pm = ipr.peak_find(amprange, mts)
+                if isinstance(pm, str):
+                    self.logg.error(f"zernike mode #{mode} " + pm)
+                else:
+                    zp[mode] = pm
+                    cmd[mode] += pm
+                    self.devs.dfm.set_dpp(cmd)
+                    self.logg.info("set mode %d at value of %.4f" % (mode, pm))
+                for amp, mt in zip(amprange, mts):
+                    results.append((mode, amp, mt))
+                za.extend(amprange)
+                mv.extend(mts)
                 fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
                 with tf.TiffWriter(fn) as tif:
                     for img, label in zip(images, labels):
@@ -1002,8 +1014,8 @@ class CommandExecutor(QObject):
             self.devs.img_cam.start_snap()
             self.devs.daq.run_triggers()
             time.sleep(0.04)
-            fn = new_folder + r"\final.tiff"
             temp = self.devs.img_cam.get_last_snap()
+            fn = new_folder + r"\final.tiff"
             self.devs.img_cam.stop_snap()
             tf.imwrite(str(fn), temp.astype(np.float16))
             self.devs.dfm.dpp_cmd.append(cmd)

@@ -17,7 +17,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 class CameraAcquisitionThread(threading.Thread):
 
-    def __init__(self, cam, interval=0.05):
+    def __init__(self, cam, interval=0.00):
         super().__init__(daemon=True)
         self.cam = cam
         self._running = False

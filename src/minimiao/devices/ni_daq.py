@@ -180,6 +180,7 @@ class NIDAQ:
         self.task_led.stop()
         if cls:
             self.task_led.close()
+            self.task_led = None
 
     def set_trigger_counter(self, delay):
         """

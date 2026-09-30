@@ -3,6 +3,8 @@
 # Licensed under the MIT License.
 
 
+from math import gcd
+
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
@@ -61,6 +63,143 @@ def save_to_bmp(data, svd, fn, bt=1):
         img.save(svd + fn + r"_1bit.bmp", format='BMP')
     else:
         img.save(svd + fn + r"_8bit.bmp", format='BMP')
+
+
+def generate_tilted_binary_phase(size=(2048, 1536), vec=(7, 4), period=12, step=0, nsteps=3,
+                                 duty=0.5, value=255, typ=np.uint8):
+    a, b = vec
+    if b <= 0:
+        raise ValueError("b must be > 0")
+    L = b * period
+    if (L * step) % nsteps:
+        raise ValueError(f"b*period ({L}) not divisible by nsteps ({nsteps})")
+    width, height = size
+    n_on = int(np.clip(round(duty * L), 1, L - 1))
+    yy, xx = np.mgrid[:height, :width]
+    m = np.mod(b * xx - a * yy + step * L // nsteps, L)   # shift applied here only
+    return np.where(m < n_on, value, 0).astype(typ)
+
+
+def pattern_geometry(vec, period):
+    """
+    Line spacing (px) and grating-vector angle (deg, as displayed with y down).
+    Example usage:
+        s, ang = pattern_geometry((15, 26), 12)
+        print(f"spacing={s:.3f} px, angle={ang:.2f} deg")
+    """
+    a, b = vec
+    spacing = period * b / np.hypot(a, b)
+    angle = np.degrees(np.arctan2(a, b))
+    return spacing, angle
+
+
+def find_lattice(target_spacing, angle_deg, nsteps=3, max_period=60, max_b=12, n_best=5):
+    """
+    Search integer (a, b, period) matching a target spacing and angle (Supp. Fig. 2 constraints).
+    Example usage:
+        for c in find_lattice(15, 30, nsteps=5, max_period=15, max_b=20, n_best=5):
+            print(" ", c)
+    """
+    out = []
+    t = np.tan(np.radians(angle_deg))
+    for period in range(1, max_period + 1):
+        for b in range(1, max_b + 1):
+            if (b * period) % nsteps:
+                continue
+            a = int(round(b * t))
+            if gcd(abs(a), b) != 1 and a != 0:
+                continue
+            if a == 0 and b != 1:
+                continue
+            s, ang = pattern_geometry((a, b), period)
+            out.append((abs(s / target_spacing - 1), abs(ang - angle_deg), (a, b), period, s, ang))
+    out.sort(key=lambda r: (round(r[0] + np.radians(r[1]), 3), r[3]))
+    return [dict(vec=r[2], period=r[3], spacing=r[4], angle=r[5]) for r in out[:n_best]]
+
+
+def diffraction_orders(vec, period, duty=0.5, rel_threshold=1e-3):
+    """
+    Exact far-field orders of the 0/pi pattern from one lattice supercell (Supp. Fig. 4).
+    Returns array rows (fx, fy, power) in cycles/pixel, sorted by power; power normalized to total.
+    Example usage:
+        print("\nStrongest orders, +60 pattern (fx, fy [cyc/px], power):")
+        print(np.round(diffraction_orders((15, 26), 12)[:9], 4))
+    """
+    a, b = vec
+    L = b * period
+    ty = L // gcd(abs(a), L)  # vertical period of the pattern
+    tile = generate_tilted_binary_phase((period, ty), vec, period, 0, 1, duty, 1, np.int8)
+    field = 1.0 - 2.0 * tile  # 0 / pi phase
+    F = np.fft.fft2(field) / field.size
+    P = np.abs(F) ** 2
+    fy, fx = np.meshgrid(np.fft.fftfreq(ty), np.fft.fftfreq(period), indexing="ij")
+    keep = P > rel_threshold * P.max()
+    rows = np.column_stack([fx[keep], fy[keep], P[keep]])
+    return rows[np.argsort(-rows[:, 2])]
+
+
+def pupil_map(patterns, beam_radius=0.9, duty=0.5, rel_threshold=1e-3):
+    """
+    Order positions in normalized pupil coordinates (pupil radius = 1) when the
+    +-1 orders are placed at `beam_radius`. Assumes all patterns share ~the same spacing.
+    Returns list of (label, rho_x, rho_y, power, is_main).
+    """
+    spacings = [pattern_geometry(v, p)[0] for v, p in patterns]
+    f1 = 1.0 / np.mean(spacings)  # main-order frequency, cycles/px
+    res = []
+    for (v, p) in patterns:
+        for fx, fy, pw in diffraction_orders(v, p, duty, rel_threshold):
+            rx, ry = fx / f1 * beam_radius, fy / f1 * beam_radius
+            main = np.isclose(np.hypot(fx, fy), 1 / pattern_geometry(v, p)[0]) and pw > 0.1
+            if np.hypot(rx, ry) <= 1.5:
+                res.append((f"{v},{p}", rx, ry, pw, main))
+    return res
+
+
+def generate_hex_binary_phase(size=(2048, 1536), vec=(17, 30), period=14, shift=(0, 0), nsteps=12,
+                              duty=0.5, value=255, typ=np.uint8):
+    """
+    Binary hexagonal pattern from three gratings:
+        g1: vec=( a, b)  -> m1 = b*x - a*y
+        g2: vec=(-a, b)  -> m2 = b*x + a*y
+        g3: horizontal   -> m3 = m2 - m1 = 2a*y   (spacing L/(2a))
+    with L = b*period. g3 = g2 - g1 exactly, so the three k-vectors close a
+    triangle and the pattern is exactly periodic on an L x L cell.
+    Pixels are on where cos(phi1) + cos(phi2) + cos(phi3) > threshold,
+    with the threshold set to give the requested on-fraction (duty).
+
+    shift=(s1, s2): phase offsets of g1 and g2 in units of 2*pi/nsteps;
+    g3 then shifts by s2 - s1.
+    """
+    a, b = vec
+    L = b * period
+    s1, s2 = shift
+    if (L * s1) % nsteps or (L * s2) % nsteps:
+        raise ValueError(f"b*period ({L}) not divisible by nsteps ({nsteps})")
+    d1, d2 = s1 * L // nsteps, s2 * L // nsteps
+
+    def field(xx, yy):
+        m1 = np.mod(b * xx - a * yy + d1, L)
+        m2 = np.mod(b * xx + a * yy + d2, L)
+        m3 = np.mod(m2 - m1, L)
+        w = 2 * np.pi / L
+        return np.cos(w * m1) + np.cos(w * m2) + np.cos(w * m3)
+
+    yy, xx = np.mgrid[:L, :L]                      # one exact period cell
+    thr = np.quantile(field(xx, yy), 1 - duty)
+
+    width, height = size
+    yy, xx = np.mgrid[:height, :width]
+    return np.where(field(xx, yy) > thr, value, 0).astype(typ)
+
+
+def hex_geometry(vec, period):
+    a, b = vec
+    L = b * period
+    ang = np.degrees(np.arctan2(a, b))
+    return dict(spacing_tilted=L / np.hypot(a, b),
+                spacing_horizontal=L / (2 * abs(a)),
+                angles=(ang, -ang, 90.0))
 
 
 def generate_binary_phase_dots(size=(2048, 1536), period=(8, 8), phase=(0, 0),
@@ -247,7 +386,8 @@ def simulate_binary_phase_pattern(size=(1024, 1024), period=(8, 0), phase=(0, 0)
 
 
 def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, NA=1.3,
-                           grating_period=1.20001e-6, duty_cycle=0.5, phase_depth=np.pi, orientation_deg=0, grating_shift=0.0,
+                           grating_period=1.20001e-6, duty_cycle=0.5, phase_depth=np.pi, orientation_deg=0,
+                           grating_shift=0.0,
                            order_filter_radius_factor=0.18, verbose=False):
     L = N * dx
     x = (np.arange(N) - N // 2) * dx
