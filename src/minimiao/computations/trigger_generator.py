@@ -220,6 +220,7 @@ class TriggerSequence:
             return digital_triggers, digital_channels
         else:
             digital_channels = [0, 2, 3]
+            digital_triggers = np.tile(digital_triggers, (1, nph))
             return digital_triggers, digital_channels
 
     def generate_sim_scan(self, nang=3 , nph=6, rot=True):
@@ -271,6 +272,7 @@ class TriggerSequence:
             return digital_triggers, digital_channels
         else:
             digital_channels = [0, 2, 3]
+            digital_channels = np.tile(digital_triggers, (1, nph))
             return digital_triggers, digital_channels
 
     def generate_piezo_scan(self, num, lasers, camera):

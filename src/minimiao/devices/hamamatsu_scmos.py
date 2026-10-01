@@ -2486,7 +2486,8 @@ class HamamatsuCamera:
         self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         self._frames_read = 0
-        re = self.dcam.buf_alloc(n * 2)
+        self.buffer_size = n * 2  # get_images() indexes the ring with this; must match buf_alloc
+        re = self.dcam.buf_alloc(self.buffer_size)
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False

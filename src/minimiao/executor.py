@@ -4,6 +4,7 @@
 
 
 import os
+import threading
 import time
 
 import numpy as np
@@ -42,6 +43,8 @@ class CommandExecutor(QObject):
         self.lasers = []
         self.slm_seq = ""
         self.task_worker = None
+        self._sim_thread = None
+        self._sim_stop = threading.Event()
 
     def _set_signal_executions(self):
         # EMCCD
@@ -781,23 +784,32 @@ class CommandExecutor(QObject):
         return ang, phs
 
     def start_sim_acquisition(self, fdn: str, labl: str, ang: int, phs: int):
+        """Cycle through the SIM angles over and over, in a background thread, until stop_sim_acquisition()."""
         try:
-            self.devs.slm.activate()
             acq_num =  ang * phs
             rh, ra = self.ctrl_panel.get_motor_parameters()
             angs = rh + np.arange(ang) * (90 / ang)
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
-            for i in range(ang):
-                self.devs.motor.move_to(angs[i])
-                time.sleep(0.02)
-                self.devs.daq.run_triggers()
-                # time.sleep(0.016)
-                # self.devs.daq.stop_triggers(_close=False)
+            self._sim_stop.clear()
+            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs,), daemon=True)
+            self._sim_thread.start()
         except Exception as e:
-            self.stop_acquisition()
-            self.logg.error(f"Error start acquisition: {e}")
-            return
+            self.stop_sim_acquisition()
+            self.logg.error(f"Error start sim acquisition: {e}")
+
+    def _sim_acquisition_loop(self, angs: list):
+        try:
+            while not self._sim_stop.is_set():
+                for a in angs:
+                    if self._sim_stop.is_set():
+                        return
+                    self.devs.motor.move_to(a)
+                    time.sleep(0.032)
+                    self.devs.daq.run_triggers()
+        except Exception as e:
+            self._sim_stop.set()
+            self.logg.error(f"Error in sim acquisition loop (press Stop to clean up): {e}")
 
     def stop_sim_acquisition(self):
         try:
