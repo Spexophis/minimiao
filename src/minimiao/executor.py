@@ -4,6 +4,7 @@
 
 
 import os
+import threading
 import time
 
 import numpy as np
@@ -26,6 +27,7 @@ class CommandExecutor(QObject):
     svd = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
+    sig_sim_done = pyqtSignal()  # emitted by the SIM worker thread when it has run all requested passes
 
     def __init__(self, dev, cwd, cmp, path, logg=None):
         super().__init__()
@@ -42,6 +44,8 @@ class CommandExecutor(QObject):
         self.lasers = []
         self.slm_seq = ""
         self.task_worker = None
+        self._sim_thread = None
+        self._sim_stop = threading.Event()
 
     def _set_signal_executions(self):
         # EMCCD
@@ -73,6 +77,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_plot_profile.connect(self.profile_plot)
         self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
+        self.sig_sim_done.connect(self.finish_sim_acquisition)
         self.ctrl_panel.Signal_dpc.connect(self.dpc)
         self.ctrl_panel.Signal_dpc_acquire.connect(self.dpc_acquisition)
         self.svd.connect(self.save_data)
@@ -398,7 +403,7 @@ class CommandExecutor(QObject):
         else:
             raise Exception(f"Invalid Live Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
@@ -636,7 +641,7 @@ class CommandExecutor(QObject):
             try:
                 if "SIM" in acq_mod:
                     ang, phs = self.prepare_sim_acquisition(acq_mod, acq_num)
-                    self.start_sim_acquisition(folder_name, fn, ang, phs)
+                    self.start_sim_acquisition(folder_name, fn, acq_num, ang, phs)
                 else:
                     pn = self.prepare_acquisition(acq_mod, acq_num)
                     self.start_acquisition(folder_name, fn, pn)
@@ -645,6 +650,8 @@ class CommandExecutor(QObject):
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
+        elif self._sim_thread is not None:
+            self.stop_sim_acquisition()
         else:
             self.stop_acquisition()
 
@@ -695,7 +702,7 @@ class CommandExecutor(QObject):
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return pos
 
@@ -776,31 +783,63 @@ class CommandExecutor(QObject):
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return ang, phs
 
-    def start_sim_acquisition(self, fdn: str, labl: str, ang: int, phs: int):
+    def start_sim_acquisition(self, fdn: str, labl: str, aqn: int, ang: int, phs: int):
+        """Run aqn passes through the SIM angles in a background thread (aqn <= 0: until stop_sim_acquisition())."""
         try:
-            self.devs.slm.activate()
-            acq_num =  ang * phs
-            rh, ra = self.ctrl_panel.get_motor_parameters()
+            acq_num = ang * phs
+            rh, _ = self.ctrl_panel.get_motor_parameters()
             angs = rh + np.arange(ang) * (90 / ang)
-            self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
+            self.devs.slm.activate()
+            self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)  # one stack file per pass
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
-            for i in range(ang):
-                self.devs.motor.move_to(angs[i])
-                time.sleep(0.02)
-                self.devs.daq.run_triggers()
-                # time.sleep(0.016)
-                # self.devs.daq.stop_triggers(_close=False)
+            self._sim_stop.clear()
+            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs, aqn), daemon=True)
+            self._sim_thread.start()
         except Exception as e:
-            self.stop_acquisition()
-            self.logg.error(f"Error start acquisition: {e}")
+            self.stop_sim_acquisition()
+            self.logg.error(f"Error start sim acquisition: {e}")
+
+    def _sim_acquisition_loop(self, angs: list, aqn: int):
+        """Worker thread: aqn passes through all angles. Must not touch Qt widgets (hence sig_sim_done)."""
+        try:
+            n = 0
+            while not self._sim_stop.is_set() and (aqn <= 0 or n < aqn):
+                for a in angs:
+                    if self._sim_stop.is_set():
+                        return
+                    self.devs.motor.move_to(a)
+                    time.sleep(0.04)
+                    self.devs.daq.run_triggers()
+                self.devs.motor.move_to(angs[0])
+                n += 1
+            if not self._sim_stop.is_set():  # reached the requested number of passes (not stopped, no error)
+                self.logg.info(f"Sim acquisition finished: {n} passes")
+                self.sig_sim_done.emit()
+        except Exception as e:
+            self._sim_stop.set()
+            self.logg.error(f"Error in sim acquisition loop: {e}")
+
+    @pyqtSlot()
+    def finish_sim_acquisition(self):
+        """GUI thread: the loop ran all its passes by itself. Clean up and release the Acquire button."""
+        if self._sim_thread is None:  # Stop was pressed in the meantime and already cleaned up
             return
+        self.stop_sim_acquisition()
+        self.ctrl_panel.QPushButton_acquire.setChecked(False)
 
     def stop_sim_acquisition(self):
+        self._sim_stop.set()
+        t, self._sim_thread = self._sim_thread, None
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=30.0)
+            if t.is_alive():
+                self.logg.error("Sim acquisition loop did not exit")
         try:
+            time.sleep(0.1)
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
             self.devs.img_cam.stop_data_acquisition()

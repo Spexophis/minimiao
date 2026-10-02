@@ -2378,6 +2378,11 @@ class HamamatsuCamera:
             self.logg.error("Failed to close DCAM API")
 
     def set_roi(self):
+        # SUBARRAY HPOS/HSIZE/VPOS/VSIZE only take effect while SUBARRAY MODE is ON (otherwise the camera keeps
+        # sending full frames). DCAM procedure: mode OFF, write the four values, mode ON.
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY MODE'], DCAMPROP.MODE.OFF)
+        if re is False:
+            self.logg.error(f"Failed to Set SUBARRAY MODE OFF: {Dcamapi.lasterr()}")
         re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY HSIZE'], self.pixels_x)
         if re is not False:
             self.logg.info(f"Set ROI Horizontal Size: {re}")
@@ -2398,11 +2403,26 @@ class HamamatsuCamera:
             self.logg.info(f"Set ROI Vertical Start: {re}")
         else:
             self.logg.error(f"Failed to Set ROI Vertical Start: {self.start_v}")
+        re = self.dcam.prop_setgetvalue(self.properties['SUBARRAY MODE'], DCAMPROP.MODE.ON)
+        if re is not False:
+            self.logg.info("Set SUBARRAY MODE ON")
+        else:
+            self.logg.error(f"Failed to Set SUBARRAY MODE ON: {Dcamapi.lasterr()}")
         re = self.dcam.prop_setgetvalue(self.properties['BINNING'], self.bin_h)
         if re is not False:
             self.logg.info(f"Set Binning: {re}")
         else:
             self.logg.error(f"Failed to Set Binning: {self.bin_h}")
+        # The camera may round the ROI (or refuse it): the frames it sends are what the display and the saved
+        # stacks must match, so take the size from the camera instead of trusting the requested one.
+        w = self.dcam.prop_getvalue(self.properties['IMAGE WIDTH'])
+        h = self.dcam.prop_getvalue(self.properties['IMAGE HEIGHT'])
+        if w is not False and h is not False:
+            if (int(w), int(h)) != (self.pixels_x, self.pixels_y):
+                self.logg.warning(f"Camera outputs {int(w)}x{int(h)}, requested {self.pixels_x}x{self.pixels_y}")
+            self.pixels_x, self.pixels_y = int(w), int(h)
+        else:
+            self.logg.error(f"Failed to read image size: {Dcamapi.lasterr()}")
         self.img_size = self.pixels_x * self.pixels_y
 
     def set_exposure_time(self):
@@ -2486,7 +2506,8 @@ class HamamatsuCamera:
         self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         self._frames_read = 0
-        re = self.dcam.buf_alloc(n * 2)
+        self.buffer_size = n * 2  # get_images() indexes the ring with this; must match buf_alloc
+        re = self.dcam.buf_alloc(self.buffer_size)
         if re is False:
             self.logg.error('Error: Failed to buf_alloc with error {}'.format(self.dcam.lasterr().name))
             return False

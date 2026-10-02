@@ -3,6 +3,8 @@
 # Licensed under the MIT License.
 
 
+import logging
+
 import numpy as np
 import pyqtgraph as pg
 from PyQt6.QtCore import QObject, QMutex, QMutexLocker, pyqtSlot, pyqtSignal, Qt
@@ -61,6 +63,7 @@ class LiveViewer(QWidget):
         self._overlay_n = 0
         self.h = 1024
         self.w = 1024
+        self._shape_warned = False
         self.pool = FramePool(shape=(self.h, self.w), dtype=np.uint16, n_buffers=4)
         self.fft_mode = False
         self.fft_worker = None
@@ -178,7 +181,8 @@ class LiveViewer(QWidget):
             self.QLabel_cursor.setText(f"x:{ix}  y:{iy}  v:{val}")
 
     def switch_camera(self, h, w):
-        self.h, self.w = h, w
+        self.h, self.w = h, w  # rows, columns of the frames the camera delivers
+        self._shape_warned = False
         try:
             self.image_viewer.frameConsumed.disconnect(self.pool.release)
             self.image_viewer.frameDiscarded.disconnect(self.pool.release)
@@ -202,6 +206,15 @@ class LiveViewer(QWidget):
             frame = frame[..., 0]
         if frame.dtype != np.uint16:
             frame = frame.astype(np.uint16, copy=False)
+
+        if frame.shape != (self.h, self.w):
+            # An exception here would end the camera acquisition thread and freeze the display for good.
+            if not self._shape_warned:
+                self._shape_warned = True
+                logging.getLogger(__name__).error(
+                    f"Frame {frame.shape} does not match the display buffer {(self.h, self.w)}; dropping frames "
+                    f"until the camera ROI and the display agree")
+            return
 
         idx = self.pool.acquire()
         if idx is None:

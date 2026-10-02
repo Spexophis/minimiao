@@ -598,6 +598,21 @@ class NIDAQ:
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
 
+    def _stop_task(self, key):
+        """
+        Stop one task and always clear its running flag. stop() can raise a DaqWarning (e.g. 200010, the counter
+        was still finishing its last pulse); if that skipped the reset, the next run_triggers() would believe the
+        clock is still running, not restart it, and the digital task would wait for a sample clock that never comes.
+        """
+        _task = self.tasks.get(key)
+        try:
+            if _task is not None:
+                _task.stop()
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("%s task: DaqWarning on stop (ignored): %s", key, e)
+        finally:
+            self._running[key] = False
+
     def run_triggers(self):
         try:
             if self.tasks["clock"] is None:
@@ -617,25 +632,20 @@ class NIDAQ:
             self.logg.info("Trigger is running")
 
             if self.run_mode == AcquisitionType.FINITE and not self.retriggered:
-                for key, _task in self.tasks.items():
-                    if key in ("clock", "trigger"):
-                        continue
-
-                    if _task is None:
-                        continue
-
-                    if self._active.get(key, False):
-                        _task.wait_until_done(WAIT_INFINITELY)
-                        _task.stop()
-                        self._running[key] = False
-
-                if self.tasks.get("trigger") is not None and self._running.get("trigger", False):
-                    self.tasks["trigger"].stop()
-                    self._running["trigger"] = False
-
-                if self.tasks.get("clock") is not None and self._running.get("clock", False):
-                    self.tasks["clock"].stop()
-                    self._running["clock"] = False
+                # Bounded wait: if the sample clock never runs, fail instead of freezing the caller forever.
+                timeout = self.sequence_samples / self.sample_rate + 5.0 if self.sequence_samples else WAIT_INFINITELY
+                try:
+                    for key, _task in self.tasks.items():
+                        if key in ("clock", "trigger") or _task is None or not self._active.get(key, False):
+                            continue
+                        try:
+                            _task.wait_until_done(timeout)
+                        finally:
+                            self._stop_task(key)
+                finally:
+                    for key in ("trigger", "clock"):
+                        if self.tasks.get(key) is not None and self._running.get(key, False):
+                            self._stop_task(key)
 
                 self.logg.info("Finite trigger sequence finished.")
 
