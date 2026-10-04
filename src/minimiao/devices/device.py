@@ -1,6 +1,5 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
-import sys
 
 from minimiao import logger
 
@@ -8,6 +7,11 @@ try:
     from . import cobolt_laser
 except ImportError:
     from minimiao.devices import cobolt_laser
+
+try:
+    from . import trigger_box
+except ImportError:
+    from minimiao.devices import trigger_box
 
 try:
     from . import kinetix_camera_proxy
@@ -45,6 +49,11 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"SLM init failed: {e}")
 
+        try:
+            self.trg = trigger_box.TriggerBox(logg=self.logg)
+        except Exception as e:
+            self.logg.error(f"Trigger box init failed: {e}")
+
         self.logg.info("Finish initiating devices")
 
     def close(self):
@@ -66,6 +75,12 @@ class DeviceManager:
                 self.laser.close()
             except Exception as e:
                 self.logg.error(f"Laser close failed: {e}")
+
+        if self.trg:
+            try:
+                self.trg.close()
+            except Exception as e:
+                self.logg.error(f"Trigger box close failed: {e}")
 
 
 if __name__ == '__main__':

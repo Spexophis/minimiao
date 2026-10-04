@@ -349,7 +349,7 @@ def suggest_sysclk(pulse_freqs: list[int], max_hz: int = SAFE_SYSCLK_HZ) -> Opti
 
 
 class TriggerBox:
-    def __init__(self, port: str, baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
+    def __init__(self, port: str = "COM7", baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
                  raise_on_error: bool = True, logg=None):
         """
         timeout: max wait for the first reply byte (s)
@@ -528,7 +528,7 @@ class TriggerBox:
 if __name__ == '__main__':
     print(TriggerBox.list_ports())
 
-    tb = TriggerBox("COM7")
+    tb = TriggerBox()
 
     seq = Sequence(sysclk_hz=10_000, external_trigger=False)
     seq.add(
