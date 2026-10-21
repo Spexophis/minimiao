@@ -421,9 +421,11 @@ class RevealerCamera:
             self._last_grab_error, self._last_grab_error_time = msg, now
 
     def _frame_to_array(self, p_data, info):
+        # info.paddingX/paddingY are the ROI offsets reported by the SDK, not row padding
+        # (960x960 at offset 680,640 reported 1640x1600), so the pixel data is simply
+        # width x height with row stride = width.
         w, h = int(info.width), int(info.height)
         bits = (int(info.pixelFormat) >> 16) & 0xFF  # SC_PIX_OCCUPY*BIT: bits stored per pixel
-        stride_w, rows = w + int(info.paddingX), h + int(info.paddingY)
         if bits == 16:
             n = int(info.size) // 2
             raw = np.ctypeslib.as_array(cast(p_data, POINTER(c_uint16 * n)).contents)
@@ -434,10 +436,11 @@ class RevealerCamera:
             self._log_grab_error(f"pixel format 0x{int(info.pixelFormat):08X} stores {bits} bit per pixel; "
                                  f"set a 16-bit PixelFormat / ReadoutMode (packed formats are not supported)")
             return None
-        if raw.size < stride_w * rows:
-            self._log_grab_error(f"frame has {raw.size} pixels, expected {stride_w * rows} ({w}x{h} + padding)")
+        if raw.size < w * h:
+            self._log_grab_error(f"frame has {raw.size} pixels, expected at least {w * h} ({w}x{h}); "
+                                 f"paddingX={info.paddingX} paddingY={info.paddingY} size={info.size}")
             return None
-        return raw[:stride_w * rows].reshape(rows, stride_w)[:h, :w].copy()
+        return raw[:w * h].reshape(h, w).copy()
 
     def _set_buffer_count(self, n):
         n = int(min(max(n, MIN_BUFFER_COUNT), MAX_BUFFER_COUNT))
