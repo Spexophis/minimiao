@@ -23,11 +23,16 @@ except ImportError as e:
     from minimiao.utilities import image_processor as ipr
 
 
+SIM_WARMUP_RUNS = 1  # throwaway sequences (frames discarded) before the first real pass; 0 disables
+SIM_WARMUP_TIMEOUT = 2.0  # s to wait for the warm-up frames to arrive from the camera
+
+
 class CommandExecutor(QObject):
     svd = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
     sig_sim_done = pyqtSignal()  # emitted by the SIM worker thread when it has run all requested passes
+    sig_abort = pyqtSignal(str)  # an error ended live view or an acquisition; stop it like the Stop button
 
     def __init__(self, dev, cwd, cmp, path, logg=None):
         super().__init__()
@@ -41,6 +46,7 @@ class CommandExecutor(QObject):
         self.logg = logg or logger.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
+        self.devs.img_cam.on_acq_error = lambda e: self.sig_abort.emit(f"camera thread: {e}")  # from the camera thread
         self.lasers = []
         self.slm_seq = ""
         self.task_worker = None
@@ -78,6 +84,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_add_profile.connect(self.plot_add)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
         self.sig_sim_done.connect(self.finish_sim_acquisition)
+        self.sig_abort.connect(self.abort_run)
         self.ctrl_panel.Signal_dpc.connect(self.dpc)
         self.ctrl_panel.Signal_dpc_acquire.connect(self.dpc_acquisition)
         self.svd.connect(self.save_data)
@@ -414,8 +421,7 @@ class CommandExecutor(QObject):
                 self.prepare_video(md)
             except Exception as e:
                 self.logg.error(f"Error preparing imaging video: {e}")
-                self.devs.daq.stop_triggers()
-                self.lasers_off()
+                self.sig_abort.emit(f"preparing live view: {e}")
                 return
             self.start_video()
         else:
@@ -430,7 +436,7 @@ class CommandExecutor(QObject):
             self.logg.info("Live Video Started")
         except Exception as e:
             self.logg.error(f"Error starting imaging video: {e}")
-            self.stop_video()
+            self.sig_abort.emit(f"starting live view: {e}")
             return
 
     def stop_video(self):
@@ -647,8 +653,7 @@ class CommandExecutor(QObject):
                     self.start_acquisition(folder_name, fn, pn)
             except Exception as e:
                 self.logg.error(f"Error preparing widefield: {e}")
-                self.devs.daq.stop_triggers()
-                self.lasers_off()
+                self.sig_abort.emit(f"preparing acquisition: {e}")
                 return
         elif self._sim_thread is not None:
             self.stop_sim_acquisition()
@@ -713,8 +718,8 @@ class CommandExecutor(QObject):
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.devs.daq.run_triggers()
         except Exception as e:
-            self.stop_acquisition()
             self.logg.error(f"Error start acquisition: {e}")
+            self.sig_abort.emit(f"starting acquisition: {e}")
             return
 
     def stop_acquisition(self):
@@ -797,15 +802,37 @@ class CommandExecutor(QObject):
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)  # one stack file per pass
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self._sim_stop.clear()
-            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs, aqn), daemon=True)
+            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs, aqn, phs), daemon=True)
             self._sim_thread.start()
         except Exception as e:
-            self.stop_sim_acquisition()
             self.logg.error(f"Error start sim acquisition: {e}")
+            self.sig_abort.emit(f"starting sim acquisition: {e}")
 
-    def _sim_acquisition_loop(self, angs: list, aqn: int):
+    def _sim_warmup(self, a0: float, phs: int):
+        """
+        Run the sequence once before the real passes and throw its frames away. The first exposure after the SLM is
+        activated and the camera started can be blank, and would otherwise be frame 0 of the first stack.
+        """
+        cam = self.devs.img_cam
+        if SIM_WARMUP_RUNS <= 0 or not hasattr(cam, "skip_frames"):
+            return
+        cam.skip_frames(SIM_WARMUP_RUNS * phs)
+        self.devs.motor.move_to(a0)
+        time.sleep(0.04)
+        for _ in range(SIM_WARMUP_RUNS):
+            self.devs.daq.run_triggers()
+        deadline = time.monotonic() + SIM_WARMUP_TIMEOUT
+        while cam.frames_to_skip() > 0 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        missing = cam.frames_to_skip()
+        if missing > 0:  # do not let a lost warm-up trigger eat a real frame
+            cam.skip_frames(0)
+            self.logg.warning(f"Sim warm-up: {missing} of {SIM_WARMUP_RUNS * phs} frames never arrived")
+
+    def _sim_acquisition_loop(self, angs: list, aqn: int, phs: int):
         """Worker thread: aqn passes through all angles. Must not touch Qt widgets (hence sig_sim_done)."""
         try:
+            self._sim_warmup(angs[0], phs)
             n = 0
             while not self._sim_stop.is_set() and (aqn <= 0 or n < aqn):
                 for a in angs:
@@ -822,6 +849,24 @@ class CommandExecutor(QObject):
         except Exception as e:
             self._sim_stop.set()
             self.logg.error(f"Error in sim acquisition loop: {e}")
+            self.sig_abort.emit(f"sim acquisition loop: {e}")  # GUI thread stops and cleans up (see abort_run)
+
+    @pyqtSlot(str)
+    def abort_run(self, reason: str):
+        """
+        GUI thread: an error ended live view or an acquisition. Release the button and call its handler, which is
+        exactly what pressing it again does, so the normal stop path (DAQ, camera, lasers, SLM, piezo) runs.
+        Does nothing if nothing is running, so it is safe to call more than once.
+        """
+        panel = self.ctrl_panel
+        if panel.QPushButton_video.isChecked():
+            self.logg.error(f"Stopping live view after an error: {reason}")
+            panel.QPushButton_video.setChecked(False)
+            panel.run_video()
+        if panel.QPushButton_acquire.isChecked():
+            self.logg.error(f"Stopping acquisition after an error: {reason}")
+            panel.QPushButton_acquire.setChecked(False)
+            panel.run_acquisition()
 
     @pyqtSlot()
     def finish_sim_acquisition(self):

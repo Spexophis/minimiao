@@ -21,14 +21,9 @@ import numpy as np
 
 from minimiao import run_threads, logger
 
-# scsdk.py / SCDefines.py live in <SDK home>/samples/python/scsdk. scsdk.py also loads <SDK home>/bin/scsdk.dll, so it
-# needs the Revealer_Scientific_Camera_SDK_HOME environment variable (set by the SDK installer).
-# REVEALER_SCSDK_PATH can point at the wrapper folder explicitly.
-SDK_HOME_ENV = "Revealer_Scientific_Camera_SDK_HOME"
-SCSDK_PATHS = [
-    os.environ.get("REVEALER_SCSDK_PATH", ""),
-    os.path.join(os.environ.get(SDK_HOME_ENV, ""), "samples", "python", "scsdk"),
-]
+# Folder with the SCSDK python wrapper (scsdk.py, SCDefines.py). scsdk.py also needs the
+# Revealer_Scientific_Camera_SDK_HOME environment variable (set by the SDK installer) to load bin/scsdk.dll.
+SCSDK_DIR = r"C:\Program Files\Revealer Scientific Camera SDK\samples\python\SCSDK"
 
 # ExposureTime is a GenICam float. GenICam cameras take microseconds; the manual does not state the unit, so the
 # value is read back and logged in set_exposure_time(). Change to 1e3 / 1.0 if your camera reports ms / s.
@@ -99,6 +94,7 @@ class RevealerCamera:
         self.data = None
         self.acq_thread = None
         self._frames_read = 0
+        self._skip_frames = 0
         self._grabbing = False
         self._serial = None
         self._last_grab_error = None
@@ -116,14 +112,12 @@ class RevealerCamera:
 
     # ------------------------------------------------------------------ SDK plumbing
     def _load_sdk_modules(self):
-        for path in SCSDK_PATHS:
-            if path and os.path.isdir(path) and path not in sys.path:
-                sys.path.append(path)
+        sys.path.append(SCSDK_DIR)
         try:
             self._scsdk = importlib.import_module("scsdk")
             self._scdefs = importlib.import_module("SCDefines")
         except SystemExit:  # scsdk.py calls sys.exit() when the SDK env var is missing; do not let that kill the GUI
-            raise RuntimeError(f"Revealer SDK not found: environment variable {SDK_HOME_ENV} is not set")
+            raise RuntimeError("Revealer SDK not found: environment variable Revealer_Scientific_Camera_SDK_HOME is not set")
 
     def _sdk_attr(self, name):
         """Look a symbol up in scsdk first, then SCDefines (the sample does `from ... import *` on both)."""
@@ -434,6 +428,7 @@ class RevealerCamera:
 
     def _start_grabbing(self):
         self._frames_read = 0
+        self._skip_frames = 0
         if not self._ok(self.sdk.SC_StartGrabbing(), "SC_StartGrabbing"):
             raise RuntimeError("Revealer SC_StartGrabbing failed")
         self._grabbing = True
@@ -456,9 +451,23 @@ class RevealerCamera:
             frame = self._grab_frame(DRAIN_TIMEOUT_MS)
         if not frames or self.data is None:
             return
+        if self._skip_frames > 0:  # throwaway warm-up frames, see skip_frames()
+            drop = min(self._skip_frames, len(frames))
+            self._skip_frames -= drop
+            self._frames_read += drop
+            frames = frames[drop:]
+            if not frames:
+                return
         first = self._frames_read
         self._frames_read += len(frames)
         self.data.add_element(frames, [first, self._frames_read - 1])
+
+    def skip_frames(self, n):
+        """Discard the next n frames the camera delivers (a throwaway warm-up run); 0 cancels."""
+        self._skip_frames = int(n)
+
+    def frames_to_skip(self):
+        return self._skip_frames
 
     def get_last_image(self):
         if self.data is not None:

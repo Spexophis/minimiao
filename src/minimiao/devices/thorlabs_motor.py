@@ -103,6 +103,9 @@ _BACKGROUND_COMMANDS = frozenset({"BO", "BS"})
 
 ScaleType = Union[str, float]  # "stage" | "step" | float
 
+_MOVE_TIMEOUT = 10.0  # s to wait for a move to finish before checking where the stage is
+_MOVE_TOLERANCE_DEG = 0.25  # a stage within this of the target after a missing reply counts as arrived
+
 
 class ELL14:
     """
@@ -465,16 +468,47 @@ class ELL14:
         _, d = self._query("gp", expect=["PO"])
         return self._from_steps(d)
 
-    def move_to(self, position: float, timeout: float = 30.0) -> bool:
+    def _get_position_steps(self) -> int:
+        """Current position as a signed encoder-pulse count (independent of the user scale)."""
+        _, d = self._query("gp", expect=["PO"])
+        return (int(d, 16) + 2 ** 31) % 2 ** 32 - 2 ** 31
+
+    def move_to(self, position: float, timeout: float = _MOVE_TIMEOUT, retries: int = 1) -> bool:
         """
         Move to an absolute position (synchronous). Returns True if a position reply
         confirmed the move completed.
+
+        If no reply arrives within ``timeout`` the reply may merely have been lost, so the position is read back:
+        if the stage is already at the target the move counts as done, otherwise the move (an absolute move is safe
+        to repeat) is sent again, up to ``retries`` times, before ElliptecTimeoutError is raised.
         """
         time.sleep(self._PRE_MOVE_DELAY)  # avoid a spurious move-to-0 on back-to-back moves
-        rcomm, rdata = self._query("ma", data=self._to_steps(position),
-                                   expect=["GS", "PO"], timeout=timeout)
-        self._check_reply_status(rcomm, rdata)
-        return rcomm == "PO"
+        target = (int(self._to_steps(position), 16) + 2 ** 31) % 2 ** 32 - 2 ** 31
+        tolerance = max(2.0, _MOVE_TOLERANCE_DEG * self._pulses_per_unit)
+        last = None
+        for attempt in range(retries + 1):
+            try:
+                rcomm, rdata = self._query("ma", data=self._to_steps(position),
+                                           expect=["GS", "PO"], timeout=timeout)
+                self._check_reply_status(rcomm, rdata)
+                return rcomm == "PO"
+            except ElliptecTimeoutError:
+                try:
+                    last = self._get_position_steps()
+                except ElliptecError:
+                    last = None
+                if last is not None and abs(last - target) <= tolerance:
+                    log.warning("no reply to move to %s but the stage is at the target (reply lost)", position)
+                    return True
+                if attempt == retries:
+                    where = "unreadable" if last is None else f"{last} of target {target} pulses"
+                    raise ElliptecTimeoutError(
+                        f"no reply to move to {position} after {retries + 1} attempts of {timeout:g} s; "
+                        f"stage position {where}") from None
+                log.warning("no reply to move to %s within %g s (position %s); sending it again",
+                            position, timeout, last)
+                time.sleep(self._PRE_MOVE_DELAY)
+        return False  # not reached
 
     def move_by(self, distance: float, timeout: float = 30.0) -> bool:
         """Move by a relative distance (synchronous). Returns True on confirmed completion."""

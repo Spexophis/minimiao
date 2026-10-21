@@ -27,6 +27,7 @@ class CameraAcquisitionThread(threading.Thread):
 
     def run(self):
         self._running = True
+        error = None
         while self._running:
             with self.condition:
                 self.condition.wait(timeout=self.interval)
@@ -34,7 +35,28 @@ class CameraAcquisitionThread(threading.Thread):
                 if not self._running:
                     break
 
-                self.cam.get_images()
+                try:
+                    self.cam.get_images()
+                except Exception as e:  # an exception would end this thread silently and freeze the display
+                    self._running = False
+                    error = e
+        if error is not None:
+            self._report_error(error)
+
+    def _report_error(self, error):
+        """Log the failure and tell the owner of the camera (cam.on_acq_error, if set) so it can stop the run."""
+        logg = getattr(self.cam, "logg", None)
+        msg = f"Camera acquisition thread stopped by an error: {error}\n{''.join(traceback.format_exception(error))}"
+        if logg is not None:
+            logg.error(msg)
+        else:
+            print(msg)
+        callback = getattr(self.cam, "on_acq_error", None)
+        if callback is not None:
+            try:
+                callback(error)
+            except Exception:
+                pass
 
     def stop(self, timeout=5.0):
         with self.condition:

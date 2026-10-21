@@ -2278,6 +2278,7 @@ class HamamatsuCamera:
         self.data = None
         self.acq_thread = None
         self._frames_read = 0
+        self._skip_frames = 0
 
     def __getattr__(self, item):
         if hasattr(self._settings, item):
@@ -2443,6 +2444,7 @@ class HamamatsuCamera:
         self.data = run_threads.CameraDataList(max_length=self.buffer_size)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         self._frames_read = 0
+        self._skip_frames = 0
         re = self.dcam.cap_start(self.is_sequence)
         if re:
             self.acq_thread.start()
@@ -2491,7 +2493,19 @@ class HamamatsuCamera:
             index = (newest_index - (number_of_images - 1 - i)) % self.buffer_size
             dat.append(self.dcam.buf_getframedata(index))
         self._frames_read = total
-        self.data.add_element(dat, [first_id, last_id])
+        if self._skip_frames > 0:  # throwaway warm-up frames, see skip_frames()
+            drop = min(self._skip_frames, len(dat))
+            self._skip_frames -= drop
+            dat, first_id = dat[drop:], first_id + drop
+        if dat:
+            self.data.add_element(dat, [first_id, last_id])
+
+    def skip_frames(self, n):
+        """Discard the next n frames the camera delivers (a throwaway warm-up run); 0 cancels."""
+        self._skip_frames = int(n)
+
+    def frames_to_skip(self):
+        return self._skip_frames
 
     def get_last_image(self):
         if self.data is not None:
@@ -2506,6 +2520,7 @@ class HamamatsuCamera:
         self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
         self._frames_read = 0
+        self._skip_frames = 0
         self.buffer_size = n * 2  # get_images() indexes the ring with this; must match buf_alloc
         re = self.dcam.buf_alloc(self.buffer_size)
         if re is False:
