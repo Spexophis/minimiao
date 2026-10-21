@@ -25,8 +25,7 @@ from minimiao import run_threads, logger
 # Revealer_Scientific_Camera_SDK_HOME environment variable (set by the SDK installer) to load bin/scsdk.dll.
 SCSDK_DIR = r"C:\Program Files\Revealer Scientific Camera SDK\samples\python\SCSDK"
 
-# ExposureTime is a GenICam float. GenICam cameras take microseconds; the manual does not state the unit, so the
-# value is read back and logged in set_exposure_time(). Change to 1e3 / 1.0 if your camera reports ms / s.
+# ExposureTime is in microseconds (confirmed from the SDK log: 0.0403 s -> setFloatFeatureValue ExposureTime 40300).
 EXPOSURE_TIME_SCALE = 1e6  # feature units per second
 
 LIVE_BUFFER_SIZE = 128
@@ -314,45 +313,64 @@ class RevealerCamera:
         return self.gain
 
     def set_roi(self):
-        """Apply binning + ROI from bin_h, start_h/end_h, start_v/end_v; pixels_x/y are read back from the camera."""
-        if self.bin_h in Binning_Mode:
-            self._set_enum("BinningMode", Binning_Mode[self.bin_h])
-        else:
-            self.logg.error(f"Unsupported binning {self.bin_h}, use 1, 2 or 4")
+        """
+        Apply binning + ROI from bin_h, start_h/end_h, start_v/end_v. The size is rounded to the camera's step, then
+        pixels_x/y are read back from the camera, so they match the frames it sends even if the request was adjusted.
+        """
+        binning = self.bin_h if self.bin_h in Binning_Mode else 1
+        if binning != self.bin_h:
+            self.logg.error(f"Unsupported binning {self.bin_h}, using 1 (supported: 1, 2, 4)")
+        self._set_enum("BinningMode", Binning_Mode[binning])
+        sensor_w, sensor_h = self.sensor_width // binning, self.sensor_height // binning
         want_w = self.end_h - self.start_h + 1
         want_h = self.end_v - self.start_v + 1
         rw, rh = self._int_range("Width"), self._int_range("Height")
         rx, ry = self._int_range("OffsetX"), self._int_range("OffsetY")
-        width = self._align(want_w, *rw) if rw else want_w
-        height = self._align(want_h, *rh) if rh else want_h
-        off_x = self._align(self.start_h, *rx) if rx else self.start_h
-        off_y = self._align(self.start_v, *ry) if ry else self.start_v
-        # keep the window inside the sensor
-        if off_x + width > self.sensor_width:
-            off_x = self._align(max(self.sensor_width - width, 0), *rx) if rx else max(self.sensor_width - width, 0)
-        if off_y + height > self.sensor_height:
-            off_y = self._align(max(self.sensor_height - height, 0), *ry) if ry else max(self.sensor_height - height, 0)
-        ret = self.sdk.SC_SetROI(width, height, off_x, off_y)
-        if self._ok(ret, "SC_SetROI"):
-            self.pixels_x = self._get_int("Width") or width
-            self.pixels_y = self._get_int("Height") or height
-            self.img_size = self.pixels_x * self.pixels_y
-            self.ps = 6.5 / self.bin_h
-            self.logg.info("bin_h = {} \nbin_v = {} \nstart_h = {} \nstart_v = {} \npixels_x = {} \npixels_y = {}".format(
-                self.bin_h, self.bin_v, off_x, off_y, self.pixels_x, self.pixels_y))
+        # The camera's own max for these depends on the current ROI (OffsetX max = sensor width - current Width, so 0
+        # for a full frame): only the minimum and the step are used, the upper bound is the (binned) sensor.
+        width = self._align(want_w, rw[0], sensor_w, rw[2]) if rw else want_w
+        height = self._align(want_h, rh[0], sensor_h, rh[2]) if rh else want_h
+        off_x = self._align(self.start_h, rx[0], max(sensor_w - width, rx[0]), rx[2]) if rx else self.start_h
+        off_y = self._align(self.start_v, ry[0], max(sensor_h - height, ry[0]), ry[2]) if ry else self.start_v
+        ok = self._ok(self.sdk.SC_SetROI(width, height, off_x, off_y), f"SC_SetROI({width}, {height}, {off_x}, {off_y})")
+        if not ok:
+            self.logg.error(f"Revealer ROI limits (min, max, step): Width {rw}, Height {rh}, OffsetX {rx}, "
+                            f"OffsetY {ry}; binned sensor {sensor_w}x{sensor_h}")
+        w, h = self._get_int("Width"), self._get_int("Height")
+        x, y = self._get_int("OffsetX"), self._get_int("OffsetY")
+        if w and h:  # whatever the outcome, the display and the saved stacks must match what the camera really sends
+            self.pixels_x, self.pixels_y = int(w), int(h)
+        self.img_size = self.pixels_x * self.pixels_y
+        self.ps = 6.5 / binning
+        self.logg.info(f"ROI requested {want_w}x{want_h} at ({self.start_h},{self.start_v}), sent {width}x{height} at "
+                       f"({off_x},{off_y}); camera has {self.pixels_x}x{self.pixels_y} at ({x},{y}), binning {binning}")
+        if ok and (self.pixels_x, self.pixels_y) != (want_w, want_h):
+            self.logg.warning(f"ROI adjusted to the camera's step size: asked {want_w}x{want_h}, "
+                              f"camera has {self.pixels_x}x{self.pixels_y}")
+
+    def log_roi_limits(self):
+        """Log the camera's current ROI features with their limits (min, max, step); handy when an ROI is refused."""
+        self.logg.info(f"SensorWidth {self._get_int('SensorWidth')}, SensorHeight {self._get_int('SensorHeight')}, "
+                       f"BinningMode {self._get_enum('BinningMode')}")
+        for name in ("Width", "Height", "OffsetX", "OffsetY"):
+            self.logg.info(f"{name}: value {self._get_int(name)}, limits (min, max, step) {self._int_range(name)}")
 
     def set_crop(self):
         """Crop = set_roi() on this camera (the sensor window is programmable)."""
         self.set_roi()
 
     def set_exposure_time(self):
-        value = self.t_exposure * EXPOSURE_TIME_SCALE
+        requested = value = self.t_exposure * EXPOSURE_TIME_SCALE
         rng = self._float_range("ExposureTime")
         if rng is not None:
             value = min(max(value, rng[0]), rng[1])
         if self._set_float("ExposureTime", value):
             actual = self._get_float("ExposureTime")
-            self.logg.info("Set Exposure Time to {} (camera reports {})".format(self.t_exposure, actual))
+            self.logg.info("Set Exposure Time to {:g} s (camera reports {:g} us)".format(self.t_exposure, actual or 0.0))
+            if actual is not None and abs(actual - requested) > 0.05 * max(abs(requested), 1e-12):
+                # clamped to the camera's range, rounded to its step, or EXPOSURE_TIME_SCALE does not match its unit
+                self.logg.warning(f"ExposureTime: asked for {requested:g}, camera reports {actual:g} "
+                                  f"(allowed range {rng}); check EXPOSURE_TIME_SCALE")
 
     def set_acquisition_mode(self, ind):
         """The sCMOS free-runs on its trigger input: no acquisition modes to select, kept for API compatibility."""
