@@ -21,7 +21,7 @@ class DeviceManager:
         try:
             # self.img_cam = andor_emccd.EMCCDCamera(logg=self.logg)
             self.img_cam = hamamatsu_scmos.HamamatsuCamera(logg=self.logg)
-            # self.img_cam = revealer_scmos.RevealerCamera(logg=self.logg)
+            # self.img_cam = revealer_scmos.RevealerCamera(logg=self.logg, path=self.data_folder)
         except Exception as e:
             from . import mock_cam
             self.img_cam = mock_cam.MockCamera()

@@ -14,6 +14,7 @@ module can be imported on a machine without the SDK; the constructor raises and 
 import importlib
 import os
 import sys
+import threading
 import time
 from ctypes import POINTER, byref, c_double, c_int64, c_ubyte, c_uint16, c_uint64, c_void_p, cast
 
@@ -35,6 +36,12 @@ COOLING_TARGET = -10  # deg C, clamped to the range the camera accepts
 GRAB_TIMEOUT_MS = 10  # first GetFrame of a polling round
 DRAIN_TIMEOUT_MS = 1  # further GetFrame calls of the same round
 MAX_FRAMES_PER_POLL = 64
+SDK_LOG_DIRNAME = "revealer_sdk_log"  # created inside the data folder, the SDK writes its own log files here
+SDK_LOG_POLL_S = 0.5  # how often the SDK log files are checked for new lines
+# The camera ignores triggers for a while after AcquisitionStart: the first exposure came 0.59-0.60 s after it in every
+# run, whatever the exposure time or ROI (SDK timestamps, 09:59:14 and 09:59:39 runs), and a 3-frame trigger sequence
+# sent 0.25 s after the start produced no frames at all. Wait this long before the caller starts its triggers.
+ARM_DELAY_S = 1.0
 
 # Gloria6504 attribute table, enumeration values
 Binning_Mode = {1: 0, 2: 1, 4: 2}  # binning factor -> BinningMode enum (OneByOne, TwoByTwo, FourByFour)
@@ -83,8 +90,12 @@ class RevealerCamera:
             self.acq_last = 0
             self.valid_index = 0
 
-    def __init__(self, logg=None, camera_index=0):
+    def __init__(self, logg=None, camera_index=0, path=None):
         self.logg = logg or logger.setup_logging()
+        self._log_dir = os.path.join(path or os.getcwd(), SDK_LOG_DIRNAME)
+        self._sdk_log_stop = threading.Event()
+        self._sdk_log_baseline = {}
+        self._sdk_log_thread = None
         self._settings = self.CameraSettings()
         self.camera_index = camera_index
         self.sdk = None
@@ -98,6 +109,7 @@ class RevealerCamera:
         self._serial = None
         self._last_grab_error = None
         self._last_grab_error_time = 0.0
+        self._last_frame_id = None
         self._load_sdk_modules()
         self.sdk = self._initialize_sdk()
         if self.sdk is None:
@@ -134,9 +146,12 @@ class RevealerCamera:
     def _initialize_sdk(self):
         try:
             sdk = self._sdk_attr("SCSDK")()
-            ret = sdk.SC_Init(self._sdk_attr("SCLogLevel").Info.value, 'pythonLog', 10485760, 10)
+            os.makedirs(self._log_dir, exist_ok=True)
+            self._sdk_log_baseline = self._sdk_log_sizes()  # what earlier runs left; only newer lines are forwarded
+            ret = sdk.SC_Init(self._sdk_attr("SCLogLevel").Info.value, self._log_dir, 10485760, 10)
             if not self._ok(ret, "SC_Init"):
                 return None
+            self._start_sdk_log_forwarding()
             device_list = self._sdk_attr("SC_DeviceList")()
             device_list.devNum = 0
             device_list.pDevInfo = None
@@ -186,7 +201,63 @@ class RevealerCamera:
                 self.sdk.SC_Release()
             except Exception as e:
                 self.logg.error(f"SC_Release: {e}")
+            self._stop_sdk_log_forwarding()
             self.logg.info("Revealer sCMOS Shut Down")
+
+    # ------------------------------------------------------------------ SDK log -> GUI log
+    # The SDK's C++ log lines (feature reads, startGrabbing, lostFrame, ...) never pass through python logging; they are
+    # written to files in self._log_dir. A daemon thread follows the newest file there and copies each new line into
+    # the GUI log through self.logg, so everything ends up in one file.
+    def _start_sdk_log_forwarding(self):
+        if self._sdk_log_thread is not None:
+            return
+        self._sdk_log_stop.clear()
+        self._sdk_log_thread = threading.Thread(target=self._forward_sdk_log, name="RevealerSdkLog", daemon=True)
+        self._sdk_log_thread.start()
+
+    def _stop_sdk_log_forwarding(self):
+        thread, self._sdk_log_thread = self._sdk_log_thread, None
+        if thread is not None:
+            self._sdk_log_stop.set()
+            thread.join(timeout=2 * SDK_LOG_POLL_S + 1.0)
+
+    def _sdk_log_sizes(self):
+        try:
+            files = [os.path.join(self._log_dir, f) for f in os.listdir(self._log_dir)]
+            return {f: os.path.getsize(f) for f in files if os.path.isfile(f)}
+        except OSError:
+            return {}
+
+    def _forward_sdk_log(self):
+        """Follow every file in the SDK log folder (SCSDKLog.log, USBGenTL.log, ...), each from its own offset."""
+        offsets = dict(self._sdk_log_baseline)  # files that existed before this run start at their end
+        pending = {}
+        while True:
+            stopping = self._sdk_log_stop.is_set()  # one last pass after the stop request flushes the tail
+            try:
+                lines = []
+                for path, size in self._sdk_log_sizes().items():
+                    pos = offsets.get(path, 0)
+                    if size < pos:  # truncated or rotated in place
+                        pos, pending[path] = 0, ""
+                    if size == pos:
+                        continue
+                    with open(path, "rb") as fh:
+                        fh.seek(pos)
+                        chunk = fh.read(size - pos)
+                    offsets[path] = pos + len(chunk)
+                    text = (pending.get(path, "") + chunk.decode("utf-8", errors="replace")).split("\n")
+                    pending[path] = text.pop()  # a partly written last line waits for its newline
+                    lines += [t.rstrip("\r") for t in text if t.strip()]
+                lines.sort(key=lambda t: t[:25])  # "[2026-10-22 09:59:57.131]" prefix: merge files chronologically
+                for line in lines:
+                    self.logg.info(f"SDK: {line}")
+            except Exception as e:
+                self.logg.error(f"SDK log forwarding: {e}")
+                return
+            if stopping:
+                return
+            self._sdk_log_stop.wait(SDK_LOG_POLL_S)
 
     # ------------------------------------------------------------------ feature access (GenICam names, see manual)
     # The scsdk.py wrapper takes the feature name as str (it encodes it) and the ctypes out-object itself (it does the
@@ -409,9 +480,25 @@ class RevealerCamera:
                 self._log_grab_error(f"SC_GetFrame error code {ret}")
             return None
         try:
+            self._check_frame_id(frame.frameInfo)
             return self._frame_to_array(frame.pData, frame.frameInfo)
         finally:
             self._ok(self.sdk.SC_ReleaseFrame(frame), "SC_ReleaseFrame")
+
+    def _check_frame_id(self, info):
+        """The camera numbers every exposure: a jump in frameId means frames were lost between camera and SDK.
+        (A trigger that arrives while the camera is not armed or still reading out never gets an id, so it is
+        not seen here; compare the number of frames received with the number of triggers sent.)"""
+        fid = int(info.frameId)
+        if self._last_frame_id is None:
+            self.logg.info(f"Revealer first frame of this grab: frameId={fid} status={int(info.status)} "
+                           f"timeStamp={int(info.timeStamp)}")
+        elif fid != self._last_frame_id + 1:
+            self.logg.warning(f"Revealer frameId jumped {self._last_frame_id} -> {fid}: "
+                              f"{fid - self._last_frame_id - 1} frame(s) lost before reaching python")
+        if int(info.status) != 0:
+            self.logg.warning(f"Revealer frame {fid} has status {int(info.status)}")
+        self._last_frame_id = fid
 
     def _log_grab_error(self, msg):
         """The grab loop runs at thread speed, so repeat the same error at most every 5 s."""
@@ -450,6 +537,7 @@ class RevealerCamera:
     def _start_grabbing(self):
         self._frames_read = 0
         self._skip_frames = 0
+        self._last_frame_id = None
         if not self._ok(self.sdk.SC_StartGrabbing(), "SC_StartGrabbing"):
             raise RuntimeError("Revealer SC_StartGrabbing failed")
         self._grabbing = True
@@ -562,6 +650,7 @@ class RevealerCamera:
         self._set_buffer_count(2 * n)
         self._start_grabbing()
         self.acq_thread.start()
+        time.sleep(ARM_DELAY_S)  # triggers sent before the camera is armed are lost, see ARM_DELAY_S
         self.logg.info('Acquisition started')
 
     def stop_data_acquisition(self):
@@ -572,7 +661,7 @@ class RevealerCamera:
             self.data.close()  # flush + join the background TIFF-writer thread
             self.data = None
         self._stop_grabbing()
-        self.logg.info('Acquisition stopped')
+        self.logg.info(f'Acquisition stopped, {self._frames_read} frames received')
 
     def get_data(self):
         if self.data is not None:
