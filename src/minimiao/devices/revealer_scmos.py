@@ -14,7 +14,6 @@ module can be imported on a machine without the SDK; the constructor raises and 
 import importlib
 import os
 import sys
-import threading
 import time
 from ctypes import POINTER, byref, c_double, c_int64, c_ubyte, c_uint16, c_uint64, c_void_p, cast
 
@@ -37,7 +36,7 @@ GRAB_TIMEOUT_MS = 10  # first GetFrame of a polling round
 DRAIN_TIMEOUT_MS = 1  # further GetFrame calls of the same round
 MAX_FRAMES_PER_POLL = 64
 SDK_LOG_DIRNAME = "revealer_sdk_log"  # created inside the data folder, the SDK writes its own log files here
-SDK_LOG_POLL_S = 0.5  # how often the SDK log files are checked for new lines
+SDK_LOG_LEVEL = "Fatal"  # SCLogLevel name: Trace, Debug, Info, Warn, Error, Fatal; Info gives the full SDK log
 # The camera ignores triggers for a while after AcquisitionStart: the first exposure came 0.59-0.60 s after it in every
 # run, whatever the exposure time or ROI (SDK timestamps, 09:59:14 and 09:59:39 runs), and a 3-frame trigger sequence
 # sent 0.25 s after the start produced no frames at all. Wait this long before the caller starts its triggers.
@@ -93,9 +92,6 @@ class RevealerCamera:
     def __init__(self, logg=None, camera_index=0, path=None):
         self.logg = logg or logger.setup_logging()
         self._log_dir = os.path.join(path or os.getcwd(), SDK_LOG_DIRNAME)
-        self._sdk_log_stop = threading.Event()
-        self._sdk_log_baseline = {}
-        self._sdk_log_thread = None
         self._settings = self.CameraSettings()
         self.camera_index = camera_index
         self.sdk = None
@@ -147,11 +143,9 @@ class RevealerCamera:
         try:
             sdk = self._sdk_attr("SCSDK")()
             os.makedirs(self._log_dir, exist_ok=True)
-            self._sdk_log_baseline = self._sdk_log_sizes()  # what earlier runs left; only newer lines are forwarded
-            ret = sdk.SC_Init(self._sdk_attr("SCLogLevel").Info.value, self._log_dir, 10485760, 10)
+            ret = sdk.SC_Init(getattr(self._sdk_attr("SCLogLevel"), SDK_LOG_LEVEL).value, self._log_dir, 10485760, 10)
             if not self._ok(ret, "SC_Init"):
                 return None
-            self._start_sdk_log_forwarding()
             device_list = self._sdk_attr("SC_DeviceList")()
             device_list.devNum = 0
             device_list.pDevInfo = None
@@ -201,63 +195,7 @@ class RevealerCamera:
                 self.sdk.SC_Release()
             except Exception as e:
                 self.logg.error(f"SC_Release: {e}")
-            self._stop_sdk_log_forwarding()
             self.logg.info("Revealer sCMOS Shut Down")
-
-    # ------------------------------------------------------------------ SDK log -> GUI log
-    # The SDK's C++ log lines (feature reads, startGrabbing, lostFrame, ...) never pass through python logging; they are
-    # written to files in self._log_dir. A daemon thread follows the newest file there and copies each new line into
-    # the GUI log through self.logg, so everything ends up in one file.
-    def _start_sdk_log_forwarding(self):
-        if self._sdk_log_thread is not None:
-            return
-        self._sdk_log_stop.clear()
-        self._sdk_log_thread = threading.Thread(target=self._forward_sdk_log, name="RevealerSdkLog", daemon=True)
-        self._sdk_log_thread.start()
-
-    def _stop_sdk_log_forwarding(self):
-        thread, self._sdk_log_thread = self._sdk_log_thread, None
-        if thread is not None:
-            self._sdk_log_stop.set()
-            thread.join(timeout=2 * SDK_LOG_POLL_S + 1.0)
-
-    def _sdk_log_sizes(self):
-        try:
-            files = [os.path.join(self._log_dir, f) for f in os.listdir(self._log_dir)]
-            return {f: os.path.getsize(f) for f in files if os.path.isfile(f)}
-        except OSError:
-            return {}
-
-    def _forward_sdk_log(self):
-        """Follow every file in the SDK log folder (SCSDKLog.log, USBGenTL.log, ...), each from its own offset."""
-        offsets = dict(self._sdk_log_baseline)  # files that existed before this run start at their end
-        pending = {}
-        while True:
-            stopping = self._sdk_log_stop.is_set()  # one last pass after the stop request flushes the tail
-            try:
-                lines = []
-                for path, size in self._sdk_log_sizes().items():
-                    pos = offsets.get(path, 0)
-                    if size < pos:  # truncated or rotated in place
-                        pos, pending[path] = 0, ""
-                    if size == pos:
-                        continue
-                    with open(path, "rb") as fh:
-                        fh.seek(pos)
-                        chunk = fh.read(size - pos)
-                    offsets[path] = pos + len(chunk)
-                    text = (pending.get(path, "") + chunk.decode("utf-8", errors="replace")).split("\n")
-                    pending[path] = text.pop()  # a partly written last line waits for its newline
-                    lines += [t.rstrip("\r") for t in text if t.strip()]
-                lines.sort(key=lambda t: t[:25])  # "[2026-10-22 09:59:57.131]" prefix: merge files chronologically
-                for line in lines:
-                    self.logg.info(f"SDK: {line}")
-            except Exception as e:
-                self.logg.error(f"SDK log forwarding: {e}")
-                return
-            if stopping:
-                return
-            self._sdk_log_stop.wait(SDK_LOG_POLL_S)
 
     # ------------------------------------------------------------------ feature access (GenICam names, see manual)
     # The scsdk.py wrapper takes the feature name as str (it encodes it) and the ctypes out-object itself (it does the
