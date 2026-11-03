@@ -12,8 +12,9 @@ except ImportError as e:
 
 
 class ComputationManager:
-    def __init__(self, config=None, logg=None, path=None):
+    def __init__(self, dev, config=None, logg=None, path=None):
+        self.dev = dev
         self.config = config
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
-        self.trg = trigger_generator.TriggerSequence(logg=self.logg)
+        self.trg = trigger_generator.TriggerSequence(galvo=self.dev.gvs, logg=self.logg)

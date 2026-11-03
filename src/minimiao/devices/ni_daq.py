@@ -450,7 +450,7 @@ class NIDAQ:
             # Add AO channels
             for ind in indices:
                 self.tasks["analog"].ao_channels.add_ao_voltage_chan(self.analog_channels[ind],
-                                                                     min_val=0.0,
+                                                                     min_val=-10.0,
                                                                      max_val=10.0)
 
             # Use the retriggerable counter pulse train as AO sample clock.

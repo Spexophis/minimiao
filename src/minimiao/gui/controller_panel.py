@@ -688,7 +688,7 @@ class ControlPanel(QWidget):
         return None
 
     def get_slm_sequence(self):
-        return self.QComboBox_slm_sequence.currentText()
+        return self.QComboBox_slm_sequence.currentText(), self.QComboBox_slm_sequence.currentIndex()
 
     @pyqtSlot()
     def motor_home(self):

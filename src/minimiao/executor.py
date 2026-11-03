@@ -79,6 +79,7 @@ class CommandExecutor(QObject):
         # DAQ
         self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
         self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
+        self.ctrl_panel.Signal_plot_trigger.connect(self.plot_trigger)
         # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_fft.connect(self.fft)
@@ -293,8 +294,9 @@ class CommandExecutor(QObject):
 
     def update_galvo_scanning(self):
         origins, ranges, steps = self.ctrl_panel.get_galvo_scans()
-        returns = self.ctrl_panel.get_galvo_scan_parameters()
-        self.trg.update_galvo_scan_parameters(origins=origins, ranges=ranges, steps=steps, returns=returns)
+        ramp, step_response, return_time = self.ctrl_panel.get_galvo_scan_parameters()
+        self.trg.update_galvo_scan_parameters(origins=origins, ranges=ranges, steps=steps,
+                                              returns=(ramp, return_time, step_response))
 
     @pyqtSlot(float, float)
     def set_galvo_positions(self, value_x: float, value_y: float):
@@ -390,6 +392,7 @@ class CommandExecutor(QObject):
         try:
             self.update_digital_triggers()
             self.update_piezo_scanning()
+            self.update_galvo_scanning()
             self.logg.info(f"Trigger Updated")
         except Exception as e:
             self.logg.error(f"Trigger Error: {e}")
@@ -431,14 +434,14 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps,
                                           interval_time=interval_t, transfer_time=transfer_t)
         if vd_mod == "Widefield":
-            dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+            dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
         elif vd_mod == "SIM":
-            dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
+            dtr, chs, atr, ach = self.trg.generate_sim_triggers(1, phs, False)
         elif vd_mod == "NLSIM":
             if "1msoff" in self.slm_seq:
-                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 0, False)
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 0, False)
             elif "10msoff" in self.slm_seq:
-                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 1, False)
             else:
                 raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
         else:
@@ -446,7 +449,9 @@ class CommandExecutor(QObject):
         self.prepare_camera()
         self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                     analog_sequences=atr, analog_channels=ach,
+                                     finite=False, trg=False)
         self.viewer.plot_trace(dtr[0])
         for i in range(dtr.shape[0] - 1):
             self.viewer.plot_trace(dtr[i + 1] + i * 1.1 + 1.1, overlay=True)
@@ -524,9 +529,9 @@ class CommandExecutor(QObject):
     def plot_trigger(self):
         try:
             self.slm_seq = self.ctrl_panel.get_slm_sequence()
-            self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
+            _, _, _ = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
             self.update_trigger_parameters()
-            dtr, dch = self.trg.generate_digital_triggers(self.lasers, 0, self.slm_seq)
+            dtr, dch, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0, self.slm_seq)
             self.viewer.plot_trace(dtr[0])
             for i in range(dtr.shape[0] - 1):
                 self.viewer.plot(dtr[i + 1] + i + 1)
@@ -719,29 +724,31 @@ class CommandExecutor(QObject):
                                           standby_time=self.devs.img_cam.t_readout,
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_WideField":
-            dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+            dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
             self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
+                                         analog_sequences=np.tile(atr, aqn), analog_channels=ach,
                                          finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_WideField":
-            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
+            dtr, dchs, atr, achs, pos = self.trg.generate_widefield_scan(aqn)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
-                                         analog_sequences=ptr, analog_channels=pchs,
+                                         analog_sequences=atr, analog_channels=achs,
                                          finite=False, trg=False)
             pos = pos * aqn
         elif aqm == "2D_WideField_Timelapse":
-            dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
+            dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
             self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
+                                         analog_sequences=np.tile(atr, aqn), analog_channels=ach,
                                          finite=False, trg=True)
             pos = aqn
         elif aqm == "3D_WideField_Timelapse":
-            dtr, dchs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
+            dtr, dchs, atr, achs, pos = self.trg.generate_widefield_scan(aqn)
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
-                                         analog_sequences=ptr, analog_channels=pchs,
+                                         analog_sequences=atr, analog_channels=achs,
                                          finite=False, trg=True)
             pos = pos * aqn
         else:
@@ -792,16 +799,20 @@ class CommandExecutor(QObject):
                                           standby_time=self.devs.img_cam.t_readout,
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_SIM":
-            dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
+            dtr, chs, atr, ach = self.trg.generate_sim_triggers(1, phs, False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         analog_sequences=atr, analog_channels=ach,
+                                         finite=True, trg=False)
         elif aqm == "2D_NLSIM":
             if "1msoff" in self.slm_seq:
-                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 0, False)
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 0, False)
             elif "10msoff" in self.slm_seq:
-                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 1, False)
             else:
                 raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                         analog_sequences=atr, analog_channels=ach,
+                                         finite=True, trg=False)
         # elif aqm == "2D_SIM_Timelapse":
         #     dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
         #     rt = self.ctrl_panel.get_acquisition_interval()
@@ -924,8 +935,10 @@ class CommandExecutor(QObject):
                                           exposure_time=self.devs.img_cam.t_exposure,
                                           standby_time=self.devs.img_cam.t_readout,
                                           frame_rate=self.devs.img_cam.fps)
-        dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
+        dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
+        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                     analog_sequences=atr, analog_channels=ach,
+                                     finite=single, trg=False)
         self.prepare_camera()
 
     def finish_task(self):

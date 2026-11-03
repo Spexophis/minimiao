@@ -367,7 +367,7 @@ class GalvoWaveform:
         self.ramp_acc_v_us2 = self.scan_velocity_v_us / self.t_ramp_us
         self.t_scan_us = self.t_pixel_dwell_us * self.n_pixels
         self.t_flyback_us: float = 510.0
-        self.t_settle_us: float = 360.0
+        self.t_settle_us: float = 750.0
         self._validate()
 
     def set_params(self,
