@@ -546,9 +546,14 @@ class CommandExecutor(QObject):
                    compression='zlib', photometric="minisblack")
         pws = self.ctrl_panel.get_cobolt_laser_power("all")
         try:
-            # (2 detector slots, dwell samples, lines, pixels): each 2D slice is
-            # laid out like the image, the 2nd axis is the per-pixel count trace
-            stacks = [self.rec.point_scan_count_stack(i) for i in range(len(self.rec.live_counts))]
+            # (2 detector slots, trace samples, lines, pixels): each 2D slice is
+            # laid out like the image, the 2nd axis is the per-pixel count trace:
+            # the full pixel cycle for RESOLFT, the gated samples for point scan
+            n_slots = len(self.rec.live_counts)
+            if self.rec.pixel_cycle_samples:
+                stacks = [self.rec.point_scan_cycle_stack(i) for i in range(n_slots)]
+            else:
+                stacks = [self.rec.point_scan_count_stack(i) for i in range(n_slots)]
             if all(st is not None for st in stacks):
                 np.save(str(fd + r"_" + scan + r"_photon_counts.npy"), np.stack(stacks).astype(np.float32))
             else:
@@ -596,6 +601,15 @@ class CommandExecutor(QObject):
         self.rec.set_point_scan_params(n_lines=self.trg.galvo_scan_pos[1],
                                        n_pixels=self.trg.galvo_scan_pos[0],
                                        dwell_samples=pdw)
+        # each pixel is one trigger cycle, each line ends with the galvo flyback padding
+        nx, ny = self.trg.galvo_scan_pos[0], self.trg.galvo_scan_pos[1]
+        line_pad = max(self.trg.galvo_return_samples - self.trg.galvo_step_response_samples, 0)
+        n_total = dtr.shape[-1]
+        cycle = (n_total // ny - line_pad) // nx
+        if ny * (nx * cycle + line_pad) == n_total:
+            self.rec.set_pixel_cycle(cycle, line_pad)
+        else:
+            self.logg.error(f"Cannot split {n_total} samples into {ny} lines x {nx} pixel cycles")
         self.rec.prepare_point_scan_live_recon()
 
         if dtr.ndim == 1:

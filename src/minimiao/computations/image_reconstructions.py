@@ -24,6 +24,9 @@ class ImgRecon:
         self.point_scan_dwell_samples = 0
         self.point_scan_off_samples = 0
         self._expected = 0
+        # RESOLFT: fixed per-pixel cycle length and per-line padding (flyback)
+        self.pixel_cycle_samples = None
+        self.pixel_line_pad = 0
 
         self.live_counts = []
         self.live_rec = []
@@ -60,6 +63,15 @@ class ImgRecon:
         self.point_scan_n_pixels = int(n_pixels)
         self.point_scan_dwell_samples = int(dwell_samples)
         self._rebuild_expected()
+        self.pixel_cycle_samples = None
+        self.pixel_line_pad = 0
+
+    def set_pixel_cycle(self, cycle_samples: int, line_pad: int = 0) -> None:
+        """Declare that each pixel is one fixed cycle of ``cycle_samples``
+        samples, with ``line_pad`` extra samples at the end of every line
+        (RESOLFT galvo scan). Call after ``set_point_scan_params``."""
+        self.pixel_cycle_samples = int(cycle_samples)
+        self.pixel_line_pad = int(line_pad)
 
     def _rebuild_scan_gate_cache(self) -> None:
         m = self._point_scan_gate_mask
@@ -122,6 +134,31 @@ class ImgRecon:
                                    self.point_scan_n_pixels,
                                    self.point_scan_dwell_samples)
             return np.ascontiguousarray(np.moveaxis(stack, 2, 0))
+
+    def point_scan_cycle_stack(self, ind):
+        """Full per-pixel count cycle of the last RESOLFT scan for slot ``ind``.
+
+        Returns an array of shape (cycle_samples, n_lines, n_pixels): each 2D
+        slice has the image layout and the first axis is the complete count
+        trace of one pixel cycle (switching, readout and galvo step), aligned
+        sample-for-sample with one cycle of the digital triggers. The
+        line-end flyback samples are dropped. Returns None if no cycle is set
+        or the trace length does not match the scan geometry.
+        """
+        c = self.pixel_cycle_samples
+        if not c:
+            return None
+        ny, nx, pad = self.point_scan_n_lines, self.point_scan_n_pixels, self.pixel_line_pad
+        with self.lock:
+            counts = self.live_counts[ind]
+            if counts.size != ny * (nx * c + pad):
+                self.logg.error(f"Count trace length {counts.size} does not match "
+                                f"{ny} x ({nx} x {c} + {pad}) samples")
+                return None
+            # counts[k] holds the photons of trigger sample k-1 (same shift as the gate mask)
+            aligned = np.roll(counts, -1)
+        lines = aligned.reshape(ny, nx * c + pad)[:, :nx * c]
+        return np.ascontiguousarray(np.moveaxis(lines.reshape(ny, nx, c), 2, 0))
 
     @staticmethod
     def full_recon(gate, counts, ny, nx):
