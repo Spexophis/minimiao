@@ -23,6 +23,7 @@ class ControlPanel(QWidget):
     Signal_deck_move_continuous = pyqtSignal(bool, int, float)
     Signal_piezo_move_usb = pyqtSignal(str, float, float, float)
     Signal_piezo_move = pyqtSignal(str, float, float, float)
+    Signal_galvo_positions = pyqtSignal(float, float)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_motor_home = pyqtSignal(float)
     Signal_motor_step = pyqtSignal(float)
@@ -160,6 +161,7 @@ class ControlPanel(QWidget):
         group = cw.GroupWidget()
         mad_deck_scroll_area, mad_deck_scroll_layout = cw.create_scroll_area()
         mcl_piezo_scroll_area, mcl_piezo_scroll_layout = cw.create_scroll_area("G")
+        galvo_scroll_area, galvo_scroll_layout = cw.create_scroll_area()
 
         self.QLCDNumber_deck_position = cw.LCDNumberWidget()
         self.QPushButton_deck_position = cw.PushButtonWidget('Read')
@@ -249,9 +251,32 @@ class ControlPanel(QWidget):
         mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_ki, 19, 1)
         mcl_piezo_scroll_layout.addWidget(self.QDoubleSpinBox_pid_kd, 19, 2)
 
+        self.QDoubleSpinBox_galvo_x = cw.DoubleSpinBoxWidget(-10, 10, 0.020, 3, -1.600)
+        self.QDoubleSpinBox_galvo_range_x = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.6)
+        self.QDoubleSpinBox_galvo_step_x = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.0)
+        self.QDoubleSpinBox_galvo_y = cw.DoubleSpinBoxWidget(-10, 10, 0.020, 3, 0.000)
+        self.QDoubleSpinBox_galvo_range_y = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.6)
+        self.QDoubleSpinBox_galvo_step_y = cw.DoubleSpinBoxWidget(0, 10, 0.001, 4, 0.0)
+        self.QSpinBox_galvo_ramp_time = cw.SpinBoxWidget(0, 2000, 1, 240)
+        self.QSpinBox_galvo_step_response = cw.SpinBoxWidget(0, 2000, 1, 320)
+        self.QSpinBox_galvo_return_time = cw.SpinBoxWidget(0, 2000, 1, 320)
+
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('ScannerMax Galvo')))
+        galvo_scroll_layout.addRow(cw.FrameWidget())
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Position X / V')), self.QDoubleSpinBox_galvo_x)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Scan Range X / V')), self.QDoubleSpinBox_galvo_range_x)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Scan Step X / V')), self.QDoubleSpinBox_galvo_step_x)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Position Y / V')), self.QDoubleSpinBox_galvo_y)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Scan Range Y / V')), self.QDoubleSpinBox_galvo_range_y)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Scan Step Y / V')), self.QDoubleSpinBox_galvo_step_y)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Galvo Ramp / us')), self.QSpinBox_galvo_ramp_time)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Galvo Return / us')),self.QSpinBox_galvo_return_time)
+        galvo_scroll_layout.addRow(cw.LabelWidget(str('Galvo StpResp / us')),self.QSpinBox_galvo_step_response)
+
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(mad_deck_scroll_area)
         group_layout.addWidget(mcl_piezo_scroll_area)
+        group_layout.addWidget(galvo_scroll_area)
         group.setLayout(group_layout)
         return group
 
@@ -428,6 +453,8 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_stage_x_usb.valueChanged.connect(self.set_piezo_x_usb)
         self.QDoubleSpinBox_stage_y_usb.valueChanged.connect(self.set_piezo_y_usb)
         self.QDoubleSpinBox_stage_z_usb.valueChanged.connect(self.set_piezo_z_usb)
+        self.QDoubleSpinBox_galvo_x.valueChanged.connect(self.set_galvo_x)
+        self.QDoubleSpinBox_galvo_y.valueChanged.connect(self.set_galvo_y)
         self.QPushButton_laser_488_0.clicked.connect(self.set_laser_488_0)
         self.QPushButton_laser_488_1.clicked.connect(self.set_laser_488_1)
         self.QPushButton_laser_405.clicked.connect(self.set_laser_405)
@@ -604,6 +631,24 @@ class ControlPanel(QWidget):
 
     def display_piezo_position_z(self, ps):
         self.QLCDNumber_piezo_position_z.display(ps)
+
+    @pyqtSlot(float)
+    def set_galvo_x(self, pos_x: float):
+        pos_y = self.QDoubleSpinBox_galvo_y.value()
+        self.Signal_galvo_positions.emit(pos_x, pos_y)
+
+    @pyqtSlot(float)
+    def set_galvo_y(self, pos_y: float):
+        pos_x = self.QDoubleSpinBox_galvo_x.value()
+        self.Signal_galvo_positions.emit(pos_x, pos_y)
+
+    def get_galvo_scans(self):
+        return ([self.QDoubleSpinBox_galvo_x.value(), self.QDoubleSpinBox_galvo_y.value()],
+                [self.QDoubleSpinBox_galvo_range_x.value(), self.QDoubleSpinBox_galvo_range_y.value()],
+                [self.QDoubleSpinBox_galvo_step_x.value(), self.QDoubleSpinBox_galvo_step_y.value()])
+
+    def get_galvo_scan_parameters(self):
+        return [self.QSpinBox_galvo_ramp_time.value(), self.QSpinBox_galvo_step_response.value(), self.QSpinBox_galvo_return_time.value()]
 
     @pyqtSlot(bool)
     def set_laser_405(self, checked: bool):

@@ -48,14 +48,11 @@ class TriggerSequence:
         self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
         self.galvo_origins = [0.0, -0.1]  # V
         self.galvo_ranges = [0.1, 0.2]  # V
-        self.galvo_offsets = [-0.0, 0.0]  # V
         self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
         self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
-        self.line_intervals = [0.02, 0.04]  # volts
-        self.line_pos = [np.arange(line_start, galvo_stop, line_step) for (line_start, galvo_stop, line_step) in
-                        zip(self.galvo_starts, self.galvo_stops, self.line_intervals)]
-        self.galvo_scan_pos = [dps.size for dps in self.line_pos]
-        self.galvo_fast_axis = 0
+        self.galvo_steps = [0.00, 0.00]  # volts
+        self.galvo_pos = [np.arange(_start, _stop, _step) for (_start, _stop, _step) in zip(self.galvo_starts, self.galvo_stops, self.galvo_steps)]
+        self.galvo_scan_pos = [dps.size for dps in self.galvo_pos]
         # TTL
         self.trigger_pulse_width = 0.00010  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
@@ -133,32 +130,30 @@ class TriggerSequence:
             self.logg.info("Piezo scanning parameters reverted to original values.")
             return
 
-    def update_galvo_scan_parameters(self, origins=None, ranges=None, intervals=None, offsets=None, returns=None):
+    def update_galvo_scan_parameters(self, origins=None, ranges=None, steps=None, returns=None):
         original_values = {"galvo_origins": self.galvo_origins, "galvo_ranges": self.galvo_ranges,
                            "galvo_starts": self.galvo_starts, "galvo_stops": self.galvo_stops,
-                           "galvo_offset": self.galvo_offsets, "line_intervals": self.line_intervals, "line_pos": self.line_pos,
+                           "galvo_steps": self.galvo_steps, "galvo_pos": self.galvo_pos,
                            "galvo_return_time": self.galvo_return_time, "galvo_step_response": self.galvo_step_response}
         try:
             if origins is not None:
                 self.galvo_origins = origins
             if ranges is not None:
                 self.galvo_ranges = ranges
-            if intervals is not None:
-                self.line_intervals = intervals
-            if offsets is not None:
-                self.galvo_offsets = offsets
+            if steps is not None:
+                self.galvo_steps = steps
             if returns is not None:
                 self.galvo_ramp_time, self.galvo_return_time, self.galvo_step_response = returns
             self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
             self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
-            self.line_pos = [np.arange(line_start, galvo_stop, line_step) for (line_start, galvo_stop, line_step) in
-                            zip(self.galvo_starts, self.galvo_stops, self.line_intervals)]
-            self.galvo_scan_pos = [dps.size for dps in self.line_pos]
+            self.galvo_pos = [np.arange(_start, _stop, _step) for (_start, _stop, _step) in
+                              zip(self.galvo_starts, self.galvo_stops, self.galvo_steps)]
+            self.galvo_scan_pos = [dps.size for dps in self.galvo_pos]
             self.galvo_ramp_time_samples = round(self.galvo_ramp_time * 1e-6 * self.sample_rate)
             self.galvo_step_response_samples = round(self.galvo_step_response * 1e-6 * self.sample_rate)
             self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
             self.galvo.set_params(sample_rate_hz=self.sample_rate,
-                                  start_s=self.galvo_starts, pixel_s=self.line_intervals, pixels_lines=self.galvo_scan_pos,
+                                  start_s=self.galvo_starts, pixel_s=self.galvo_steps, pixels_lines=self.galvo_scan_pos,
                                   t_ramp_us=self.galvo_ramp_time, t_flyback_us=self.galvo_return_time, t_settle_us=self.galvo_step_response)
         except ValueError:
             for attr, value in original_values.items():

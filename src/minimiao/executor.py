@@ -68,6 +68,8 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_focus_finding.connect(self.run_focus_finding)
         self.sig_auto_focus.connect(self.ctrl_panel.QDoubleSpinBox_stage_z_usb.setValue)
         # self.ctrl_panel.Signal_focus_locking.connect(self.run_focus_locking)
+        # ScannerMax Galvo
+        self.ctrl_panel.Signal_galvo_positions.connect(self.set_galvo_positions)
         # Cobolt Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
         # Thorlabs Motor
@@ -288,6 +290,18 @@ class CommandExecutor(QObject):
         positions = [pos_x[1], pos_y[1], pos_z[1]]
         return_time, line_time = self.ctrl_panel.get_piezo_scan_time()
         self.trg.update_piezo_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
+
+    def update_galvo_scanning(self):
+        origins, ranges, steps = self.ctrl_panel.get_galvo_scans()
+        returns = self.ctrl_panel.get_galvo_scan_parameters()
+        self.trg.update_galvo_scan_parameters(origins=origins, ranges=ranges, steps=steps, returns=returns)
+
+    @pyqtSlot(float, float)
+    def set_galvo_positions(self, value_x: float, value_y: float):
+        try:
+            self.devs.daq.set_galvo_position([value_x, value_y])
+        except Exception as e:
+            self.logg.error(f"Galvo Error: {e}")
 
     @pyqtSlot(float)
     def home_motor(self, hp: float):
