@@ -223,6 +223,14 @@ class PSLiveWorker(QThread):
 
         self.clear_data()
 
+    def set_sources(self, mpd_dat=None, pmt_dat=None, dn=None):
+        """Point the worker at new data buffers (e.g. next acquisition repetition)."""
+        with self._lock:
+            self.mpd_dat = mpd_dat
+            self.pmt_dat = pmt_dat
+            if dn is not None:
+                self.dn = dn
+
     def clear_data(self):
         """Release references to large data objects"""
         with self._lock:

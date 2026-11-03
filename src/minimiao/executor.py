@@ -18,6 +18,7 @@ from .utilities import image_processor as ipr
 class CommandExecutor(QObject):
     sig_plt = pyqtSignal(list, list)
     psv = pyqtSignal(str)
+    sig_acq_live = pyqtSignal(object, object, object)
 
     def __init__(self, dev, cwd, cmp, path, config, logg=None, cf=None):
         super().__init__()
@@ -38,6 +39,7 @@ class CommandExecutor(QObject):
         self.detector = {0: [0, 1], 1: [0, 2]}
         self.task_worker = None
         self._batch = None
+        self._acq_live = False
 
     def _set_signal_executions(self):
         # Galvo
@@ -57,6 +59,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_data_acquire.connect(self.data_acquisition)
         self.psv.connect(self.save_scan)
+        self.sig_acq_live.connect(self.update_acquisition_live_view)
         self.sig_plt.connect(self.plot_curve)
         # Deformable Mirror
         self.ao_panel.Signal_set_zernike.connect(self.set_zernike)
@@ -396,6 +399,7 @@ class CommandExecutor(QObject):
         self.task_worker = None
         w.deleteLater()
         self.vw.dialog.close()
+        self.stop_acquisition_live_view()
         if self._batch is not None:
             self._finalize_batch_acquisition()
 
@@ -423,6 +427,55 @@ class CommandExecutor(QObject):
             self.logg.info(f"Saving {n} acquisitions into {folder}")
         self.vw.get_dialog(txt=txt)
         self.run_task(task=task, iteration=n)
+
+    def _emit_acquisition_live(self, dn):
+        """Called from the acquisition thread at the end of a prepare step:
+        hand the freshly created data buffers to the GUI thread for live view."""
+        self.sig_acq_live.emit(list(dn), self.devs.daq.mpd_data, self.devs.daq.pmt_data)
+
+    @pyqtSlot(object, object, object)
+    def update_acquisition_live_view(self, dn, mpd_data, pmt_data):
+        """Show the acquisition live, like the live video.
+
+        Runs on the GUI thread. The first call of an acquisition sets up the
+        plots and starts the live worker; later repetitions only point the
+        worker at the new photon-count / PMT buffers."""
+        try:
+            worker = getattr(self.viewer, "psr_worker", None)
+            if worker is not None:
+                if self._acq_live:
+                    worker.set_sources(mpd_data, pmt_data, dn)
+                return  # otherwise the live video owns the viewer
+            self.viewer.set_plots(dn)
+            self.viewer.psr_mode = True
+            self.viewer.psr_fn = 1
+            self.viewer.photon_pool.reset_buffer(max_len=self.devs.daq.photon_counter_length,
+                                                 dt_s=1 / self.devs.daq.sample_rate,
+                                                 px=(self.trg.galvo_scan_pos[1], self.trg.galvo_scan_pos[0]))
+            self.viewer.stream_trace(self.viewer.photon_pool.xt, self.viewer.photon_pool.buf_0,
+                                     self.viewer.photon_pool.buf_1)
+            self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1],
+                                            self.trg.dot_pos[0], self.trg.dot_pos[1])
+            self.viewer.psr_worker = run_threads.PSLiveWorker(self.rec, mpd_data, pmt_data,
+                                                              dn=dn, fps=10, parent=self.viewer)
+            self.viewer.psr_worker.psr_ready.connect(self.viewer.photon_pool.new_acquire)
+            self.viewer.psr_worker.psr_new.connect(self.viewer.on_psr_frame)
+            self.viewer.psr_worker.start()
+            self._acq_live = True
+        except Exception as e:
+            self.logg.error(f"Error starting acquisition live view: {e}")
+
+    def stop_acquisition_live_view(self):
+        if not self._acq_live:
+            return
+        self._acq_live = False
+        try:
+            self._cleanup_psr_worker()
+            # make sure the last acquired frame is on screen
+            if len(self.rec.live_rec) >= 2:
+                self.viewer.set_graph_with_axes(self.rec.live_rec[0], self.rec.live_rec[1])
+        except Exception as e:
+            self.logg.error(f"Error stopping acquisition live view: {e}")
 
     def _next_file_prefix(self, tim: str) -> str:
         """Path prefix for the files of the acquisition that is starting now."""
@@ -516,7 +569,6 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plots(dn)
 
         gate_channel = []
         counter_channel = []
@@ -570,6 +622,7 @@ class CommandExecutor(QObject):
             )
 
         np.save(str(prefix + r"_resolft_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
+        self._emit_acquisition_live(dn)
 
     def resolft_scan(self):
         tim = time.strftime("%Y%m%d%H%M%S")
@@ -608,7 +661,6 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plots(dn)
 
         gate_channel = []
         counter_channel = []
@@ -663,6 +715,7 @@ class CommandExecutor(QObject):
             )
 
         np.save(str(prefix + r"_point_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
+        self._emit_acquisition_live(dn)
 
     def point_scan(self):
         tim = time.strftime("%Y%m%d%H%M%S")
@@ -701,7 +754,6 @@ class CommandExecutor(QObject):
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
         dn = self.ctrl_panel.get_detector()
-        self.viewer.set_plots(dn)
 
         gate_channel = []
         counter_channel = []
@@ -756,6 +808,7 @@ class CommandExecutor(QObject):
             )
 
         np.save(str(prefix + r"_point_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
+        self._emit_acquisition_live(dn)
 
     def point_scan_3d(self):
         tim = time.strftime("%Y%m%d%H%M%S")
