@@ -104,6 +104,25 @@ class ImgRecon:
             else:
                 self.logg.error(f"photon counts = {len(photon_counts)}, indices {len(ind_list)}. ")
 
+    def point_scan_count_stack(self, ind):
+        """Per-pixel photon count traces of the last point scan for slot ``ind``.
+
+        Returns an array of shape (dwell_samples, n_lines, n_pixels): each 2D
+        slice has the same layout as the reconstructed image and the first
+        axis is the count trace (gated samples) of every pixel, so
+        ``stack.sum(axis=0)`` equals ``live_rec[ind]``. Returns None if the
+        gated sample count does not match the scan geometry.
+        """
+        with self.lock:
+            per_on = self.live_counts[ind][self._point_scan_gate_mask]
+            if per_on.size != self._expected:
+                self.logg.error(f"Gate-on samples = {per_on.size}, expected {self._expected}. ")
+                return None
+            stack = per_on.reshape(self.point_scan_n_lines,
+                                   self.point_scan_n_pixels,
+                                   self.point_scan_dwell_samples)
+            return np.ascontiguousarray(np.moveaxis(stack, 2, 0))
+
     @staticmethod
     def full_recon(gate, counts, ny, nx):
         n_pixels = ny * nx

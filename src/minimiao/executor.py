@@ -546,11 +546,13 @@ class CommandExecutor(QObject):
                    compression='zlib', photometric="minisblack")
         pws = self.ctrl_panel.get_cobolt_laser_power("all")
         try:
-            res = np.zeros((3, self.rec.scan_gate_len))
-            res[0] = np.arange(self.rec.scan_gate_len) / self.trg.sample_rate
-            res[1] = np.array(self.rec.live_counts[0])
-            res[2] = np.array(self.rec.live_counts[1])
-            np.save(str(fd + r"_" + scan + r"_photon_counts.npy"), res)
+            # (2 detector slots, dwell samples, lines, pixels): each 2D slice is
+            # laid out like the image, the 2nd axis is the per-pixel count trace
+            stacks = [self.rec.point_scan_count_stack(i) for i in range(len(self.rec.live_counts))]
+            if all(st is not None for st in stacks):
+                np.save(str(fd + r"_" + scan + r"_photon_counts.npy"), np.stack(stacks).astype(np.float32))
+            else:
+                self.logg.error("Photon count stack not saved: gated samples do not match the scan size")
             np.savez(str(fd + r"_" + scan + r"_laser_powers.npz"), my_list=pws)
         except Exception as e:
             self.logg.error(f"Error writing photon counting data: {e}")
