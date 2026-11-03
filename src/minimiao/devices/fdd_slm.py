@@ -119,6 +119,15 @@ class QXGA:
             ord_dict[ord_name.decode('utf-8')] = i
         return ord_dict
 
+    def get_selected_order(self):
+        index = ct.c_uint16(0)
+        res = self.r11.R11_RpcRoGetSelected(ct.byref(index))
+        if res == 0:
+            o = self.get_order_name(index.value)
+            return index.value, o.decode('utf-8')
+        else:
+            raise RuntimeError('Fail to Get Selected Order')
+
     def select_order(self, n):
         ord_index = ct.c_uint16(n)
         res = self.r11.R11_RpcRoSetSelected(ord_index)
@@ -209,3 +218,141 @@ class QXGA:
             self.logg.error("SLM sequence error.")
             raise ValueError("SLM sequence is wrong.")
         return t_total, t_end, t_on
+
+"""
+Generate SLM run-time sequences for a phase/angle sweep.
+"""
+import re
+import textwrap
+
+# ---------------------------------------------------------------- settings --
+SEQ_TYPE = "linear"    # "nonlinear" or "linear"
+BASE = 113             # index of angle 0, phase 0
+N_ANGLES = 6
+N_PHASES = 10          # resolft needs this even; the pi partner is N_PHASES // 2 away
+OFF_GPO = 6            # resolft: sync port for the pi-shifted pattern
+ON_GPO = 2             # resolft: sync port for the readout pattern
+LIT_GPO = 2            # lit_pair: the single sync port
+OFF_DESIG = "A"        # pattern designator for the pi-shifted load
+ON_DESIG = "A"         # pattern designator for the readout load
+ANGLE_MAJOR = True     # True: all phases of one angle, then the next angle
+OFF_FIRST = True       # resolft: pi-shifted pattern first in each frame
+PORTS = ("GPO3", "GPO2", "GPO1")
+WIDTH = None           # None keeps the body on one line; an int wraps to that width
+NAME = None            # None auto-names from the settings; "" omits the name line
+EXPOSURE = "1ms"       # used only in the auto-generated name
+SPACING_PIX = 20       # used only in the auto-generated name
+OUTPUT = r"C:\Users\ruizhe.lin\Documents\Data\slm_files\QXGA\sequence.txt"
+# -----------------------------------------------------------------------------
+
+
+def frame_index(base, angle, phase, n_phases):
+    return base + angle * n_phases + (phase % n_phases)
+
+
+def load(gpo, designator, index):
+    """One pattern load. gpo=None emits a bare load with no GPO prefix."""
+    body = f"t({designator}+,{index}) ({designator}-,{index})"
+    return body if gpo is None else f"GPO={gpo} {body}"
+
+
+def sweep_order(n_angles=N_ANGLES, n_phases=N_PHASES, angle_major=ANGLE_MAJOR):
+    return ([(a, p) for a in range(n_angles) for p in range(n_phases)] if angle_major
+            else [(a, p) for p in range(n_phases) for a in range(n_angles)])
+
+
+def build_linear_pair(base=BASE, n_angles=N_ANGLES, n_phases=N_PHASES,
+                      gpo=LIT_GPO, desig=ON_DESIG, angle_major=ANGLE_MAJOR):
+    """Single GPO trigger followed by every pattern in sweep order."""
+    idx = [frame_index(base, a, p, n_phases)
+           for a, p in sweep_order(n_angles, n_phases, angle_major)]
+    return [load(gpo if k == 0 else None, desig, i) for k, i in enumerate(idx)]
+
+
+def build_nonlinear_frames(base=BASE, n_angles=N_ANGLES, n_phases=N_PHASES,
+                           off_gpo=OFF_GPO, on_gpo=ON_GPO, off_desig=OFF_DESIG, on_desig=ON_DESIG,
+                           angle_major=ANGLE_MAJOR, off_first=OFF_FIRST):
+    if n_phases % 2:
+        raise ValueError(f"n_phases={n_phases} is odd; no exact pi partner exists")
+    half = n_phases // 2
+    frames = []
+    for angle, phase in sweep_order(n_angles, n_phases, angle_major):
+        readout = frame_index(base, angle, phase, n_phases)
+        shifted = frame_index(base, angle, phase + half, n_phases)
+        if off_first:
+            pair = [(off_gpo, off_desig, shifted), (on_gpo, on_desig, readout)]
+        else:
+            pair = [(on_gpo, on_desig, readout), (off_gpo, off_desig, shifted)]
+        frames.append(" ".join(load(*p) for p in pair))
+    return frames
+
+
+LOAD_RE = re.compile(r"(?:GPO=(\d+) )?t\(([A-Z])\+,(\d+)\) \(([A-Z])-,(\d+)\)")
+
+
+def _rewrite(sequence, pick):
+    """Walk the loads, tracking the GPO in force, and let pick(gpo, desig) rename."""
+    state = {"gpo": None}
+
+    def sub(m):
+        gpo, desig, i1, _, i2 = m.groups()
+        if gpo is not None:
+            state["gpo"] = gpo
+        d = pick(state["gpo"], desig) or desig
+        prefix = "" if gpo is None else f"GPO={gpo} "
+        return f"{prefix}t({d}+,{i1}) ({d}-,{i2})"
+    return LOAD_RE.sub(sub, sequence)
+
+
+def set_designators(sequence, off_desig=None, on_desig=None,
+                    off_gpo=OFF_GPO, on_gpo=ON_GPO):
+    """Rewrite pattern designators in an existing sequence string.
+
+    Loads under off_gpo get off_desig, loads under on_gpo get on_desig.
+    Pass None for either to leave that one alone. Bare loads inherit the
+    GPO most recently set, so lit_pair sequences are handled too.
+    """
+    table = {str(off_gpo): off_desig, str(on_gpo): on_desig}
+    return _rewrite(sequence, lambda gpo, desig: table.get(gpo))
+
+
+def swap_ab(sequence):
+    """Swap every A designator with B and vice versa."""
+    return _rewrite(sequence, lambda gpo, desig: {"A": "B", "B": "A"}.get(desig))
+
+
+def sequence_name(seq_type=None, exposure=EXPOSURE, spacing_pix=SPACING_PIX,
+                  n_phases=N_PHASES, n_angles=N_ANGLES):
+    kind = "lit_pair" if (seq_type or SEQ_TYPE) == "lit_pair" else "resolft"
+    return (f"{exposure}_{kind}_sim_{spacing_pix}_pix_{n_phases}_phs_{n_angles}_ang")
+
+
+def build_sequence(frames, width=WIDTH, ports=PORTS, name=NAME):
+    body = "<" + " ".join(frames) + " >"
+    lines = ([body] if width is None else
+             textwrap.wrap(body, width=width, break_long_words=False,
+                           break_on_hyphens=False))
+    head = [f'"{name}"'] if name else []
+    return "\n".join(head + ["[s", " " + " ".join(ports)] + [" " + line for line in lines] + ["]"])
+
+
+if __name__ == "__main__":
+
+    if SEQ_TYPE == "linear":
+        frames = build_linear_pair()
+        n_loads = len(frames)
+    elif SEQ_TYPE == "nonlinear":
+        frames = build_nonlinear_frames()
+        n_loads = 2 * len(frames)
+    else:
+        raise ValueError(f"unknown SEQ_TYPE {SEQ_TYPE!r}")
+
+    sequence = build_sequence(frames, name=sequence_name() if NAME is None else NAME)
+    lo, hi = BASE, BASE + N_ANGLES * N_PHASES - 1
+    print(f"# {SEQ_TYPE}: {len(frames)} frames, {n_loads} pattern loads, indices {lo}-{hi}")
+    if OUTPUT:
+        with open(OUTPUT, "w") as fh:
+            fh.write(sequence + "\n")
+        print(f"# written to {OUTPUT}")
+    else:
+        print(sequence)

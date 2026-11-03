@@ -12,6 +12,7 @@ import pandas as pd
 import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 
+
 try:
     from . import run_threads, logger
 except ImportError as e:
@@ -22,8 +23,14 @@ try:
 except ImportError as e:
     from minimiao.utilities import image_processor as ipr
 
+try:
+    from . import devices
+except ImportError as e:
+    from minimiao import devices
+
 
 class CommandExecutor(QObject):
+    acq_finish = pyqtSignal()
     svd = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
@@ -314,9 +321,14 @@ class CommandExecutor(QObject):
             self.devs.laser.set_modulation_mode(["405"], pw_405)
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
-        pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        pw_488_0 = self.ctrl_panel.get_cobolt_laser_power("488_0")
         try:
-            self.devs.laser.set_modulation_mode(["488_1"], pw_488)
+            self.devs.laser.set_modulation_mode(["488_0"], pw_488_0)
+        except Exception as e:
+            self.logg.error(f"Cobolt Laser Error: {e}")
+        pw_488_1 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+        try:
+            self.devs.laser.set_modulation_mode(["488_1"], pw_488_1)
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
 
@@ -328,16 +340,21 @@ class CommandExecutor(QObject):
 
     def set_camera_roi(self):
         try:
-            x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
-            self.devs.img_cam.bin_h, self.devs.img_cam.bin_v = bn, bn
-            # self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
-            # self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
-            # self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
-            # self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
-            self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
-            self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
-            self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
             self.devs.img_cam.t_exposure = self.ctrl_panel.get_emccd_exposure()
+            x, y, nx, ny, bn = self.ctrl_panel.get_emccd_roi()
+            if isinstance(self.devs.img_cam, devices.andor_emccd.EMCCDCamera):
+                self.devs.img_cam.bin_h, self.devs.img_cam.bin_v = bn, bn
+                self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
+                self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+                self.devs.img_cam.gain = self.ctrl_panel.get_emccd_gain()
+            if isinstance(self.devs.img_cam, devices.hamamatsu_scmos.HamamatsuCamera):
+                self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
+                self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
+                self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
+            if isinstance(self.devs.img_cam, devices.revealer_scmos.RevealerCamera):
+                self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y = nx, ny
+                self.devs.img_cam.start_h, self.devs.img_cam.end_h = x, x + nx - 1
+                self.devs.img_cam.start_v, self.devs.img_cam.end_v = y, y + ny - 1
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
 
@@ -364,13 +381,20 @@ class CommandExecutor(QObject):
             self.logg.error(f"Trigger Error: {e}")
 
     def prepare_camera(self):
-        self.devs.img_cam.set_roi()
-        # self.devs.img_cam.set_acquisition_mode(3)
-        self.devs.img_cam.set_exposure_time()
-        # self.devs.img_cam.set_gain()
-        # self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
-        # self.devs.img_cam.set_kinetics_num(20000)
-        # self.devs.img_cam.get_acquisition_timings()
+        if isinstance(self.devs.img_cam, devices.andor_emccd.EMCCDCamera):
+            self.devs.img_cam.set_roi()
+            self.devs.img_cam.set_acquisition_mode(3)
+            self.devs.img_cam.set_exposure_time()
+            self.devs.img_cam.set_gain()
+            self.devs.img_cam.set_kinetic_cycle_time(self.trg.cycle_time)
+            self.devs.img_cam.set_kinetics_num(10000)
+            self.devs.img_cam.get_acquisition_timings()
+        if isinstance(self.devs.img_cam, devices.hamamatsu_scmos.HamamatsuCamera):
+            self.devs.img_cam.set_roi()
+            self.devs.img_cam.set_exposure_time()
+        if isinstance(self.devs.img_cam, devices.revealer_scmos.RevealerCamera):
+            self.devs.img_cam.set_roi()
+            self.devs.img_cam.set_exposure_time()
 
     def prepare_video(self, vd_mod):
         self.update_trigger_parameters()
@@ -395,15 +419,23 @@ class CommandExecutor(QObject):
         if vd_mod == "Widefield":
             dtr, chs = self.trg.generate_digital_triggers(self.lasers, 0)
         elif vd_mod == "SIM":
-            dtr, chs = self.trg.generate_sim_triggers(ang, phs, rot)
+            dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
         elif vd_mod == "NLSIM":
-            dtr, chs = self.trg.generate_nlsim_triggers(ang, phs, rot)
+            if "1msoff" in self.slm_seq:
+                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 0, False)
+            elif "10msoff" in self.slm_seq:
+                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+            else:
+                raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
         else:
             raise Exception(f"Invalid Live Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
+        self.viewer.plot_trace(dtr[0])
+        for i in range(dtr.shape[0] - 1):
+            self.viewer.plot_trace(dtr[i + 1] + i * 1.1 + 1.1, overlay=True)
 
     @pyqtSlot(bool, str)
     def video(self, sw: bool, md: str):
@@ -638,8 +670,8 @@ class CommandExecutor(QObject):
                 self.logg.info(f"Folder already exists: {folder_name}")
             try:
                 if "SIM" in acq_mod:
-                    ang, phs = self.prepare_sim_acquisition(acq_mod, acq_num)
-                    self.start_sim_acquisition(folder_name, fn, ang, phs)
+                    ang, phs = self.prepare_sim_acquisition(acq_mod)
+                    self.start_sim_acquisition(folder_name, fn, acq_num, ang, phs)
                 else:
                     pn = self.prepare_acquisition(acq_mod, acq_num)
                     self.start_acquisition(folder_name, fn, pn)
@@ -649,7 +681,10 @@ class CommandExecutor(QObject):
                 self.lasers_off()
                 return
         else:
-            self.stop_acquisition()
+            if self._sim_thread is not None:
+                self.stop_sim_acquisition()
+            else:
+                self.stop_acquisition()
 
     def prepare_acquisition(self, aqm, aqn):
         self.update_trigger_parameters()
@@ -659,8 +694,8 @@ class CommandExecutor(QObject):
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         # ang, phs, rot = self.ctrl_panel.get_sim_parameters()
-        # rh, ra = self.ctrl_panel.get_motor_parameters()
-        # self.home_motor(rh)
+        rh, ra = self.ctrl_panel.get_motor_parameters()
+        self.home_motor(rh)
         # self.set_motor_step(ra)
         # self.trg.motor_jog = ra
         self.set_camera_roi()
@@ -698,7 +733,7 @@ class CommandExecutor(QObject):
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return pos
 
@@ -724,7 +759,7 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Error stop acquisition: {e}")
 
-    def prepare_sim_acquisition(self, aqm, aqn):
+    def prepare_sim_acquisition(self, aqm):
         self.update_trigger_parameters()
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
@@ -744,24 +779,33 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_SIM":
             dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                         finite=True, trg=False)
-        # elif aqm == "3D_SIM":
-        #     dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(1, phs, False)
-        #     self.devs.daq.set_piezo_position([ptr[0]], [2])
-        #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
-        #                                  analog_sequences=ptr, analog_channels=pchs,
-        #                                  finite=False, trg=False)
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
         elif aqm == "2D_NLSIM":
-            dtr, chs = self.trg.generate_nlsim_triggers(1, phs, False)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                         finite=True, trg=False)
+            if "1msoff" in self.slm_seq:
+                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 0, False)
+            elif "10msoff" in self.slm_seq:
+                dtr, chs = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+            else:
+                raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
+            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=True, trg=False)
         # elif aqm == "2D_SIM_Timelapse":
         #     dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
         #     rt = self.ctrl_panel.get_acquisition_interval()
         #     self.devs.daq.set_trigger_counter(delay=rt)
         #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
         #                                  finite=False, trg=True)
+        # elif aqm == "2D_NLSIM_Timelapse":
+        #     dtr, chs = self.trg.generate_nlsim_triggers(1, phs, False)
+        #     rt = self.ctrl_panel.get_acquisition_interval()
+        #     self.devs.daq.set_trigger_counter(delay=rt)
+        #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+        #                                  finite=False, trg=True)
+        # elif aqm == "3D_SIM":
+        #     dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(1, phs, False)
+        #     self.devs.daq.set_piezo_position([ptr[0]], [2])
+        #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
+        #                                  analog_sequences=ptr, analog_channels=pchs,
+        #                                  finite=False, trg=False)
         # elif aqm == "3D_SIM_Timelapse":
         #     dtr, dchs, ptr, pchs, pos = self.trg.generate_sim_scan(1, phs, False)
         #     self.devs.daq.set_piezo_position([ptr[0]], [2])
@@ -770,49 +814,72 @@ class CommandExecutor(QObject):
         #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
         #                                  analog_sequences=ptr, analog_channels=pchs,
         #                                  finite=False, trg=True)
-        # elif aqm == "2D_NLSIM_Timelapse":
-        #     dtr, chs = self.trg.generate_nlsim_triggers(1, phs, False)
-        #     rt = self.ctrl_panel.get_acquisition_interval()
-        #     self.devs.daq.set_trigger_counter(delay=rt)
-        #     self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-        #                                  finite=False, trg=True)
         else:
             raise Exception(f"Invalid Acquisition Mode")
         self.prepare_camera()
-        self.viewer.switch_camera(self.devs.img_cam.pixels_x, self.devs.img_cam.pixels_y)
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
         return ang, phs
 
-    def start_sim_acquisition(self, fdn: str, labl: str, ang: int, phs: int):
-        """Cycle through the SIM angles over and over, in a background thread, until stop_sim_acquisition()."""
+    def start_sim_acquisition(self, fdn: str, labl: str, aqn: int, ang: int, phs: int):
         try:
-            acq_num =  ang * phs
+            acq_num = ang * phs
             rh, ra = self.ctrl_panel.get_motor_parameters()
             angs = rh + np.arange(ang) * (90 / ang)
+            self.devs.slm.activate()
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self._sim_stop.clear()
-            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs,), daemon=True)
+            if aqn == 0:
+                self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs, aqn), daemon=True)
+            else:
+                ordn, _ = self.devs.slm.get_selected_order()
+                self._sim_thread = threading.Thread(target=self._nlsim_acquisition_loop, args=(angs, ordn), daemon=True)
             self._sim_thread.start()
         except Exception as e:
             self.stop_sim_acquisition()
             self.logg.error(f"Error start sim acquisition: {e}")
 
-    def _sim_acquisition_loop(self, angs: list):
+    def _sim_acquisition_loop(self, angs: list, aqn: int):
         try:
             while not self._sim_stop.is_set():
                 for a in angs:
                     if self._sim_stop.is_set():
                         return
                     self.devs.motor.move_to(a)
-                    time.sleep(0.032)
+                    time.sleep(0.16)
                     self.devs.daq.run_triggers()
+                self.devs.motor.move_to(angs[0])
         except Exception as e:
             self._sim_stop.set()
-            self.logg.error(f"Error in sim acquisition loop (press Stop to clean up): {e}")
+            self.logg.error(f"Error in sim acquisition loop: {e}")
+
+    def _nlsim_acquisition_loop(self, angs: list, pn: int):
+        try:
+            while not self._sim_stop.is_set():
+                for i, a in enumerate(angs):
+                    if self._sim_stop.is_set():
+                        return
+                    self.devs.motor.move_to(a)
+                    self.devs.slm.deactivate()
+                    self.devs.slm.select_order(pn + i)
+                    self.devs.slm.activate()
+                    time.sleep(0.16)
+                    self.devs.daq.run_triggers()
+                self.devs.motor.move_to(angs[0])
+        except Exception as e:
+            self._sim_stop.set()
+            self.logg.error(f"Error in sim acquisition loop: {e}")
 
     def stop_sim_acquisition(self):
+        self._sim_stop.set()
+        t, self._sim_thread = self._sim_thread, None
+        if t is not None and t is not threading.current_thread():
+            t.join(timeout=30.0)
+            if t.is_alive():
+                self.logg.error("Sim acquisition loop did not exit")
         try:
+            time.sleep(0.1)
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
             self.devs.img_cam.stop_data_acquisition()

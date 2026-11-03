@@ -382,7 +382,7 @@ class ControlPanel(QWidget):
                                                                          "2D_WideField_Timelapse", "3D_WideField_Timelapse",
                                                                          "2D_SIM_Timelapse", "3D_SIM_Timelapse",
                                                                          "2D_NLSIM_Timelapse"])
-        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
+        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(0, 999, 1, 1)
         self.QSpinBox_acquisition_interval = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")

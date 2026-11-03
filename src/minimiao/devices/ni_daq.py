@@ -36,7 +36,7 @@ class NIDAQ:
         self.tasks, self._active, self._running, = self._configure()
         self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
-        self.analog_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2"]
+        self.analog_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2", "Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
         self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3", "Dev1/port0/line4",
                                  "Dev1/port0/line5", "Dev1/port0/line6", "Dev1/port0/line7"]
         self.led_channels = ["Dev2/port0/line0", "Dev2/port0/line1"]
@@ -90,7 +90,7 @@ class NIDAQ:
         try:
             with nidaqmx.Task() as task:
                 for ind in indices:
-                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind], min_val=0., max_val=10.)
+                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind + 3], min_val=0., max_val=10.)
                 task.write(pos)
                 task.wait_until_done(WAIT_INFINITELY)
                 task.stop()
@@ -105,7 +105,46 @@ class NIDAQ:
     def get_piezo_position(self):
         try:
             with nidaqmx.Task() as task:
-                task.ai_channels.add_ai_voltage_chan("Dev1/ai0:2", min_val=-10.0, max_val=10.0)
+                task.ai_channels.add_ai_voltage_chan("Dev2/ai0:2", min_val=-10.0, max_val=10.0)
+                task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
+                                                samps_per_chan=16, active_edge=Edge.RISING)
+                pos = task.read(number_of_samples_per_channel=16)
+            return [sum(p) / len(p) for p in pos]
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def set_galvo_position(self, pos, indices=None):
+        if indices is None:
+            indices = [0, 1]
+        if len(pos) != len(indices):
+            self.logg.error("WARNING: Length of pos and indices differ, skipping galvo position update.")
+            return
+        try:
+            with nidaqmx.Task() as task:
+                for ind in indices:
+                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind], min_val=-10., max_val=10.)
+                task.write(pos)
+                task.wait_until_done(WAIT_INFINITELY)
+                task.stop()
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def get_galvo_position(self):
+        indices = [0, 1]
+        try:
+            with nidaqmx.Task() as task:
+                for ind in indices:
+                    task.ai_channels.add_ai_voltage_chan(self.analog_channels[ind], min_val=-10.0, max_val=10.0)
                 task.timing.cfg_samp_clk_timing(rate=self.sample_rate, sample_mode=AcquisitionType.FINITE,
                                                 samps_per_chan=16, active_edge=Edge.RISING)
                 pos = task.read(number_of_samples_per_channel=16)
@@ -390,7 +429,7 @@ class NIDAQ:
               n_samples pulses, so exactly one AO sequence is output.
         """
         if indices is None:
-            indices = [0, 1, 2]
+            indices = [0, 1]
 
         analog_sequences = np.asarray(analog_sequences)
 
@@ -724,7 +763,9 @@ class NIDAQ:
         return acquired_data
 
 
-def configure_do_power_up_high(device: str = "Dev2", high_lines: tuple[int, ...] = (5, 6, 7)) -> None:
+def configure_do_power_up_high(device: str = "Dev2",
+                               low_lines: tuple[int, ...] = (5, 6, 7),
+                               high_lines: tuple[int, ...] = (5, 6, 7)) -> None:
     """
     Configure selected Port 0 lines to power up HIGH while preserving
     the existing power-up states of the other Port 0 lines.
@@ -733,10 +774,7 @@ def configure_do_power_up_high(device: str = "Dev2", high_lines: tuple[int, ...]
 
     existing_states = system.get_digital_power_up_states(device)
 
-    existing_by_channel = {
-        state.physical_channel: state.power_up_state
-        for state in existing_states
-    }
+    existing_by_channel = {state.physical_channel: state.power_up_state for state in existing_states}
 
     port0_states = []
 
@@ -745,21 +783,11 @@ def configure_do_power_up_high(device: str = "Dev2", high_lines: tuple[int, ...]
 
         if line_number in high_lines:
             power_up_state = PowerUpStates.HIGH
+        elif line_number in low_lines:
+            power_up_state = PowerUpStates.LOW
         else:
-            # Preserve the current configuration of every other line.
-            power_up_state = existing_by_channel.get(
-                channel,
-                PowerUpStates.TRISTATE,
-            )
+            power_up_state = existing_by_channel.get(channel, PowerUpStates.TRISTATE)
 
-        port0_states.append(
-            DOPowerUpState(
-                physical_channel=channel,
-                power_up_state=power_up_state,
-            )
-        )
+        port0_states.append(DOPowerUpState(physical_channel=channel, power_up_state=power_up_state))
 
-    system.set_digital_power_up_states(
-        device,
-        port0_states,
-    )
+    system.set_digital_power_up_states(device, port0_states)

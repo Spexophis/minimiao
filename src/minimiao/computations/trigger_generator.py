@@ -10,10 +10,11 @@ from minimiao import logger
 
 class TriggerSequence:
 
-    def __init__(self, sample_rate=2.0e5, logg=None):
+    def __init__(self, sample_rate=2.0e5, galvo=None, logg=None):
         self.logg = logg or logger.setup_logging()
         # daq
         self.sample_rate = sample_rate  # Hz
+        self.galvo = galvo
         # digital triggers
         digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
         digital_ends = [0.02020, 0.0008, 0.0008, 0.003, 0.003, 0.001]
@@ -38,8 +39,25 @@ class TriggerSequence:
         self.piezo_scan_positions = [start + step * np.arange(ns) for start, step, ns in
                                      zip(self.piezo_starts, self.piezo_steps, self.piezo_scan_pos)]
         self.piezo_scan_dlt = 0.25  # s
+        # galvo scanner
+        self.galvo_ramp_time = 300  # ~300 us
+        self.galvo_ramp_time_samples = round(self.galvo_ramp_time * 1e-6 * self.sample_rate)
+        self.galvo_step_response = 400  # ~325 us
+        self.galvo_step_response_samples = round(self.galvo_step_response * 1e-6 * self.sample_rate)
+        self.galvo_return_time = 300  # ~500 us
+        self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
+        self.galvo_origins = [0.0, -0.1]  # V
+        self.galvo_ranges = [0.1, 0.2]  # V
+        self.galvo_offsets = [-0.0, 0.0]  # V
+        self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
+        self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
+        self.line_intervals = [0.02, 0.04]  # volts
+        self.line_pos = [np.arange(line_start, galvo_stop, line_step) for (line_start, galvo_stop, line_step) in
+                        zip(self.galvo_starts, self.galvo_stops, self.line_intervals)]
+        self.galvo_scan_pos = [dps.size for dps in self.line_pos]
+        self.galvo_fast_axis = 0
         # TTL
-        self.trigger_pulse_width = 0.0001  # s
+        self.trigger_pulse_width = 0.00010  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
         self.cycle_time = 50.0e-3  # s
         self.cycle_samples = int(np.ceil(self.cycle_time * self.sample_rate))
@@ -113,6 +131,39 @@ class TriggerSequence:
             for attr, value in original_values.items():
                 setattr(self, attr, value)
             self.logg.info("Piezo scanning parameters reverted to original values.")
+            return
+
+    def update_galvo_scan_parameters(self, origins=None, ranges=None, intervals=None, offsets=None, returns=None):
+        original_values = {"galvo_origins": self.galvo_origins, "galvo_ranges": self.galvo_ranges,
+                           "galvo_starts": self.galvo_starts, "galvo_stops": self.galvo_stops,
+                           "galvo_offset": self.galvo_offsets, "line_intervals": self.line_intervals, "line_pos": self.line_pos,
+                           "galvo_return_time": self.galvo_return_time, "galvo_step_response": self.galvo_step_response}
+        try:
+            if origins is not None:
+                self.galvo_origins = origins
+            if ranges is not None:
+                self.galvo_ranges = ranges
+            if intervals is not None:
+                self.line_intervals = intervals
+            if offsets is not None:
+                self.galvo_offsets = offsets
+            if returns is not None:
+                self.galvo_ramp_time, self.galvo_return_time, self.galvo_step_response = returns
+            self.galvo_starts = [o_ - r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
+            self.galvo_stops = [o_ + r_ / 2 for (o_, r_) in zip(self.galvo_origins, self.galvo_ranges)]
+            self.line_pos = [np.arange(line_start, galvo_stop, line_step) for (line_start, galvo_stop, line_step) in
+                            zip(self.galvo_starts, self.galvo_stops, self.line_intervals)]
+            self.galvo_scan_pos = [dps.size for dps in self.line_pos]
+            self.galvo_ramp_time_samples = round(self.galvo_ramp_time * 1e-6 * self.sample_rate)
+            self.galvo_step_response_samples = round(self.galvo_step_response * 1e-6 * self.sample_rate)
+            self.galvo_return_samples = round(self.galvo_return_time * 1e-6 * self.sample_rate)
+            self.galvo.set_params(sample_rate_hz=self.sample_rate,
+                                  start_s=self.galvo_starts, pixel_s=self.line_intervals, pixels_lines=self.galvo_scan_pos,
+                                  t_ramp_us=self.galvo_ramp_time, t_flyback_us=self.galvo_return_time, t_settle_us=self.galvo_step_response)
+        except ValueError:
+            for attr, value in original_values.items():
+                setattr(self, attr, value)
+            self.logg.info("Galvo scanning parameters reverted to original values.")
             return
 
     def update_digital_parameters(self, digital_starts=None, digital_ends=None):
@@ -190,9 +241,9 @@ class TriggerSequence:
             digital_triggers[0, :act_samples] = 1
         digital_triggers[1, act_samples + self.interval_samples:act_samples + self.interval_samples + self.trigger_pulse_samples] = 1
         digital_triggers[2, act_samples + self.interval_samples:act_samples + self.interval_samples + self.trigger_pulse_samples] = 1
-        if rot and nang > 1:
+        digital_triggers = np.tile(digital_triggers, (1, nph))
+        if rot:
             digital_channels = [0, 2, 3, 4, 5, 6]
-            digital_triggers = np.tile(digital_triggers, (1, nph))
             motor_triggers = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
             digital_triggers = np.concatenate((digital_triggers, motor_triggers), axis=0)
             rn = 1  # (90 // nang) // self.motor_jog
@@ -220,7 +271,6 @@ class TriggerSequence:
             return digital_triggers, digital_channels
         else:
             digital_channels = [0, 2, 3]
-            digital_triggers = np.tile(digital_triggers, (1, nph))
             return digital_triggers, digital_channels
 
     def generate_sim_scan(self, nang=3 , nph=6, rot=True):
@@ -232,7 +282,21 @@ class TriggerSequence:
         digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[2])
         return digital_triggers, digital_channels, piezo_sequence, piezo_channel, pos
 
-    def generate_nlsim_triggers(self, nang=3 , nph=6, rot=True):
+    def generate_nlsim_triggers(self, nang=3 , nph=6, off=0, rot=True):
+        if off == 0:
+            self.slm_sw_total_time = 2 * 1310.72e-6  # s
+            self.slm_sw_total_samples = round(self.slm_sw_total_time * self.sample_rate)
+            self.slm_sw_end_time = 1270.187e-6 + self.slm_sw_total_time / 2  # s
+            self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
+            self.slm_sw_on_time = 2 * 1000e-6 + 310.72e-6  # s
+            self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
+        else:
+            self.slm_sw_total_time = 2 * 5310.72e-6  # s
+            self.slm_sw_total_samples = round(self.slm_sw_total_time * self.sample_rate)
+            self.slm_sw_end_time = 5270.187e-6 + self.slm_sw_total_time / 2  # s
+            self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
+            self.slm_sw_on_time = 2 * 5000.0e-6 + 310.72e-6  # s
+            self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
         act_samples = self.digital_ends[0] - self.digital_starts[0]
         self.cycle_samples = act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_total_samples + max(self.transfer_samples, self.standby_samples)
         self.cycle_time = self.cycle_samples / self.sample_rate
@@ -242,9 +306,9 @@ class TriggerSequence:
         digital_triggers[1, act_samples:act_samples + self.trigger_pulse_samples] = 1
         digital_triggers[1, act_samples + self.slm_sw_total_samples + self.interval_samples:act_samples + self.slm_sw_total_samples + self.interval_samples + self.trigger_pulse_samples] = 1
         digital_triggers[2, act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_start_samples:act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_start_samples + self.trigger_pulse_samples] = 1
-        if rot and nang > 1:
+        digital_triggers = np.tile(digital_triggers, (1, nph))
+        if rot:
             digital_channels = [0, 2, 3, 4, 5, 6]
-            digital_triggers = np.tile(digital_triggers, (1, nph))
             motor_triggers = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
             digital_triggers = np.concatenate((digital_triggers, motor_triggers), axis=0)
             rn = 1  # (90 // nang) // self.motor_jog
@@ -269,11 +333,9 @@ class TriggerSequence:
             #     for n in range(rn * (nang - 2)):
             #         motor_back_triggers[4, n * self.motor_rot_samples + 5 * self.motor_jog_samples:n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0
             #     digital_triggers = np.concatenate((digital_triggers, motor_back_triggers), axis=1)
-            return digital_triggers, digital_channels
         else:
             digital_channels = [0, 2, 3]
-            digital_channels = np.tile(digital_triggers, (1, nph))
-            return digital_triggers, digital_channels
+        return digital_triggers, digital_channels
 
     def generate_piezo_scan(self, num, lasers, camera):
         digital_channels = [2, 3]
@@ -302,6 +364,10 @@ class TriggerSequence:
                 piezo_sequences[i] = np.tile(piezo_sequences[i], self.piezo_scan_pos[pch])
             digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[pch])
         return digital_triggers, convert_list(piezo_sequences), digital_channels, pz_chs, pos
+
+    def generate_galvo_line_scan(self):
+        galvo_x, galvo_y, laser_ttl = self.galvo.build_scan()
+        return galvo_x, galvo_y, laser_ttl
 
 
 def convert_list(arrays):

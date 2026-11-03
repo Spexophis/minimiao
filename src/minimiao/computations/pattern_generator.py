@@ -65,6 +65,65 @@ def save_to_bmp(data, svd, fn, bt=1):
         img.save(svd + fn + r"_8bit.bmp", format='BMP')
 
 
+def generate_grid_binary_phase(size=(2048, 1536), period=(12, 12), shift=(0, 0), nsteps=6,
+                               duty=0.5, value=255, typ=np.uint8):
+    """
+    Binary grid from two orthogonal gratings (vertical lines, period_x; horizontal lines, period_y).
+    Pixels are on where cos(phi_x) + cos(phi_y) exceeds the threshold giving the requested duty.
+    At duty=0.5 the diagonal orders (kx +- ky) vanish by symmetry, so the main orders are +-kx, +-ky.
+
+    shift=(sx, sy): phase offsets of the x and y gratings in units of 2*pi/nsteps.
+    These are pure pixel translations, so steps are exact.
+    """
+    px, py = period
+    sx, sy = shift
+    if (px * sx) % nsteps or (py * sy) % nsteps:
+        raise ValueError(f"period {period} not compatible with nsteps ({nsteps}) for shift {shift}")
+    dx, dy = sx * px // nsteps, sy * py // nsteps
+
+    OFFSET = (0.5, 0.25)
+
+    def field(xx, yy):
+        return (np.cos(2 * np.pi * (np.mod(xx + dx, px) + OFFSET[0]) / px) +
+                np.cos(2 * np.pi * (np.mod(yy + dy, py) + OFFSET[1]) / py))
+
+    yy, xx = np.mgrid[:py, :px]                    # one period cell
+    thr = np.quantile(field(xx, yy), 1 - duty)
+
+    width, height = size
+    yy, xx = np.mgrid[:height, :width]
+    return np.where(field(xx, yy) > thr, value, 0).astype(typ)
+
+
+def generate_diag_grid_binary_phase(size=(2048, 1536), period=28, shift=(0, 0), nsteps=14,
+                                    duty=0.5, offset=(0.5, 0.25), weights=(1.0, 1.0),
+                                    value=255, typ=np.uint8):
+    """
+    Grid from two orthogonal gratings along the diagonals (+45 and -45 deg).
+    m1 = x - y, m2 = x + y; both have period `period` in m, so the line spacing is
+    period/sqrt(2).
+    shift=(s1, s2): phase offsets of the two gratings in units of 2*pi/nsteps.
+    offset breaks ties so the on-fraction is exactly `duty` (zero order -> 0 at 0.5).
+    """
+    s1, s2 = shift
+    if (period * s1) % nsteps or (period * s2) % nsteps:
+        raise ValueError(f"period {period} not compatible with nsteps {nsteps}")
+    d1, d2 = s1 * period // nsteps, s2 * period // nsteps
+    w1, w2 = weights
+
+    def field(xx, yy):
+        m1 = np.mod(xx - yy + d1, period) + offset[0]
+        m2 = np.mod(xx + yy + d2, period) + offset[1]
+        return w1 * np.cos(2 * np.pi * m1 / period) + w2 * np.cos(2 * np.pi * m2 / period)
+
+    yy, xx = np.mgrid[:2 * period, :2 * period]            # full cell for the threshold
+    thr = np.quantile(field(xx, yy), 1 - duty)
+
+    width, height = size
+    yy, xx = np.mgrid[:height, :width]
+    return np.where(field(xx, yy) > thr, value, 0).astype(typ)
+
+
 def generate_tilted_binary_phase(size=(2048, 1536), vec=(7, 4), period=12, step=0, nsteps=3,
                                  duty=0.5, value=255, typ=np.uint8):
     a, b = vec
@@ -385,10 +444,9 @@ def simulate_binary_phase_pattern(size=(1024, 1024), period=(8, 0), phase=(0, 0)
     return np.abs(pupil_filtered), focal_intensity
 
 
-def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, NA=1.3,
+def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, na=1.3,
                            grating_period=1.20001e-6, duty_cycle=0.5, phase_depth=np.pi, orientation_deg=0,
-                           grating_shift=0.0,
-                           order_filter_radius_factor=0.18, verbose=False):
+                           grating_shift=0.0, order_filter_radius_factor=0.18, verbose=False):
     L = N * dx
     x = (np.arange(N) - N // 2) * dx
     y = (np.arange(N) - N // 2) * dx
@@ -409,7 +467,7 @@ def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, NA=1.3,
     fy = np.fft.fftshift(np.fft.fftfreq(N, d=dx))
     FX, FY = np.meshgrid(fx, fy)
     # Objective coherent cutoff frequency
-    f_cutoff = NA / wavelength
+    f_cutoff = na / wavelength
     # Circular objective pupil
     objective_pupil = (FX ** 2 + FY ** 2) <= f_cutoff ** 2
     # First diffraction order spatial frequency

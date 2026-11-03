@@ -1,0 +1,605 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 Ruizhe Lin
+# Licensed under the MIT License.
+"""
+Agiledevice (中科视界) Revealer / Gloria sCMOS camera, via the SCSDK Python wrapper.
+"""
+
+import importlib
+import os
+import sys
+import time
+from ctypes import POINTER, byref, c_double, c_int64, c_ubyte, c_uint16, c_uint64, c_void_p, cast
+
+import numpy as np
+
+from minimiao import run_threads, logger
+
+
+SCSDK_DIR = r"C:\Program Files\Revealer Scientific Camera SDK\samples\python\SCSDK"
+
+EXPOSURE_TIME_SCALE = 1e6  # feature units per second
+
+LIVE_BUFFER_SIZE = 128
+MIN_BUFFER_COUNT = 16  # SDK frame buffers (each is a full frame, 8 MB at 2048x2048x16 bit)
+MAX_BUFFER_COUNT = 64
+COOLING_TARGET = -10  # deg C
+GRAB_TIMEOUT_MS = 10  # first GetFrame of a polling round
+DRAIN_TIMEOUT_MS = 1  # further GetFrame calls of the same round
+MAX_FRAMES_PER_POLL = 64
+SDK_LOG_DIRNAME = "revealer_sdk_log"  # created inside the data folder, the SDK writes its own log files here
+SDK_LOG_LEVEL = "Fatal"  # SCLogLevel name: Trace, Debug, Info, Warn, Error, Fatal; Info gives the full SDK log
+# The camera ignores triggers for a while after AcquisitionStart: the first exposure came 0.59-0.60 s after it in every
+# run, whatever the exposure time or ROI (SDK timestamps, 09:59:14 and 09:59:39 runs), and a 3-frame trigger sequence
+# sent 0.25 s after the start produced no frames at all. Wait this long before the caller starts its triggers.
+ARM_DELAY_S = 1.0
+
+# Gloria6504 attribute table, enumeration values
+Binning_Mode = {1: 0, 2: 1, 4: 2}  # binning factor -> BinningMode enum (OneByOne, TwoByTwo, FourByFour)
+
+Readout_Mode = {1: "bit12_STD_High (high speed, high gain)",
+                2: "bit16_HDR (high dynamic range)"}  # ReadoutMode enum, value 0 is not listed in the table
+
+Trigger_Mode = {0: "Off",
+                1: "External_Edge_Trigger",
+                2: "External_Start_Trigger",
+                3: "External_Level_Trigger",
+                4: "Synchronous_Readout",
+                5: "Software_Trigger"}  # TriggerInType enum
+
+Trigger_Activation = {0: "RisingEdge", 1: "FallingEdge", 2: "LevelHigh", 3: "LevelLow"}
+
+Shutter_Mode = {0: "Rolling", 1: "GlobalReset", 2: "ProgramableMode"}
+
+
+class RevealerCamera:
+    class CameraSettings:
+        def __init__(self):
+            self.temperature = None
+            self.gain = 0  # sCMOS: no EM gain, kept so the GUI/executor attribute exists
+            self.t_clean = 0.001
+            self.t_readout = 0.01
+            self.t_exposure = 0.0403
+            self.t_accumulate = None
+            self.t_kinetic = 0.05
+            self.fps = 1 / self.t_kinetic
+            self.bin_h = 1
+            self.bin_v = 1
+            self.cp_h = 2048
+            self.cp_w = 2048
+            self.start_h = 0
+            self.end_h = 2047
+            self.start_v = 0
+            self.end_v = 2047
+            self.pixels_x = 2048
+            self.pixels_y = 2048
+            self.img_size = self.pixels_x * self.pixels_y
+            self.ps = 6.5
+            self.buffer_size = LIVE_BUFFER_SIZE
+            self.acq_num = 0
+            self.acq_first = 0
+            self.acq_last = 0
+            self.valid_index = 0
+
+    def __init__(self, logg=None, camera_index=0, path=None):
+        self.logg = logg or logger.setup_logging()
+        self._log_dir = os.path.join(path or os.getcwd(), SDK_LOG_DIRNAME)
+        self._settings = self.CameraSettings()
+        self.camera_index = camera_index
+        self.sdk = None
+        self.sensor_width = self.pixels_x
+        self.sensor_height = self.pixels_y
+        self.data = None
+        self.acq_thread = None
+        self._frames_read = 0
+        self._skip_frames = 0
+        self._grabbing = False
+        self._serial = None
+        self._last_grab_error = None
+        self._last_grab_error_time = 0.0
+        self._last_frame_id = None
+        self._load_sdk_modules()
+        self.sdk = self._initialize_sdk()
+        if self.sdk is None:
+            raise RuntimeError("Revealer sCMOS is not initiated")
+        self._configure_camera()
+
+    def __getattr__(self, item):
+        if item != "_settings" and hasattr(self._settings, item):
+            return getattr(self._settings, item)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{item}'")
+
+    # ------------------------------------------------------------------ SDK plumbing
+    def _load_sdk_modules(self):
+        sys.path.append(SCSDK_DIR)
+        try:
+            self._scsdk = importlib.import_module("scsdk")
+            self._scdefs = importlib.import_module("SCDefines")
+        except SystemExit:  # scsdk.py calls sys.exit() when the SDK env var is missing; do not let that kill the GUI
+            raise RuntimeError("Revealer SDK not found: environment variable Revealer_Scientific_Camera_SDK_HOME is not set")
+
+    def _sdk_attr(self, name):
+        """Look a symbol up in scsdk first, then SCDefines (the sample does `from ... import *` on both)."""
+        for mod in (self._scsdk, self._scdefs):
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        raise AttributeError(f"SCSDK python wrapper has no symbol '{name}'")
+
+    def _ok(self, ret, what=""):
+        if ret == self._sdk_attr("SC_OK"):
+            return True
+        self.logg.error(f"Revealer {what} failed, error code {ret}")
+        return False
+
+    def _initialize_sdk(self):
+        try:
+            sdk = self._sdk_attr("SCSDK")()
+            os.makedirs(self._log_dir, exist_ok=True)
+            ret = sdk.SC_Init(getattr(self._sdk_attr("SCLogLevel"), SDK_LOG_LEVEL).value, self._log_dir, 10485760, 10)
+            if not self._ok(ret, "SC_Init"):
+                return None
+            device_list = self._sdk_attr("SC_DeviceList")()
+            device_list.devNum = 0
+            device_list.pDevInfo = None
+            interface = self._sdk_attr("SC_EInterfaceType").eInterfaceTypeUsb3.value
+            ret = self._sdk_attr("SCSDK").SC_EnumDevices(device_list, interface, None)
+            if not self._ok(ret, "SC_EnumDevices"):
+                return None
+            if device_list.devNum == 0:
+                self.logg.error("Revealer sCMOS: no device found")
+                return None
+            if self.camera_index >= device_list.devNum:
+                self.logg.error(f"Revealer sCMOS: camera index {self.camera_index} out of range "
+                                f"({device_list.devNum} found)")
+                return None
+            self._serial = device_list.pDevInfo[self.camera_index].serialNumber.decode('utf-8')
+            mode = self._sdk_attr("SC_ECreateHandleMode").eModeByIndex
+            ret = sdk.SC_CreateHandle(mode, byref(c_void_p(self.camera_index)))
+            if not self._ok(ret, "SC_CreateHandle"):
+                return None
+            ret = sdk.SC_Open()
+            if not self._ok(ret, "SC_Open"):
+                sdk.SC_DestroyHandle()
+                return None
+            return sdk
+        except Exception as e:
+            self.logg.error(f"Error initializing SDK: {e}")
+            return None
+
+    def _configure_camera(self):
+        self.get_sn()
+        self.get_sensor_size()
+        self.cooler_on()
+        self.set_trigger_mode(1)
+        self.set_shutter_mode(1)
+        self.set_readout_mode(2)
+
+    def close(self):
+        try:
+            if self.acq_thread is not None:
+                self.stop_live()
+            elif self._grabbing:
+                self.stop_snap()
+            self.cooler_off()
+        finally:
+            self._ok(self.sdk.SC_Close(), "SC_Close")
+            if self.sdk.handle:
+                self._ok(self.sdk.SC_DestroyHandle(), "SC_DestroyHandle")
+            try:
+                self.sdk.SC_Release()
+            except Exception as e:
+                self.logg.error(f"SC_Release: {e}")
+            self.logg.info("Revealer sCMOS Shut Down")
+
+    # ------------------------------------------------------------------ feature access (GenICam names, see manual)
+    # The scsdk.py wrapper takes the feature name as str (it encodes it) and the ctypes out-object itself (it does the
+    # byref); do not pass bytes or byref() here.
+    def _set_int(self, name, value):
+        return self._ok(self.sdk.SC_SetIntFeatureValue(name, int(value)), f"set {name}")
+
+    def _get_int(self, name):
+        v = c_int64()
+        return v.value if self._ok(self.sdk.SC_GetIntFeatureValue(name, v), f"get {name}") else None
+
+    def _int_range(self, name):
+        lo, hi, inc = c_int64(), c_int64(), c_int64()
+        if (self._ok(self.sdk.SC_GetIntFeatureMin(name, lo), f"get {name} min") and
+                self._ok(self.sdk.SC_GetIntFeatureMax(name, hi), f"get {name} max") and
+                self._ok(self.sdk.SC_GetIntFeatureInc(name, inc), f"get {name} inc")):
+            return lo.value, hi.value, max(inc.value, 1)
+        return None
+
+    def _set_float(self, name, value):
+        return self._ok(self.sdk.SC_SetFloatFeatureValue(name, float(value)), f"set {name}")
+
+    def _get_float(self, name):
+        v = c_double()
+        return v.value if self._ok(self.sdk.SC_GetFloatFeatureValue(name, v), f"get {name}") else None
+
+    def _float_range(self, name):
+        lo, hi = c_double(), c_double()
+        if (self._ok(self.sdk.SC_GetFloatFeatureMin(name, lo), f"get {name} min") and
+                self._ok(self.sdk.SC_GetFloatFeatureMax(name, hi), f"get {name} max")):
+            return lo.value, hi.value
+        return None
+
+    def _set_bool(self, name, value):
+        return self._ok(self.sdk.SC_SetBoolFeatureValue(name, bool(value)), f"set {name}")
+
+    def _set_enum(self, name, value):
+        return self._ok(self.sdk.SC_SetEnumFeatureValue(name, int(value)), f"set {name}")
+
+    def _get_enum(self, name):
+        v = c_uint64()
+        return v.value if self._ok(self.sdk.SC_GetEnumFeatureValue(name, v), f"get {name}") else None
+
+    def software_trigger(self):
+        """Fire one frame when TriggerInType is Software_Trigger (5)."""
+        return self._ok(self.sdk.SC_ExecuteCommandFeature("TriggerSoftware"), "TriggerSoftware")
+
+    @staticmethod
+    def _align(value, lo, hi, inc):
+        """Snap an integer feature value down to the camera's increment and clamp it to [lo, hi]."""
+        value = lo + ((int(value) - lo) // inc) * inc
+        return int(min(max(value, lo), hi))
+
+    # ------------------------------------------------------------------ device info / cooling
+    def get_sn(self):
+        self.logg.info(f"Camera Serial Number : {self._serial}")
+
+    def get_sensor_size(self):
+        w, h = self._get_int("SensorWidth"), self._get_int("SensorHeight")
+        if w and h:
+            self.sensor_width, self.sensor_height = w, h
+            self.pixels_x, self.pixels_y = w, h
+            self.cp_w, self.cp_h = w, h
+            self.start_h, self.end_h = 0, w - 1
+            self.start_v, self.end_v = 0, h - 1
+            self.img_size = w * h
+            self.logg.info("Detector size: pixels_x = {} pixels_y = {}".format(w, h))
+
+    def cooler_on(self):
+        self._set_bool("FanSwitch", True)
+        rng = self._int_range("DeviceTemperatureTarget")
+        target = COOLING_TARGET if rng is None else self._align(COOLING_TARGET, *rng)
+        if self._set_int("DeviceTemperatureTarget", target):
+            self.logg.info(f"Revealer Cooler ON, target {target} C")
+
+    def cooler_off(self):
+        """Raise the target to the top of its range (the sensor warms up) and keep the fan running."""
+        rng = self._int_range("DeviceTemperatureTarget")
+        if rng is not None and self._set_int("DeviceTemperatureTarget", rng[1]):
+            self.logg.info(f"Revealer Cooler OFF, target {rng[1]} C")
+
+    def get_temperature(self):
+        self.temperature = self._get_float("DeviceTemperature")
+        self.logg.info("Revealer Temperature {} C".format(self.temperature))
+
+    def check_camera_status(self):
+        self.logg.info("Revealer grabbing: {}".format(bool(self.sdk.SC_IsGrabbing())))
+
+    # ------------------------------------------------------------------ settings
+    def set_readout_mode(self, ind):
+        """
+        1 - bit12_STD_High (high speed, high gain)
+        2 - bit16_HDR (high dynamic range)
+        """
+        if self._set_enum("ReadoutMode", ind):
+            self.logg.info("Set Readout Mode to {}".format(Readout_Mode.get(ind, ind)))
+
+    def set_shutter_mode(self, ind):
+        """0 - Rolling, 1 - GlobalReset, 2 - ProgramableMode"""
+        if self._set_enum("ShutterMode", ind):
+            self.logg.info("Set Shutter Mode to {}".format(Shutter_Mode.get(ind, ind)))
+
+    def set_trigger_mode(self, ind, activation=0):
+        """
+        0 - Off
+        1 - External_Edge_Trigger
+        2 - External_Start_Trigger
+        3 - External_Level_Trigger
+        4 - Synchronous_Readout
+        5 - Software_Trigger
+        activation: 0 RisingEdge, 1 FallingEdge, 2 LevelHigh, 3 LevelLow (ignored for Off / Software)
+        """
+        if not self._set_enum("TriggerInType", ind):
+            return
+        if ind not in (0, 5):
+            self._set_enum("TriggerActivation", activation)
+        self.logg.info("Trigger Mode Set to {}".format(Trigger_Mode.get(ind, ind)))
+
+    def set_gain(self):
+        """No EM gain on an sCMOS; kept so the executor can call it unconditionally."""
+        self.logg.info("sCMOS has no EM gain, gain setting ignored")
+
+    def get_gain(self):
+        return self.gain
+
+    def set_roi(self):
+        """
+        Apply binning + ROI from bin_h, start_h/end_h, start_v/end_v. The size is rounded to the camera's step, then
+        pixels_x/y are read back from the camera, so they match the frames it sends even if the request was adjusted.
+        """
+        binning = self.bin_h if self.bin_h in Binning_Mode else 1
+        if binning != self.bin_h:
+            self.logg.error(f"Unsupported binning {self.bin_h}, using 1 (supported: 1, 2, 4)")
+        self._set_enum("BinningMode", Binning_Mode[binning])
+        sensor_w, sensor_h = self.sensor_width // binning, self.sensor_height // binning
+        want_w = self.end_h - self.start_h + 1
+        want_h = self.end_v - self.start_v + 1
+        rw, rh = self._int_range("Width"), self._int_range("Height")
+        rx, ry = self._int_range("OffsetX"), self._int_range("OffsetY")
+        # The camera's own max for these depends on the current ROI (OffsetX max = sensor width - current Width, so 0
+        # for a full frame): only the minimum and the step are used, the upper bound is the (binned) sensor.
+        width = self._align(want_w, rw[0], sensor_w, rw[2]) if rw else want_w
+        height = self._align(want_h, rh[0], sensor_h, rh[2]) if rh else want_h
+        off_x = self._align(self.start_h, rx[0], max(sensor_w - width, rx[0]), rx[2]) if rx else self.start_h
+        off_y = self._align(self.start_v, ry[0], max(sensor_h - height, ry[0]), ry[2]) if ry else self.start_v
+        ok = self._ok(self.sdk.SC_SetROI(width, height, off_x, off_y), f"SC_SetROI({width}, {height}, {off_x}, {off_y})")
+        if not ok:
+            self.logg.error(f"Revealer ROI limits (min, max, step): Width {rw}, Height {rh}, OffsetX {rx}, "
+                            f"OffsetY {ry}; binned sensor {sensor_w}x{sensor_h}")
+        w, h = self._get_int("Width"), self._get_int("Height")
+        x, y = self._get_int("OffsetX"), self._get_int("OffsetY")
+        if w and h:  # whatever the outcome, the display and the saved stacks must match what the camera really sends
+            self.pixels_x, self.pixels_y = int(w), int(h)
+        self.img_size = self.pixels_x * self.pixels_y
+        self.ps = 6.5 / binning
+        self.logg.info(f"ROI requested {want_w}x{want_h} at ({self.start_h},{self.start_v}), sent {width}x{height} at "
+                       f"({off_x},{off_y}); camera has {self.pixels_x}x{self.pixels_y} at ({x},{y}), binning {binning}")
+        if ok and (self.pixels_x, self.pixels_y) != (want_w, want_h):
+            self.logg.warning(f"ROI adjusted to the camera's step size: asked {want_w}x{want_h}, "
+                              f"camera has {self.pixels_x}x{self.pixels_y}")
+
+    def log_roi_limits(self):
+        """Log the camera's current ROI features with their limits (min, max, step); handy when an ROI is refused."""
+        self.logg.info(f"SensorWidth {self._get_int('SensorWidth')}, SensorHeight {self._get_int('SensorHeight')}, "
+                       f"BinningMode {self._get_enum('BinningMode')}")
+        for name in ("Width", "Height", "OffsetX", "OffsetY"):
+            self.logg.info(f"{name}: value {self._get_int(name)}, limits (min, max, step) {self._int_range(name)}")
+
+    def set_crop(self):
+        """Crop = set_roi() on this camera (the sensor window is programmable)."""
+        self.set_roi()
+
+    def set_exposure_time(self):
+        requested = value = self.t_exposure * EXPOSURE_TIME_SCALE
+        rng = self._float_range("ExposureTime")
+        if rng is not None:
+            value = min(max(value, rng[0]), rng[1])
+        if self._set_float("ExposureTime", value):
+            actual = self._get_float("ExposureTime")
+            self.logg.info("Set Exposure Time to {:g} s (camera reports {:g} us)".format(self.t_exposure, actual or 0.0))
+            if actual is not None and abs(actual - requested) > 0.05 * max(abs(requested), 1e-12):
+                # clamped to the camera's range, rounded to its step, or EXPOSURE_TIME_SCALE does not match its unit
+                self.logg.warning(f"ExposureTime: asked for {requested:g}, camera reports {actual:g} "
+                                  f"(allowed range {rng}); check EXPOSURE_TIME_SCALE")
+
+    def get_acquisition_timings(self):
+        exposure = self._get_float("ExposureTime")
+        if exposure is not None:
+            self.t_exposure = exposure / EXPOSURE_TIME_SCALE
+        fps = self._get_float("AcquisitionFrameRate")
+        if fps is not None and fps > 0:
+            self.t_kinetic = 1 / fps
+            self.fps = 1 / max(self.t_kinetic, self.t_exposure)
+            self.t_readout = self.t_kinetic  # whole frame period is treated as dead time after the exposure
+        self.logg.info("Get Acquisition Timings exposure = {} kinetic = {} readout = {}".format(
+            self.t_exposure, self.t_kinetic, self.t_readout))
+
+    def get_buffer_size(self):
+        self.logg.info("Frame buffer = {}".format(self.buffer_size))
+
+    # ------------------------------------------------------------------ frame grabbing
+    def _grab_frame(self, timeout_ms):
+        """One frame as a copied uint16 (pixels_y, pixels_x) array, or None on timeout / bad frame."""
+        frame = self._sdk_attr("SC_Frame")()
+        ret = self.sdk.SC_GetFrame(frame, timeout_ms)
+        if ret != self._sdk_attr("SC_OK"):
+            if ret != self._sdk_attr("SC_TIMEOUT"):  # a timeout is the normal "no new frame yet" answer
+                self._log_grab_error(f"SC_GetFrame error code {ret}")
+            return None
+        try:
+            self._check_frame_id(frame.frameInfo)
+            return self._frame_to_array(frame.pData, frame.frameInfo)
+        finally:
+            self._ok(self.sdk.SC_ReleaseFrame(frame), "SC_ReleaseFrame")
+
+    def _check_frame_id(self, info):
+        """The camera numbers every exposure: a jump in frameId means frames were lost between camera and SDK.
+        (A trigger that arrives while the camera is not armed or still reading out never gets an id, so it is
+        not seen here; compare the number of frames received with the number of triggers sent.)"""
+        fid = int(info.frameId)
+        if self._last_frame_id is None:
+            self.logg.info(f"Revealer first frame of this grab: frameId={fid} status={int(info.status)} "
+                           f"timeStamp={int(info.timeStamp)}")
+        elif fid != self._last_frame_id + 1:
+            self.logg.warning(f"Revealer frameId jumped {self._last_frame_id} -> {fid}: "
+                              f"{fid - self._last_frame_id - 1} frame(s) lost before reaching python")
+        if int(info.status) != 0:
+            self.logg.warning(f"Revealer frame {fid} has status {int(info.status)}")
+        self._last_frame_id = fid
+
+    def _log_grab_error(self, msg):
+        """The grab loop runs at thread speed, so repeat the same error at most every 5 s."""
+        now = time.monotonic()
+        if msg != self._last_grab_error or now - self._last_grab_error_time > 5.0:
+            self.logg.error(f"Revealer {msg}")
+            self._last_grab_error, self._last_grab_error_time = msg, now
+
+    def _frame_to_array(self, p_data, info):
+        # info.paddingX/paddingY are the ROI offsets reported by the SDK, not row padding
+        # (960x960 at offset 680,640 reported 1640x1600), so the pixel data is simply
+        # width x height with row stride = width.
+        w, h = int(info.width), int(info.height)
+        bits = (int(info.pixelFormat) >> 16) & 0xFF  # SC_PIX_OCCUPY*BIT: bits stored per pixel
+        if bits == 16:
+            n = int(info.size) // 2
+            raw = np.ctypeslib.as_array(cast(p_data, POINTER(c_uint16 * n)).contents)
+        elif bits == 8:
+            n = int(info.size)
+            raw = np.ctypeslib.as_array(cast(p_data, POINTER(c_ubyte * n)).contents).astype(np.uint16)
+        else:
+            self._log_grab_error(f"pixel format 0x{int(info.pixelFormat):08X} stores {bits} bit per pixel; "
+                                 f"set a 16-bit PixelFormat / ReadoutMode (packed formats are not supported)")
+            return None
+        if raw.size < w * h:
+            self._log_grab_error(f"frame has {raw.size} pixels, expected at least {w * h} ({w}x{h}); "
+                                 f"paddingX={info.paddingX} paddingY={info.paddingY} size={info.size}")
+            return None
+        return raw[:w * h].reshape(h, w).copy()
+
+    def _set_buffer_count(self, n):
+        n = int(min(max(n, MIN_BUFFER_COUNT), MAX_BUFFER_COUNT))
+        if self._ok(self.sdk.SC_SetBufferCount(n), "SC_SetBufferCount"):
+            self.buffer_size = n
+
+    def _start_grabbing(self):
+        self._frames_read = 0
+        self._skip_frames = 0
+        self._last_frame_id = None
+        if not self._ok(self.sdk.SC_StartGrabbing(), "SC_StartGrabbing"):
+            raise RuntimeError("Revealer SC_StartGrabbing failed")
+        self._grabbing = True
+
+    def _stop_grabbing(self):
+        if self._grabbing:
+            self._ok(self.sdk.SC_StopGrabbing(), "SC_StopGrabbing")
+            self._grabbing = False
+
+    def get_images(self):
+        """Called in a loop by CameraAcquisitionThread: move whatever frames are ready into self.data."""
+        if self.data is None:
+            return
+        frames = []
+        frame = self._grab_frame(GRAB_TIMEOUT_MS)
+        while frame is not None:
+            frames.append(frame)
+            if len(frames) >= MAX_FRAMES_PER_POLL:
+                break
+            frame = self._grab_frame(DRAIN_TIMEOUT_MS)
+        if not frames or self.data is None:
+            return
+        if self._skip_frames > 0:  # throwaway warm-up frames, see skip_frames()
+            drop = min(self._skip_frames, len(frames))
+            self._skip_frames -= drop
+            self._frames_read += drop
+            frames = frames[drop:]
+            if not frames:
+                return
+        first = self._frames_read
+        self._frames_read += len(frames)
+        self.data.add_element(frames, [first, self._frames_read - 1])
+
+    def skip_frames(self, n):
+        """Discard the next n frames the camera delivers (a throwaway warm-up run); 0 cancels."""
+        self._skip_frames = int(n)
+
+    def frames_to_skip(self):
+        return self._skip_frames
+
+    def get_last_image(self):
+        if self.data is not None:
+            return self.data.get_last_element()
+        else:
+            return None
+
+    def prepare_live(self, aq=None):
+        self.set_roi()
+        self.set_exposure_time()
+        self.buffer_size = LIVE_BUFFER_SIZE
+        self.get_acquisition_timings()
+        self.get_buffer_size()
+
+    def start_live(self):
+        self.data = run_threads.CameraDataList(max_length=self.buffer_size)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._set_buffer_count(MAX_BUFFER_COUNT)
+        self._start_grabbing()
+        self.acq_thread.start()
+        self.logg.info('Start live image')
+
+    def stop_live(self):
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()
+            self.data = None
+        self._stop_grabbing()
+        self.logg.info('Live image stopped')
+
+    def start_snap(self):
+        self._set_buffer_count(MIN_BUFFER_COUNT)
+        self._start_grabbing()
+        self.logg.info('Start snap shot')
+
+    def stop_snap(self):
+        self._stop_grabbing()
+        self.logg.info('Snap shot stopped')
+
+    def get_last_snap(self, timeout=1.2):
+        """Wait for a frame (the trigger fires it) and return the newest one that is waiting."""
+        deadline = time.monotonic() + timeout
+        last = None
+        while last is None:
+            remaining_ms = int(max(deadline - time.monotonic(), 0) * 1000)
+            last = self._grab_frame(max(min(remaining_ms, 100), 1))
+            if last is None and time.monotonic() >= deadline:
+                self.logg.error("Timeout waiting for new camera frame")
+                return None
+        for _ in range(MAX_FRAMES_PER_POLL):  # bounded: a free-running camera would never run dry
+            newer = self._grab_frame(DRAIN_TIMEOUT_MS)
+            if newer is None:
+                break
+            last = newer
+        return last
+
+    def check_new_acquisition(self):
+        return True if self._grabbing else None
+
+    def prepare_data_acquisition(self, aq=None, preset=None):
+        self.set_roi()
+        self.set_exposure_time()
+        self.get_acquisition_timings()
+        self.get_buffer_size()
+
+    def start_data_acquisition(self, n, fd, fn):
+        self.data = run_threads.CameraDataList(max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn)
+        self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._set_buffer_count(2 * n)
+        self._start_grabbing()
+        self.acq_thread.start()
+        time.sleep(ARM_DELAY_S)  # triggers sent before the camera is armed are lost, see ARM_DELAY_S
+        self.logg.info('Acquisition started')
+
+    def stop_data_acquisition(self):
+        if self.acq_thread is not None:
+            self.acq_thread.stop()
+            self.acq_thread = None
+        if self.data is not None:
+            self.data.close()  # flush + join the background TIFF-writer thread
+            self.data = None
+        self._stop_grabbing()
+        self.logg.info(f'Acquisition stopped, {self._frames_read} frames received')
+
+    def get_data(self):
+        if self.data is not None:
+            return self.data.get_elements()
+        else:
+            return None
+
+    def get_acq_num(self):
+        self.acq_first, self.acq_last = 0, max(self._frames_read - 1, 0)
+        self.logg.info(f"{self.acq_first} {self.acq_last}")
+
+    def check_acquisition_progress(self):
+        self.logg.info("frames received = {}".format(self._frames_read))
+
+    def wait_for_acquisition(self):
+        while self._grabbing and self.data is not None and self._frames_read < self.data.max_length:
+            time.sleep(0.01)
+
+    def free_memory(self):
+        """SDK owns the frame buffers (released per frame in _grab_frame); nothing to free."""
+        pass
