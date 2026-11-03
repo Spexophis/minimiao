@@ -37,6 +37,7 @@ class CommandExecutor(QObject):
         self.lasers = []
         self.detector = {0: [0, 1], 1: [0, 2]}
         self.task_worker = None
+        self._batch = None
 
     def _set_signal_executions(self):
         # Galvo
@@ -395,6 +396,70 @@ class CommandExecutor(QObject):
         self.task_worker = None
         w.deleteLater()
         self.vw.dialog.close()
+        if self._batch is not None:
+            self._finalize_batch_acquisition()
+
+    def _start_acquisition(self, txt: str, task, n: int, label: str):
+        """Start an acquisition task repeated ``n`` times.
+
+        For ``n > 1`` every repetition is written straight into one new folder
+        (``<time>_<label>``) with an index prefix, and the save dialog is shown
+        only once, after all repetitions are done, to name that folder.
+        For ``n == 1`` the save dialog is shown after the scan as before.
+        """
+        if self.task_worker is not None and self.task_worker.isRunning():
+            self.logg.error("Another task is still running")
+            return
+        self._batch = None
+        if n > 1:
+            tim = time.strftime("%Y%m%d%H%M%S")
+            folder = os.path.join(self.path, f"{tim}_{label}")
+            try:
+                os.makedirs(folder, exist_ok=True)
+            except Exception as e:
+                self.logg.error(f"Error creating acquisition folder {folder}: {e}")
+                return
+            self._batch = {"folder": folder, "index": 0, "start": tim, "total": n}
+            self.logg.info(f"Saving {n} acquisitions into {folder}")
+        self.vw.get_dialog(txt=txt)
+        self.run_task(task=task, iteration=n)
+
+    def _next_file_prefix(self, tim: str) -> str:
+        """Path prefix for the files of the acquisition that is starting now."""
+        if self._batch is None:
+            return os.path.join(self.path, tim)
+        idx = self._batch["index"]
+        self._batch["index"] = idx + 1
+        return os.path.join(self._batch["folder"], f"{idx:03d}_{tim}")
+
+    def _save_scan_result(self, tim: str, prefix: str):
+        if self._batch is None:
+            # single acquisition: ask for a name on the GUI thread
+            self.psv.emit(tim)
+        else:
+            # repeated acquisition: write now, before the next repetition
+            # overwrites the reconstruction buffers
+            self.write_scan_data(prefix)
+
+    def _finalize_batch_acquisition(self):
+        b = self._batch
+        self._batch = None
+        self.devs.daq.mpd_data = None
+        self.devs.daq.pmt_data = None
+        self.logg.info(f"{b['index']} of {b['total']} acquisitions written to {b['folder']}")
+        fn = self.vw.get_file_dialog(sw="Name Acquisition Folder")
+        if not fn:
+            self.logg.info(f"Acquisitions kept in {b['folder']}")
+            return
+        new_folder = os.path.join(self.path, f"{b['start']}_{fn}")
+        if os.path.exists(new_folder):
+            self.logg.error(f"{new_folder} already exists, acquisitions kept in {b['folder']}")
+            return
+        try:
+            os.rename(b["folder"], new_folder)
+            self.logg.info(f"Acquisitions saved in {new_folder}")
+        except Exception as e:
+            self.logg.error(f"Error renaming {b['folder']} to {new_folder}: {e}")
 
     @pyqtSlot(str, int)
     def data_acquisition(self, acq_mod: str, acq_num: int):
@@ -413,11 +478,16 @@ class CommandExecutor(QObject):
     @pyqtSlot(str)
     def save_scan(self, tm: str):
         fn = self.vw.get_file_dialog()
-        scan = self.ctrl_panel.get_galvo_scan_set()
         if fn is not None:
             fd = os.path.join(self.path, tm + '_' + fn)
         else:
             fd = os.path.join(self.path, tm)
+        self.write_scan_data(fd)
+        self.devs.daq.mpd_data = None
+        self.devs.daq.pmt_data = None
+
+    def write_scan_data(self, fd: str):
+        scan = self.ctrl_panel.get_galvo_scan_set()
         img_res = np.array(self.rec.live_rec).astype(np.float32)
         tf.imwrite(str(fd + r"_" + scan + r"_recon_image.tif"), data=img_res,
                    compression='zlib', photometric="minisblack")
@@ -440,10 +510,8 @@ class CommandExecutor(QObject):
                     df_pos.to_excel(writer, sheet_name=f"axis_{i}", index=False)
         except Exception as e:
             self.logg.error(f"Error writing piezo scanning data: {e}")
-        self.devs.daq.mpd_data = None
-        self.devs.daq.pmt_data = None
 
-    def prepare_resolft_scan(self, tim):
+    def prepare_resolft_scan(self, prefix):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
@@ -501,20 +569,20 @@ class CommandExecutor(QObject):
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
 
-        fd = os.path.join(self.path, tim + r"_resolft_scanning_triggers.npy")
-        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+        np.save(str(prefix + r"_resolft_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
 
     def resolft_scan(self):
         tim = time.strftime("%Y%m%d%H%M%S")
+        prefix = self._next_file_prefix(tim)
         try:
-            self.prepare_resolft_scan(tim)
+            self.prepare_resolft_scan(prefix)
         except Exception as e:
             self.logg.error(f"Error preparing RESOLFT scanning: {e}")
             return
         try:
             self.devs.daq.run_triggers()
             time.sleep(0.2)
-            self.psv.emit(tim)
+            self._save_scan_result(tim, prefix)
         except Exception as e:
             self.finish_resolft_scan()
             self.logg.error(f"Error running RESOLFT scanning: {e}")
@@ -533,10 +601,9 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stopping RESOLFT scanning: {e}")
 
     def run_resolft_scan(self, n: int):
-        self.vw.get_dialog(txt="RESOLFT Scanning Acquisition")
-        self.run_task(task=self.resolft_scan, iteration=n)
+        self._start_acquisition("RESOLFT Scanning Acquisition", self.resolft_scan, n, "resolft_scan")
 
-    def prepare_point_scan(self, tim):
+    def prepare_point_scan(self, prefix):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
@@ -595,20 +662,20 @@ class CommandExecutor(QObject):
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
 
-        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
-        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+        np.save(str(prefix + r"_point_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
 
     def point_scan(self):
         tim = time.strftime("%Y%m%d%H%M%S")
+        prefix = self._next_file_prefix(tim)
         try:
-            self.prepare_point_scan(tim)
+            self.prepare_point_scan(prefix)
         except Exception as e:
             self.logg.error(f"Error preparing point scanning: {e}")
             return
         try:
             self.devs.daq.run_triggers()
             time.sleep(0.2)
-            self.psv.emit(tim)
+            self._save_scan_result(tim, prefix)
         except Exception as e:
             self.finish_point_scan()
             self.logg.error(f"Error running point scanning: {e}")
@@ -627,10 +694,9 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stopping point scanning: {e}")
 
     def run_point_scan(self, n: int):
-        self.vw.get_dialog(txt="Point Scanning Acquisition")
-        self.run_task(task=self.point_scan, iteration=n)
+        self._start_acquisition("Point Scanning Acquisition", self.point_scan, n, "point_scan")
 
-    def prepare_point_scan_3d(self, tim):
+    def prepare_point_scan_3d(self, prefix):
         self.lasers = self.ctrl_panel.get_lasers()
         self.set_lasers(self.lasers)
         self.update_trigger_parameters()
@@ -689,13 +755,13 @@ class CommandExecutor(QObject):
                 lambda c, idx, i: self.rec.point_scan_live_recon(c, idx, 0)  # PMT analog → slot 0
             )
 
-        fd = os.path.join(self.path, tim + r"_point_scanning_triggers.npy")
-        np.save(str(fd), np.vstack((np.array(gtr), np.array(dtr))))
+        np.save(str(prefix + r"_point_scanning_triggers.npy"), np.vstack((np.array(gtr), np.array(dtr))))
 
     def point_scan_3d(self):
         tim = time.strftime("%Y%m%d%H%M%S")
+        prefix = self._next_file_prefix(tim)
         try:
-            self.prepare_point_scan(tim)
+            self.prepare_point_scan(prefix)
         except Exception as e:
             self.logg.error(f"Error preparing point scanning: {e}")
             return
@@ -705,8 +771,7 @@ class CommandExecutor(QObject):
             self.set_stand_z_position(psl[0] + 400)
             data = self.img_stack_iteration(psl)
             self.set_stand_z_position(cpz)
-            fn = os.path.join(self.path, tim + "_point_scanning_3d_data.tif")
-            tf.imwrite(fn, data)
+            tf.imwrite(prefix + "_point_scanning_3d_data.tif", data)
         except Exception as e:
             self.finish_point_scan_3d()
             self.logg.error(f"Error running point scanning: {e}")
@@ -740,8 +805,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error stopping point scanning: {e}")
 
     def run_point_scan_3d(self, n: int):
-        self.vw.get_dialog(txt="Point Scanning Acquisition")
-        self.run_task(task=self.point_scan_3d, iteration=n)
+        self._start_acquisition("Point Scanning 3D Acquisition", self.point_scan_3d, n, "point_scan_3d")
 
     def prepare_auto_roi(self):
         mth = self.ctrl_panel.get_live_mode()
