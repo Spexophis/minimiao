@@ -241,7 +241,8 @@ class ControlPanel(QWidget):
         self.QPushButton_save_live_timing_presets = cw.PushButtonWidget("Save Live TTLs")
         self.QComboBox_acquisition_modes = cw.ComboBoxWidget(list_items=["RESOLFT Scan 2D", "Point Scan 2D",
                                                                          "Point Scan 3D",
-                                                                         "Static Point"])
+                                                                         "Static Point",
+                                                                         "Labelling Measurement"])
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire')
         self.QPushButton_save_acquisition_timing_presets = cw.PushButtonWidget("Save Acq TTLs")

@@ -223,6 +223,24 @@ class TriggerSequence:
         gates = np.tile(gates, self.galvo_scan_pos[pch])
         return digital_triggers, convert_list(galvo_sequences, self.galvo_fast_axis), dig_chs, gv_chs, pos, gates, dwl
 
+    def generate_labelling_prescan(self, detectors, dwell_s=50e-6, readout_laser=2):
+        """
+        Quick RESOLFT-style galvo frame for the labelling measurement: only the
+        readout laser is on, and every pixel is one ``dwell_s`` readout window
+        (detector gates on the same window). Uses the current galvo scan
+        settings; the GUI TTL timings are left unchanged.
+        Returns the same tuple as ``generate_galvo_resolft_scan``.
+        """
+        dwell = max(int(round(dwell_s * self.sample_rate)), 1)
+        starts, ends = list(self.digital_starts), list(self.digital_ends)
+        try:
+            for ch in [readout_laser, 3, 4, 5]:
+                self.digital_starts[ch] = 0
+                self.digital_ends[ch] = dwell
+            return self.generate_galvo_resolft_scan([readout_laser], detectors)
+        finally:
+            self.digital_starts, self.digital_ends = starts, ends
+
     def generate_galvo_point_scan(self, lasers, detectors):
         pos = 1
         gv_chs = []

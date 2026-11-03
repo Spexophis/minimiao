@@ -12,6 +12,8 @@ import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 
 from . import run_threads, logger
+from .computations import labelling as lbl
+from .computations.image_reconstructions import ImgRecon
 from .utilities import image_processor as ipr
 
 
@@ -403,19 +405,20 @@ class CommandExecutor(QObject):
         if self._batch is not None:
             self._finalize_batch_acquisition()
 
-    def _start_acquisition(self, txt: str, task, n: int, label: str):
+    def _start_acquisition(self, txt: str, task, n: int, label: str, always_folder: bool = False):
         """Start an acquisition task repeated ``n`` times.
 
         For ``n > 1`` every repetition is written straight into one new folder
         (``<time>_<label>``) with an index prefix, and the save dialog is shown
         only once, after all repetitions are done, to name that folder.
-        For ``n == 1`` the save dialog is shown after the scan as before.
+        For ``n == 1`` the save dialog is shown after the scan as before,
+        unless ``always_folder`` is set.
         """
         if self.task_worker is not None and self.task_worker.isRunning():
             self.logg.error("Another task is still running")
             return
         self._batch = None
-        if n > 1:
+        if n > 1 or always_folder:
             tim = time.strftime("%Y%m%d%H%M%S")
             folder = os.path.join(self.path, f"{tim}_{label}")
             try:
@@ -525,6 +528,8 @@ class CommandExecutor(QObject):
         #     self.run_resolft_scan_3d(acq_num)
         elif acq_mod == "Point Scan 3D" and scan.lower().startswith("point"):
             self.run_point_scan_3d(acq_num)
+        elif acq_mod == "Labelling Measurement":
+            self.run_labelling_measurement(acq_num)
         else:
             self.logg.error(f"Invalid video mode")
 
@@ -875,6 +880,206 @@ class CommandExecutor(QObject):
 
     def run_point_scan_3d(self, n: int):
         self._start_acquisition("Point Scanning 3D Acquisition", self.point_scan_3d, n, "point_scan_3d")
+
+    # ------------------------------------------------------------------
+    # Labelling measurement
+    # ------------------------------------------------------------------
+    # Pre-scan pixel dwell (readout only) and spot detection / dither settings.
+    labelling_prescan_dwell_s = 50e-6
+    labelling_spot_sigma = 1.0  # px, smoothing before peak finding
+    labelling_spot_min_distance = 2  # px between two point sources
+    labelling_spot_threshold = 5.0  # x noise above background
+    labelling_dither_radius_px = 0.5  # dither half-width, in pre-scan pixel steps
+    labelling_dither_freq_hz = 2000.0  # reduced automatically to the galvo limits
+
+    @staticmethod
+    def _labelling_channels(dn):
+        """Gate / counter / analog reader channels for the selected detectors
+        (same mapping as the RESOLFT acquisition)."""
+        gate_channel, counter_channel, reader_channel = [], [], []
+        if dn[0] == 0:
+            gate_channel.append(0)
+            counter_channel.append(0)
+        if dn[0] == 1:
+            reader_channel = [0]
+        if dn[1] == 0:
+            gate_channel.append(1)
+            counter_channel.append(1)
+        if dn[1] == 1:
+            counter_channel.append(2)
+        reader_channel.extend([1, 2])
+        return gate_channel, counter_channel, reader_channel
+
+    def _labelling_arm_detectors(self, dn, counter_channel, reader_channel, recon, n_samples):
+        """Prepare the photon counters / PMT reader and route their data into ``recon``."""
+        self.devs.daq.photon_counter_length = n_samples
+        if len(counter_channel) > 0:
+            self.devs.daq.prepare_photon_counter(counter_channel)
+            slot_map = []
+            if dn[0] == 0:
+                slot_map.append(0)
+            if dn[1] in (0, 1):
+                slot_map.append(1)
+
+            def _mpd(counts, ind_list, ind):
+                recon.point_scan_live_recon(counts, ind_list, slot_map[ind])
+
+            self.devs.daq.mpd_data.on_update(_mpd)
+        else:
+            self.devs.daq.clear_photon_counter()
+        if 0 in reader_channel and self.devs.daq.pmt_data is not None:
+            self.devs.daq.pmt_data.on_update(lambda c, idx, i: recon.point_scan_live_recon(c, idx, 0))
+
+    def _labelling_stop_daq(self):
+        self.devs.daq.stop_photon_count()
+        self.devs.daq.stop_pmt_read()
+        self.devs.daq.stop_triggers()
+
+    def labelling_measurement(self):
+        """
+        1. quick readout-only RESOLFT frame (``labelling_prescan_dwell_s`` per pixel),
+        2. detect point sources and locate them in galvo voltages,
+        3. park the beam on each point source in turn for the 488 readout TTL
+           window while dithering both galvos inside the PSF, recording the
+           photon count trace of each one.
+        """
+        tim = time.strftime("%Y%m%d%H%M%S")
+        prefix = self._next_file_prefix(tim)
+        dn = self.ctrl_panel.get_detector()
+        slots = [i for i in (0, 1) if dn[i] in (0, 1)]
+        if not slots:
+            self.logg.error("Labelling measurement: no detector selected")
+            return
+        gate_channel, counter_channel, reader_channel = self._labelling_channels(dn)
+        readout_laser = 2
+        try:
+            self.lasers = [readout_laser]
+            self.set_lasers(self.lasers)
+            self.update_trigger_parameters()
+            readout_samples = int(self.trg.digital_ends[readout_laser] - self.trg.digital_starts[readout_laser])
+            if readout_samples <= 0:
+                raise ValueError("488 readout TTL window is empty")
+
+            # ---- 1. pre-scan -------------------------------------------------
+            dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_labelling_prescan(
+                gate_channel, dwell_s=self.labelling_prescan_dwell_s, readout_laser=readout_laser)
+            gtr = np.atleast_2d(gtr)
+            if gtr.shape[0] != 2:
+                raise ValueError("Labelling measurement needs both galvo axes scanning")
+            self.devs.daq.write_triggers(analog_sequences=gtr, analog_channels=gch,
+                                         digital_sequences=dtr, digital_channels=dch,
+                                         reader_channels=reader_channel, finite=True)
+            nx, ny = self.trg.galvo_scan_pos[0], self.trg.galvo_scan_pos[1]
+            self.rec.point_scan_gate_mask = gts[0]
+            self.rec.set_point_scan_params(n_lines=ny, n_pixels=nx, dwell_samples=pdw)
+            self.rec.prepare_point_scan_live_recon()
+            self._labelling_arm_detectors(dn, counter_channel, reader_channel, self.rec, dtr.shape[-1])
+            np.save(prefix + "_labelling_prescan_triggers.npy", np.vstack((gtr, np.atleast_2d(dtr))))
+            self._emit_acquisition_live(dn)
+        except Exception as e:
+            self.logg.error(f"Error preparing labelling pre-scan: {e}")
+            self._labelling_finish()
+            return
+        try:
+            self.devs.daq.run_triggers()
+            time.sleep(0.2)
+            prescan = np.array(self.rec.live_rec).astype(np.float32)
+            self._labelling_stop_daq()
+            tf.imwrite(prefix + "_labelling_prescan_image.tif", data=prescan,
+                       compression='zlib', photometric="minisblack")
+        except Exception as e:
+            self.logg.error(f"Error running labelling pre-scan: {e}")
+            self._labelling_finish()
+            return
+
+        # ---- 2. point sources ------------------------------------------------
+        try:
+            img = prescan[slots].sum(axis=0)
+            spots = lbl.find_point_sources(img, sigma=self.labelling_spot_sigma,
+                                           min_distance=self.labelling_spot_min_distance,
+                                           threshold_sigma=self.labelling_spot_threshold)
+            vmaps = lbl.pixel_voltage_maps(gtr, gts[0], ny, nx, pdw)
+            if vmaps is None:
+                raise ValueError("pre-scan gate does not match the image size")
+            for sp in spots:
+                sp["volts"] = lbl.voltages_at(vmaps, sp["y"], sp["x"])
+            self._labelling_save_points(prefix, spots, gch)
+            self.logg.info(f"Labelling measurement: {len(spots)} point sources found")
+            if not spots:
+                self._labelling_finish()
+                return
+        except Exception as e:
+            self.logg.error(f"Error detecting point sources: {e}")
+            self._labelling_finish()
+            return
+
+        # ---- 3. dithered readout on each point source -----------------------
+        try:
+            radius = self.labelling_dither_radius_px * float(min(abs(d) for d in self.trg.dot_steps))
+            targets = np.array([sp["volts"] for sp in spots])
+            tail = 4
+            gseq, move_samples, freqs = lbl.build_dither_sequences(
+                targets, start=gtr[:, -1], galvo=self.trg.galvo, sample_rate=self.trg.sample_rate,
+                readout_samples=readout_samples, radius=radius, freq_hz=self.labelling_dither_freq_hz,
+                min_move_samples=self.trg.galvo_step_response_samples, tail_samples=tail)
+            ddch = [readout_laser] + [g + 3 for g in gate_channel]
+            dseq, gate = lbl.build_dither_triggers(len(spots), len(ddch), move_samples, readout_samples, tail)
+            self.devs.daq.write_triggers(analog_sequences=gseq, analog_channels=gch,
+                                         digital_sequences=dseq, digital_channels=ddch,
+                                         reader_channels=reader_channel, finite=True)
+            lab_rec = ImgRecon(logg=self.logg)
+            lab_rec.point_scan_gate_mask = gate
+            lab_rec.set_point_scan_params(n_lines=1, n_pixels=len(spots), dwell_samples=readout_samples)
+            lab_rec.prepare_point_scan_live_recon()
+            self._labelling_arm_detectors(dn, counter_channel, reader_channel, lab_rec, dseq.shape[-1])
+            np.save(prefix + "_labelling_dither_triggers.npy", np.vstack((gseq, dseq)))
+            self._emit_acquisition_live(dn)
+            self.logg.info(f"Labelling measurement: {len(spots)} points x "
+                           f"{readout_samples / self.trg.sample_rate * 1e3:.3g} ms readout, "
+                           f"dither {radius:.4g} V at {', '.join(f'{f:.0f}' for f in freqs)} Hz")
+        except Exception as e:
+            self.logg.error(f"Error preparing labelling point readout: {e}")
+            self._labelling_finish()
+            return
+        try:
+            self.devs.daq.run_triggers()
+            time.sleep(0.2)
+            traces = np.stack([lbl.split_traces(lab_rec.live_counts[i], len(spots), move_samples, readout_samples)
+                               for i in range(len(lab_rec.live_counts))], axis=1).astype(np.float32)
+            np.savez(prefix + "_labelling_traces.npz",
+                     traces=traces,  # (n_points, detector slot, readout samples)
+                     iy=np.array([sp["iy"] for sp in spots]), ix=np.array([sp["ix"] for sp in spots]),
+                     y=np.array([sp["y"] for sp in spots]), x=np.array([sp["x"] for sp in spots]),
+                     volts=targets, galvo_channels=np.array(gch), detector=np.array(dn),
+                     sample_rate=self.trg.sample_rate, readout_samples=readout_samples,
+                     move_samples=move_samples, dither_radius_v=radius, dither_freq_hz=freqs,
+                     prescan_dwell_s=self.labelling_prescan_dwell_s,
+                     laser_powers=np.array(self.ctrl_panel.get_cobolt_laser_power("all")))
+            if self.devs.daq.analog_data is not None:
+                np.save(prefix + "_labelling_position_records.npy", self.devs.daq.analog_data)
+            self.logg.info("Labelling measurement finished")
+        except Exception as e:
+            self.logg.error(f"Error running labelling point readout: {e}")
+        self._labelling_finish()
+
+    def _labelling_save_points(self, prefix, spots, gch):
+        rows = [{"index": i, "iy": sp["iy"], "ix": sp["ix"], "y_subpixel": sp["y"], "x_subpixel": sp["x"],
+                 **{f"galvo_ch{c}_V": v for c, v in zip(gch, sp["volts"])}, "peak": sp["peak"]}
+                for i, sp in enumerate(spots)]
+        cols = ["index", "iy", "ix", "y_subpixel", "x_subpixel"] + [f"galvo_ch{c}_V" for c in gch] + ["peak"]
+        pd.DataFrame(rows, columns=cols).to_csv(prefix + "_labelling_points.csv", index=False)
+
+    def _labelling_finish(self):
+        try:
+            self._labelling_stop_daq()
+            self.lasers_off()
+            self.reset_galvo_positions()
+        except Exception as e:
+            self.logg.error(f"Error stopping labelling measurement: {e}")
+
+    def run_labelling_measurement(self, n: int):
+        self._start_acquisition("Labelling Measurement", self.labelling_measurement, n, "labelling",
+                                always_folder=True)
 
     def prepare_auto_roi(self):
         mth = self.ctrl_panel.get_live_mode()
