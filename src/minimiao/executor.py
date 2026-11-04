@@ -69,6 +69,7 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_calib_measure.connect(self.measure_calibration)
         self.hg_panel.Signal_calib_load.connect(self.load_calibration)
         self.hg_panel.Signal_calib_use.connect(self.use_calibration)
+        self.hg_panel.Signal_calib_auto.connect(self.auto_calibration)
 
     def _initial_setup(self):
         try:
@@ -482,19 +483,12 @@ class CommandExecutor(QObject):
         self._clear_hologram_slots()
 
         def task():
-            for k, (x1, y1) in enumerate(grid):
-                slot = self.FIRST_HOLOGRAM_SLOT + k
-                pattern = self.cgh.compute_hologram_point(x1, y1)
-                if pattern is None:
-                    self.logg.error(f"Calibration point {k} ({x1:.1f}, {y1:.1f}) is outside the field")
-                    return
-                try:
-                    self.devs.slm.write_array(pattern, slot)
-                except Exception as e:
-                    self.logg.error(f"Error loading calibration hologram to slot {slot}: {e}")
-                    return
-                self.slot_patterns[slot] = (f"calib {k} ({x1:.1f}, {y1:.1f})", pattern)
-            self.calib_holo_pts = grid
+            try:
+                self._write_point_holograms(grid)
+            except Exception as e:
+                self.logg.error(f"Error loading calibration holograms: {e}")
+                self.calib_holo_pts = None
+                return
             self.logg.info(f"Calibration: {len(grid)} holograms in slots "
                            f"{self.FIRST_HOLOGRAM_SLOT}..{self.FIRST_HOLOGRAM_SLOT + len(grid) - 1}")
 
@@ -515,6 +509,157 @@ class CommandExecutor(QObject):
             raise RuntimeError("No camera frames; is live video running?")
         return np.mean(frames, axis=0)
 
+    def _measure_slots(self, n_slots, wait_s, n_avg, exposure_s):
+        """Worker thread: display slots 1..n_slots in turn and record one averaged frame each."""
+        frames = []
+        try:
+            for k in range(n_slots):
+                self.devs.slm.display_pattern(self.FIRST_HOLOGRAM_SLOT + k)
+                time.sleep(wait_s)
+                frames.append(self._grab_frame(n_avg, exposure_s))
+        finally:
+            self.devs.slm.display_pattern(self.CORRECTION_SLOT)
+        return np.stack(frames)
+
+    def _write_point_holograms(self, holo_pts, tag="calib"):
+        """Worker thread: write single-spot holograms for hologram-plane points to slots 1..K.
+        Points are rounded to whole hologram pixels, which is where the hologram actually
+        puts the spot (build_target_from_spots rounds), so the fit uses the true positions."""
+        holo_pts = np.round(np.asarray(holo_pts, float))
+        self._clear_hologram_slots()
+        for k, (x1, y1) in enumerate(holo_pts):
+            slot = self.FIRST_HOLOGRAM_SLOT + k
+            pattern = self.cgh.compute_hologram_point(x1, y1)
+            if pattern is None:
+                raise ValueError(f"Calibration point {k} ({x1:.1f}, {y1:.1f}) is outside the field")
+            self.devs.slm.write_array(pattern, slot)
+            self.slot_patterns[slot] = (f"{tag} {k} ({x1:.1f}, {y1:.1f})", pattern)
+        self.calib_holo_pts = np.asarray(holo_pts, float)
+
+    def _project_and_detect(self, holo_pts, wait_s, n_avg, exposure_s, tag, min_frac=0.75):
+        """Worker thread: write, measure, detect. Retries once with 2x averaging if too few spots are found."""
+        self._write_point_holograms(holo_pts, tag)
+        holo_pts = self.calib_holo_pts  # rounded positions actually projected
+        for attempt, avg in enumerate((n_avg, 2 * n_avg)):
+            frames = self._measure_slots(len(holo_pts), wait_s, avg, exposure_s)
+            cam_pts, snr, max_proj = slm_cal.detect_spots(frames)
+            found = np.isfinite(cam_pts[:, 0]).mean()
+            self.logg.info(f"Auto calibration [{tag}]: {found:.0%} of {len(holo_pts)} spots found "
+                           f"(avg {avg} frames, min SNR {np.min(snr):.1f})")
+            if found >= min_frac:
+                break
+        return holo_pts, cam_pts, snr, max_proj
+
+    @pyqtSlot(dict)
+    def auto_calibration(self, settings: dict):
+        """
+        Full automatic calibration:
+          1. coarse pass: hologram-space grid -> affine M1
+          2. refine pass: grid covering the camera FOV (via M1), avoiding the zero order;
+             M1's prediction error on these spots is reported as validation
+          3. final affine fitted on both passes; saved, applied, and the
+             magnification / center fields are updated to the closest equivalent.
+        Starts live video and switches the laser to constant power if needed,
+        and restores the laser mode afterwards.
+        """
+        if self._slm_busy():
+            return
+        if self.devs.slm is None or self.devs.camera is None:
+            self.logg.error("Auto calibration needs both the SLM and the camera")
+            return
+        power = self.ctrl_panel.QDoubleSpinBox_laserpower_473.value()
+        laser_was_on = self.ctrl_panel.QPushButton_laser_473.isChecked()
+        if power <= 0:
+            self.logg.error("Set a laser power > 0 for calibration")
+            return
+        try:
+            self.update_cgh_parameters()
+        except Exception as e:
+            self.logg.error(f"Error reading CGH parameters: {e}")
+            return
+        if getattr(self.devs.camera, "data", None) is None:
+            self.video(True, self.ctrl_panel.QComboBox_live_modes.currentText())
+            self.ctrl_panel.QPushButton_video.setChecked(True)
+        if not laser_was_on:
+            self.set_laser(["473"], True, power)
+
+        exposure_s = max(float(getattr(self.devs.camera, "t_exposure", 20) or 20), 1.0) * 1e-3
+        wait_s = settings["settle_ms"] * 1e-3 + 2 * exposure_s
+        n_avg = settings["n_avg"]
+        roi = list(self.ctrl_panel.get_scmos_roi())
+        phase_n = (self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny)
+        self._calib_result = None
+
+        def task():
+            try:
+                t0 = time.monotonic()
+                while self.devs.camera.get_last_image() is None:
+                    if time.monotonic() - t0 > 10:
+                        raise RuntimeError("No camera frames after 10 s")
+                    time.sleep(0.1)
+                # 1. coarse
+                holo1 = slm_cal.make_grid(*phase_n, settings["grid"], settings["span"])
+                holo1, cam1, snr1, mp1 = self._project_and_detect(holo1, wait_s, n_avg, exposure_s, "coarse")
+                M1, res1 = slm_cal.fit_affine(cam1, holo1)
+                self.logg.info(f"Auto calibration coarse: rms {np.sqrt(np.nanmean(res1 ** 2)):.2f} px, "
+                               f"{slm_cal.describe(M1)}")
+                holo_all, cam_all, mp = [holo1], [cam1], mp1
+                validation = None
+                # 2. refine over the camera FOV
+                if settings["refine"] >= 2:
+                    holo2, _ = slm_cal.camera_grid_to_holo(M1, mp1.shape, settings["refine"],
+                                                           phase_n=phase_n)
+                    if len(holo2) >= 3:
+                        holo2, cam2, snr2, mp2 = self._project_and_detect(holo2, wait_s, n_avg, exposure_s,
+                                                                        "refine")
+                        cam2_exp = slm_cal.holo_to_cam(M1, holo2)  # coarse-model prediction
+                        ok = np.isfinite(cam2[:, 0])
+                        err = np.linalg.norm(cam2[ok] - cam2_exp[ok], axis=1)
+                        validation = {"n": int(ok.sum()), "rms_cam_px": float(np.sqrt(np.mean(err ** 2))),
+                                      "max_cam_px": float(err.max())} if ok.any() else None
+                        self.logg.info(f"Auto calibration validation (coarse model on refine spots): {validation}")
+                        holo_all.append(holo2)
+                        cam_all.append(cam2)
+                        mp = np.maximum(mp1, mp2)
+                    else:
+                        self.logg.warning("Refine grid: too few points inside the hologram field; skipped")
+                # 3. final fit
+                holo_all, cam_all = np.vstack(holo_all), np.vstack(cam_all)
+                M, res = slm_cal.fit_affine(cam_all, holo_all)
+                simple = slm_cal.equivalent_simple_params(M, phase_n)
+                stamp = time.strftime("%Y%m%d%H%M%S")
+                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration")
+                meta = {"camera_roi": roi, "settle_ms": settings["settle_ms"], "n_avg": n_avg,
+                        "auto": True, "settings": settings, "validation": validation,
+                        "equivalent_simple": simple, "phase_n": list(phase_n),
+                        "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
+                        "f_fresnel": self.cgh.holo_sys.f_fresnel}
+                data = slm_cal.save_calibration(base + ".json", M, cam_all, holo_all, res, meta)
+                tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
+                self.cgh.set_affine(M)
+                self.calib_meta = meta
+                self._calib_result = (data, cam_all, mp, base + ".json")
+                self.logg.info(f"Auto calibration saved: {base}.json; final rms {data['rms_cam_px']:.2f} px")
+                if np.nanmax(res) > 3.0:
+                    self.logg.warning(f"Auto calibration: max residual {np.nanmax(res):.1f} cam px")
+            except Exception as e:
+                self.logg.error(f"Auto calibration failed: {e}")
+
+        def finish():
+            if not laser_was_on:
+                self.set_laser(["473"], False, power)
+            self._show_calibration_result()
+            if self._calib_result is not None:
+                simple = self._calib_result[0]["meta"]["equivalent_simple"]
+                self.hg_panel.set_simple_mapping(simple["magnification"], simple["center_x"], simple["center_y"])
+                if not simple["exact"]:
+                    self.logg.info("Magnification/center updated to the closest equivalent; the setup has "
+                                   "rotation/mirror/shear, so keep 'Use Calib' on for accurate targeting")
+
+        self._after_task = finish
+        self.vw.get_dialog(r"Auto Calibration")
+        self.run_task(task=task)
+
     @pyqtSlot(int, int)
     def measure_calibration(self, settle_ms: int, n_avg: int):
         """Step through the calibration slots, locate each spot on the camera, fit the affine."""
@@ -534,13 +679,7 @@ class CommandExecutor(QObject):
 
         def task():
             try:
-                frames = []
-                for k in range(len(holo_pts)):
-                    self.devs.slm.display_pattern(self.FIRST_HOLOGRAM_SLOT + k)
-                    time.sleep(wait_s)
-                    frames.append(self._grab_frame(n_avg, exposure_s))
-                self.devs.slm.display_pattern(self.CORRECTION_SLOT)
-                frames = np.stack(frames)
+                frames = self._measure_slots(len(holo_pts), wait_s, n_avg, exposure_s)
                 cam_pts, snr, max_proj = slm_cal.detect_spots(frames)
                 n_bad = int(np.sum(~np.isfinite(cam_pts[:, 0])))
                 if n_bad:
@@ -554,7 +693,7 @@ class CommandExecutor(QObject):
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                         "f_fresnel": self.cgh.holo_sys.f_fresnel}
                 data = slm_cal.save_calibration(base + ".json", M, cam_pts, holo_pts, res, meta)
-                tf.imwrite(base + "_frames.tif", frames.astype(np.float32))
+                tf.imwrite(base + "_maxproj.tif", max_proj.astype(np.float32))
                 self.cgh.set_affine(M)
                 self.calib_meta = meta
                 self._calib_result = (data, cam_pts, max_proj, base + ".json")

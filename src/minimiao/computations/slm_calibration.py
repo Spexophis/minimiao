@@ -164,3 +164,42 @@ def load_calibration(path):
     if M.shape != (2, 3):
         raise ValueError(f"Calibration matrix has shape {M.shape}, expected (2, 3)")
     return M, data
+
+
+def camera_grid_to_holo(M, cam_shape, n=5, margin=0.1, phase_n=(850, 850), zero_order_radius=0.06):
+    """
+    Refinement grid: n x n points evenly covering the camera frame (minus a
+    `margin` fraction on each side), mapped to hologram-plane coordinates
+    with the coarse affine M. Points outside the hologram field or within
+    `zero_order_radius` (fraction of the field) of the field centre (zero
+    order) are dropped.
+    Returns (holo_pts (K, 2), cam_pts_expected (K, 2)).
+    """
+    h, w = cam_shape
+    xs = np.linspace(margin, 1 - margin, n) * (w - 1)
+    ys = np.linspace(margin, 1 - margin, n) * (h - 1)
+    xx, yy = np.meshgrid(xs, ys)
+    cam = np.column_stack([xx.ravel(), yy.ravel()])
+    holo = cam_to_holo(M, cam)
+    nx, ny = phase_n
+    r0 = zero_order_radius * min(nx, ny)
+    keep = ((np.round(holo[:, 0]) >= 1) & (np.round(holo[:, 0]) <= nx) &
+            (np.round(holo[:, 1]) >= 1) & (np.round(holo[:, 1]) <= ny) &
+            (np.hypot(holo[:, 0] - nx / 2, holo[:, 1] - ny / 2) > r0))
+    return holo[keep], cam[keep]
+
+
+def equivalent_simple_params(M, phase_n=(850, 850)):
+    """
+    Closest magnification / center parameters for the non-affine mapping
+    x1 = (x - cx) * mag + nx/2. Center = camera point that maps to the
+    hologram field centre; mag = mean absolute scale. Rotation, shear and
+    mirroring cannot be represented and are only kept by the affine.
+    """
+    nx, ny = phase_n
+    cx, cy = holo_to_cam(M, [[nx / 2, ny / 2]])[0]
+    d = describe(M)
+    return {"magnification": 0.5 * (d["scale_x"] + d["scale_y"]),
+            "center_x": float(cx), "center_y": float(cy),
+            "exact": abs(d["rotation_deg"]) < 0.5 and not d["mirrored"] and abs(d["shear"]) < 0.01
+            and abs(d["scale_x"] - d["scale_y"]) < 0.005 * d["scale_x"]}
