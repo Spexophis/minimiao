@@ -33,6 +33,8 @@ class CommandExecutor(QObject):
         self._initial_setup()
         self.lasers = []
         self.task_worker = None
+        self._after_task = None
+        self.slot_patterns = {}  # SLM memory slot -> (label, uint8 pattern) written this session
 
     @staticmethod
     def setup_logging():
@@ -58,6 +60,7 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_pick_spot.connect(self.pick_cgh_spots)
         self.hg_panel.Signal_compute_cgh.connect(self.compute_cgh_pattern)
         self.hg_panel.Signal_save_pattern.connect(self.save_cgh_pattern)
+        self.hg_panel.Signal_display_slot.connect(self.display_slm_slot)
 
     def _initial_setup(self):
         try:
@@ -76,23 +79,70 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
 
-    @pyqtSlot()
-    def load_slm_correction(self):
-        file_name = self.vw.get_file_name()
-        if file_name is not None:
-            self.cgh.load_correction_pattern(file_name)
-            self.load_slm_pattern(file_name)
+    CORRECTION_SLOT = 0  # holds the correction pattern; never overwritten by holograms
+    FIRST_HOLOGRAM_SLOT = 1
+
+    def _slm_busy(self):
+        if getattr(self, "task_worker", None) is not None and self.task_worker.isRunning():
+            self.logg.error("SLM is busy (hologram computation/loading running)")
+            return True
+        return False
 
     @pyqtSlot()
-    def load_slm_pattern(self, fn=None):
-        if fn is not None:
-            file_name = fn
+    def load_slm_correction(self):
+        """Load the correction pattern into SLM slot 0 and display it."""
+        if self._slm_busy():
+            return
+        file_name = self.vw.get_file_name()
+        if file_name is None:
+            return
+        try:
+            self.cgh.load_correction_pattern(file_name)
+            self.devs.slm.load_pattern(file_name, self.CORRECTION_SLOT)
+        except Exception as e:
+            self.logg.error(f"Error loading SLM correction: {e}")
+            return
+        self.slot_patterns[self.CORRECTION_SLOT] = ("correction", self.devs.slm.pattern)
+        self.ctrl_panel.display_loaded_pattern(file_name)
+        self.hg_panel.set_pattern_image(self.devs.slm.pattern)
+
+    @pyqtSlot()
+    def load_slm_pattern(self):
+        """Load a pattern file into the slot chosen in the SLM panel (slot 0 is reserved)."""
+        if self._slm_busy():
+            return
+        file_name = self.vw.get_file_name()
+        if file_name is None:
+            return
+        _, slot = self.ctrl_panel.get_slm_parameters()
+        if slot == self.CORRECTION_SLOT:
+            self.logg.error("Slot 0 is reserved for the correction pattern; use 'Load Correction'")
+            return
+        try:
+            self.devs.slm.load_pattern(file_name, slot)
+        except Exception as e:
+            self.logg.error(f"Error loading SLM pattern: {e}")
+            return
+        self.slot_patterns[slot] = (file_name, self.devs.slm.pattern)
+        self.ctrl_panel.display_loaded_pattern(file_name)
+        self.hg_panel.set_pattern_image(self.devs.slm.pattern)
+
+    @pyqtSlot(int)
+    def display_slm_slot(self, slot: int):
+        if self._slm_busy():
+            return
+        try:
+            self.devs.slm.display_pattern(slot)
+        except Exception as e:
+            self.logg.error(f"Error displaying SLM slot {slot}: {e}")
+            return
+        entry = self.slot_patterns.get(slot)
+        if entry is not None:
+            label, pattern = entry
+            self.hg_panel.set_pattern_image(pattern)
+            self.logg.info(f"SLM displaying slot {slot}: {label}")
         else:
-            file_name = self.vw.get_file_name()
-        if file_name is not None:
-            self.devs.slm.load_pattern(file_name)
-            self.ctrl_panel.display_loaded_pattern(file_name)
-            self.hg_panel.set_pattern_image(self.devs.slm.pattern)
+            self.logg.info(f"SLM displaying slot {slot} (not written in this session)")
 
     # def reset_stage_positions(self):
     #     pos_x, pos_y, pos_z = self.ctrl_panel.get_stage_positions()
@@ -284,6 +334,9 @@ class CommandExecutor(QObject):
         self.task_worker = None
         w.deleteLater()
         self.vw.dialog.close()
+        callback, self._after_task = self._after_task, None
+        if callback is not None:
+            callback()
 
     @pyqtSlot(bool, str, int)
     def acquisition(self, sw: bool, acq_mod: str, acq_num: int):
@@ -357,26 +410,60 @@ class CommandExecutor(QObject):
         n, m, f, c = self.hg_panel.get_cgh_parameters()
         o, idx = self.ctrl_panel.get_slm_parameters()
         self.cgh.update_parameters(n, m, f * 1e-3, c, o)
-        pts = self.viewer.get_target_spots()
+        rows = self.viewer.get_target_spots()
+        # skip empty / incomplete table rows
+        pts = [tuple(float(v) for v in r) for r in rows
+               if r is not None and all(isinstance(v, (int, float)) for v in r)]
         self.cgh.load_spots_picked(pts)
 
-    def cgh_computation(self):
+    def cgh_computation(self, mode):
+        """Worker thread: compute holograms, then write them to SLM slots 1..N."""
         try:
-            self.update_cgh_parameters()
-            self.cgh.compute_cgh()
+            holograms = self.cgh.compute_holograms(mode)
         except Exception as e:
             self.logg.error(f"Error Running CGH Computation: {e}")
             return
+        self.logg.info(f"CGH ({mode}): {len(holograms)} hologram(s) computed")
+        if self.devs.slm is None:
+            self.logg.error("No SLM connected; holograms computed but not loaded")
+            return
+        for slot, h in enumerate(holograms, start=self.FIRST_HOLOGRAM_SLOT):
+            try:
+                self.devs.slm.write_array(h["pattern"], slot)
+            except Exception as e:
+                self.logg.error(f"Error loading hologram '{h['label']}' to SLM slot {slot}: {e}")
+                return
+            self.slot_patterns[slot] = (h["label"], h["pattern"])
+            self.logg.info(f"SLM slot {slot}: {h['label']}")
+
+    def _show_first_hologram(self):
+        entry = self.slot_patterns.get(self.FIRST_HOLOGRAM_SLOT)
+        if self.cgh.holograms and entry is not None:
+            self.hg_panel.set_pattern_image(entry[1])
+            self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.FIRST_HOLOGRAM_SLOT)
 
     def compute_cgh_pattern(self):
+        if self._slm_busy():
+            return
+        try:
+            self.update_cgh_parameters()
+        except Exception as e:
+            self.logg.error(f"Error reading CGH parameters: {e}")
+            return
+        mode = self.hg_panel.get_cgh_mode()
+        # stale hologram slots from a previous run must not be mistaken for the current set
+        for slot in [k for k in self.slot_patterns if k >= self.FIRST_HOLOGRAM_SLOT]:
+            del self.slot_patterns[slot]
+        self.cgh.holograms = []
+        self._after_task = self._show_first_hologram
         self.vw.get_dialog(r"CGH Computation")
-        self.run_task(task=self.cgh_computation)
+        self.run_task(task=lambda: self.cgh_computation(mode))
 
     @pyqtSlot()
     def save_cgh_pattern(self):
         file_name = self.vw.get_file_dialog()
         if file_name is not None:
-            self.cgh.save_cgh(str(self.path + r"\\" + file_name))
+            self.cgh.save_cgh(os.path.join(self.path, file_name))
 
     # def prepare_task(self, single=True):
     #     self.update_trigger_parameters()

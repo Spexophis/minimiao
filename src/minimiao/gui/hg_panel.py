@@ -21,6 +21,7 @@ class HGPanel(QWidget):
     Signal_pick_spot = pyqtSignal()
     Signal_compute_cgh = pyqtSignal()
     Signal_save_pattern = pyqtSignal()
+    Signal_display_slot = pyqtSignal(int)
 
     def __init__(self, logg=None, parent=None):
         super().__init__(parent)
@@ -57,6 +58,10 @@ class HGPanel(QWidget):
         self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 455)
         self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
         self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
+        self.QComboBox_CGH_Mode = cw.ComboBoxWidget(list_items=["Sequential", "Simultaneous", "Hybrid"])
+        self.QComboBox_CGH_Mode.setCurrentText("Simultaneous")
+        self.QPushButton_SLM_Display = cw.PushButtonWidget('Display Slot')
+        self.QSpinBox_SLM_Display_Slot = cw.SpinBoxWidget(0, 1024, 1, 0)
 
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('CGH Computation')), 0, 0, 1, 1)
         cgh_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
@@ -74,6 +79,11 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Focal Length')), 6, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QDoubleSpinBox_SLM_Focal, 6, 2, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Mode')), 7, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QComboBox_CGH_Mode, 7, 2, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_SLM_Display, 8, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Slot')), 8, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QSpinBox_SLM_Display_Slot, 8, 2, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(cgh_scroll_area)
@@ -99,6 +109,7 @@ class HGPanel(QWidget):
         self.QPushButton_CGH_Pick.clicked.connect(self.pick_spots)
         self.QPushButton_CGH_Compute.clicked.connect(self.compute_cgh)
         self.QPushButton_CGH_Save.clicked.connect(self.save_pattern)
+        self.QPushButton_SLM_Display.clicked.connect(self.display_slot)
 
     @pyqtSlot()
     def load_target(self):
@@ -115,6 +126,13 @@ class HGPanel(QWidget):
     @pyqtSlot()
     def save_pattern(self):
         self.Signal_save_pattern.emit()
+
+    @pyqtSlot()
+    def display_slot(self):
+        self.Signal_display_slot.emit(self.QSpinBox_SLM_Display_Slot.value())
+
+    def get_cgh_mode(self):
+        return self.QComboBox_CGH_Mode.currentText()
 
     def get_cgh_parameters(self):
         n  = self.QSpinBox_CGH_Iteration.value()

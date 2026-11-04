@@ -152,6 +152,9 @@ class HamamatsuSLMProxy:
     def load_pattern(self, pfd, slot_no=0):
         return self._call('load_pattern', pfd, slot_no)
 
+    def write_array(self, pattern, slot_no=0):
+        return self._call('write_array', np.asarray(pattern, dtype=np.uint8), slot_no)
+
     def display_pattern(self, slot_no=0):
         return self._call('display_pattern', slot_no)
 

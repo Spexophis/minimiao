@@ -78,7 +78,7 @@ class ControlPanel(QWidget):
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
         self.QPushButton_SLM_Load = cw.PushButtonWidget('Load Pattern')
         self.QLineEdit_SLM_Pattern = cw.LineEditWidget(True)
-        self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(0, 1024, 1, 0)
+        self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(1, 1024, 1, 1)  # slot 0 is reserved for the correction
         self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -100)
         self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -80)
 

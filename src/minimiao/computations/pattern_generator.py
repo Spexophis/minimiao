@@ -72,6 +72,7 @@ class CGH:
         self.cell_mask = None
         self.itn = 64
         self.phase_slm = None
+        self.holograms = []
         self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
 
     def load_correction_pattern(self, file):
@@ -188,56 +189,117 @@ class CGH:
 
         return phase_slm
 
+    CGH_MODES = ("Sequential", "Simultaneous", "Hybrid")
+
     def compute_cgh(self, trg=True):
-        self.compute_cgh_multiplane(trg=trg)
+        self.phase_slm = self.compute_cgh_multiplane(self.spots_xy, trg=trg)
+
+    def compute_holograms(self, mode="Simultaneous", trg=True):
+        """
+        Build the hologram list for the selected mode from self.spots_xy.
+
+        Sequential   : one single-spot hologram per picked spot
+        Simultaneous : one hologram containing all picked spots
+        Hybrid       : the all-spot hologram first, then one hologram per spot
+
+        Returns (and stores in self.holograms) a list of dicts
+        {"label": str, "spots": [spot indices], "pattern": uint8 SLM array};
+        list position i is meant for SLM memory slot i + 1 (slot 0 holds the
+        correction pattern).
+        """
+        if mode not in self.CGH_MODES:
+            raise ValueError(f"Unknown CGH mode {mode!r}; expected one of {self.CGH_MODES}")
+        if not self.spots_xy:
+            raise ValueError("No spots picked")
+        holograms = []
+        if mode in ("Simultaneous", "Hybrid"):
+            pattern = self.compute_cgh_multiplane(self.spots_xy, trg=trg)
+            holograms.append({"label": "all", "spots": list(range(len(self.spots_xy))), "pattern": pattern})
+        if mode in ("Sequential", "Hybrid"):
+            for i, spot in enumerate(self.spots_xy):
+                pattern = self.compute_single_spot(spot, trg=trg)
+                if pattern is None:
+                    self.logg.warning(f"Spot {i} {tuple(spot[:2])} is outside the hologram field; skipped")
+                    continue
+                holograms.append({"label": f"spot {i}", "spots": [i], "pattern": pattern})
+        self.holograms = holograms
+        self.phase_slm = holograms[0]["pattern"] if holograms else None
+        return holograms
+
+    def _map_spot(self, x0, y0):
+        """Camera pixel -> hologram-plane pixel, or None if outside the field."""
+        x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
+        y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
+        if self.holo_sys.phase_nx > x1 > 0 and self.holo_sys.phase_ny > y1 > 0:
+            return x1, y1
+        return None
+
+    def _finalize(self, phase_spots, trg=True):
+        """Add lens, quantize, embed in the correction pattern, add trigger patch."""
+        phase_fresnel_lens = self.generate_fresnel_lens_phase()
+        phase_total = (phase_spots + phase_fresnel_lens) % (2.0 * np.pi)
+        phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
+        pattern = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
+                                  self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
+        if trg:
+            self.add_trigger_pattern(pattern)
+        return pattern
 
     def compute_cgh_plane(self, trg=True):
         spots_sample = []
         for (x0, y0, z0, I0) in self.spots_xy:
-            x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
-            y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
-            if self.holo_sys.phase_nx > x1 > 0 and self.holo_sys.phase_ny > y1 > 0:
-                spots_sample.append((x1, y1, z0, I0))
+            xy = self._map_spot(x0, y0)
+            if xy is not None:
+                spots_sample.append((*xy, z0, I0))
         target_amp = self.build_target_from_spots(spots_sample)
-        phase_spots = self.gerchberg_saxton(target_amp)
-        phase_fresnel_lens = self.generate_fresnel_lens_phase()
-        phase_total = (phase_spots + phase_fresnel_lens) % (2.0 * np.pi)
-        phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
-        self.phase_slm = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
-                                         self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
-        if trg:
-            self.add_trigger_pattern()
+        self.phase_slm = self._finalize(self.gerchberg_saxton(target_amp), trg=trg)
 
-    def compute_cgh_multiplane(self, z_bin=1e-6, plane_weights=None, trg=True):
+    def compute_single_spot(self, spot, z_bin=1e-6, trg=True):
         """
-        Multi-plane version of compute_cgh(). Groups self.spots_xy by z
+        Exact hologram for one spot: the inverse FFT of a single point is a
+        pure grating, so no GS iterations are needed. Uses the same mapping,
+        z convention and forward model as compute_cgh_multiplane.
+        Returns None if the spot falls outside the hologram field.
+        """
+        x0, y0, z0, I0 = spot
+        xy = self._map_spot(x0, y0)
+        if xy is None:
+            return None
+        target = self.build_target_from_spots([(*xy, 0, 1.0)])
+        phase_spot = np.angle(np.fft.ifft2(np.fft.ifftshift(target)))
+        z_offset = round(z0 / z_bin) * z_bin
+        if z_offset:
+            phase_spot = phase_spot - self.generate_defocus_phase(z_offset)
+        return self._finalize(phase_spot, trg=trg)
+
+    def compute_cgh_multiplane(self, spots, z_bin=1e-6, plane_weights=None, trg=True):
+        """
+        Multi-plane hologram for all given spots. Groups spots by z
         (binned to z_bin meters) and runs iterative multi-plane weighted GS.
+        Returns the uint8 SLM pattern.
         """
         groups = {}
-        for (x0, y0, z0, I0) in self.spots_xy:
+        for (x0, y0, z0, I0) in spots:
             key = round(z0 / z_bin)
             groups.setdefault(key, []).append((x0, y0, I0))
 
         targets, defocus_phases = [], []
-        for key, spots in groups.items():
+        for key, group in groups.items():
             z_offset = key * z_bin
             spots_sample = []
-            for (x0, y0, I0) in spots:
-                x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
-                y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
-                if self.holo_sys.phase_nx > x1 > 0 and self.holo_sys.phase_ny > y1 > 0:
-                    spots_sample.append((x1, y1, 0, I0))
+            for (x0, y0, I0) in group:
+                xy = self._map_spot(x0, y0)
+                if xy is not None:
+                    spots_sample.append((*xy, 0, I0))
+            if not spots_sample:
+                continue
             targets.append(self.build_target_from_spots(spots_sample))
             defocus_phases.append(self.generate_defocus_phase(z_offset))
+        if not targets:
+            raise ValueError("All spots are outside the hologram field")
 
         phase_spots = self.gerchberg_saxton_multiplane(targets, defocus_phases, plane_weights)
-        phase_fresnel_lens = self.generate_fresnel_lens_phase()
-        phase_total = (phase_spots + phase_fresnel_lens) % (2.0 * np.pi)
-        phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
-        self.phase_slm = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
-                                         self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
-        if trg:
-            self.add_trigger_pattern()
+        return self._finalize(phase_spots, trg=trg)
 
     def generate_defocus_phase(self, delta_z: float) -> np.ndarray:
         """
@@ -327,7 +389,19 @@ class CGH:
         return phase_slm
 
     def save_cgh(self, fnd):
-        self.save_to_bmp(fnd, self.phase_slm)
+        """Save every hologram as <fnd>_slotNN_8bit.bmp plus a <fnd>_slots.json slot map."""
+        import json
+        if not self.holograms:
+            if self.phase_slm is not None:
+                self.save_to_bmp(fnd, self.phase_slm)
+            return
+        slot_map = []
+        for slot, h in enumerate(self.holograms, start=1):
+            self.save_to_bmp(f"{fnd}_slot{slot:02d}", h["pattern"])
+            slot_map.append({"slot": slot, "label": h["label"],
+                             "spots": [list(map(float, self.spots_xy[i])) for i in h["spots"]]})
+        with open(fnd + "_slots.json", "w") as f:
+            json.dump(slot_map, f, indent=2)
 
     @staticmethod
     def phase_to_uint(phase: np.ndarray, max_level: int) -> np.ndarray:
@@ -385,7 +459,10 @@ class CGH:
 
         return b
 
-    def add_trigger_pattern(self, ny: int = 1024, nx: int = 200):
+    def add_trigger_pattern(self, slm_pattern=None, ny: int = 1024, nx: int = 200):
+        if slm_pattern is None:
+            slm_pattern = self.phase_slm
         i, j = np.indices((ny, nx))
         pattern = (j // 2) % 2
-        self.phase_slm[-ny:, -nx:] = pattern * self.holo_sys.trigger_value
+        slm_pattern[-ny:, -nx:] = pattern * self.holo_sys.trigger_value
+        return slm_pattern

@@ -111,20 +111,24 @@ class HamamatsuSLM:
         pattern = Image.open(file)
         self.pattern = np.array(pattern, dtype=np.uint8)
 
+    def write_array(self, pattern, slot_no=0):
+        """Write a uint8 pattern into a frame-memory slot without changing the displayed slot."""
+        array = np.ascontiguousarray(pattern, dtype=np.uint8).ravel()
+        if array.size != self.array_size:
+            raise ValueError(
+                f"Array length {array.size} does not match expected size {self.array_size}"
+            )
+        ret = self.lib.Write_FMemArray(self.bid, array.ctypes.data_as(POINTER(c_uint8)),
+                                       self.array_size, self.nx, self.ny, slot_no)
+        if ret != 1:
+            raise RuntimeError(f"Failed to write pattern to slot {slot_no}")
+        self.pattern = np.asarray(pattern, dtype=np.uint8)
+        self.logg.info(f"Pattern Loaded to Slot: {slot_no}")
+
     def load_pattern(self, pfd=None, slot_no=0):
         if pfd is not None:
             self.read_pattern(pfd)
-        array = self.pattern.flatten()
-        if len(array) != self.array_size:
-            raise ValueError(
-                f"Array length {len(array)} does not match expected size {self.array_size})"
-            )
-        c_array = (c_uint8 * self.array_size)(*array)
-        ret = self.lib.Write_FMemArray(self.bid, c_array, self.array_size, self.nx, self.ny, slot_no)
-        if ret == 1:
-            self.logg.info(f"Pattern Loaded to Slot: {slot_no}")
-        else:
-            self.logg.error(f"Failed to load pattern")
+        self.write_array(self.pattern, slot_no)
         self.display_pattern(slot_no)
 
     def display_pattern(self, slot_no=0):
