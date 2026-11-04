@@ -69,7 +69,7 @@ class LiveViewer(QWidget):
     def _create_table_widget(self):
         layout_table = QVBoxLayout()
 
-        self.spot_table = cw.TableWidget(headers=['X', 'Y', 'Z', 'Intensity'], n_rows=2)
+        self.spot_table = cw.TableWidget(headers=['X', 'Y', 'Z (um)', 'Intensity'], n_rows=2)
 
         layout_table.addWidget(cw.LabelWidget("Spot Coordinates"))
         layout_table.addWidget(self.spot_table)

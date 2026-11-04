@@ -104,8 +104,8 @@ class CGH:
 
     def build_target_from_spots(self, spots_sample):
         target_amp = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.float32)
-        for (yy, xx, zz, ii) in spots_sample:
-                target_amp[self.holo_sys.phase_ny - round(yy), self.holo_sys.phase_nx - round(xx)] = ii
+        for (xx, yy, zz, ii) in spots_sample:
+            target_amp[self.holo_sys.phase_ny - round(yy), self.holo_sys.phase_nx - round(xx)] = ii
         return target_amp
 
     def gerchberg_saxton_multiplane(self, targets, defocus_phases, plane_weights=None,
@@ -230,7 +230,8 @@ class CGH:
         """Camera pixel -> hologram-plane pixel, or None if outside the field."""
         x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
         y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
-        if self.holo_sys.phase_nx > x1 > 0 and self.holo_sys.phase_ny > y1 > 0:
+        # target index is phase_n - round(coord), so round(coord) must be in 1..phase_n
+        if 1 <= round(x1) <= self.holo_sys.phase_nx and 1 <= round(y1) <= self.holo_sys.phase_ny:
             return x1, y1
         return None
 
@@ -254,7 +255,7 @@ class CGH:
         target_amp = self.build_target_from_spots(spots_sample)
         self.phase_slm = self._finalize(self.gerchberg_saxton(target_amp), trg=trg)
 
-    def compute_single_spot(self, spot, z_bin=1e-6, trg=True):
+    def compute_single_spot(self, spot, z_bin_um=1.0, trg=True):
         """
         Exact hologram for one spot: the inverse FFT of a single point is a
         pure grating, so no GS iterations are needed. Uses the same mapping,
@@ -267,25 +268,25 @@ class CGH:
             return None
         target = self.build_target_from_spots([(*xy, 0, 1.0)])
         phase_spot = np.angle(np.fft.ifft2(np.fft.ifftshift(target)))
-        z_offset = round(z0 / z_bin) * z_bin
+        z_offset = round(z0 / z_bin_um) * z_bin_um * 1e-6  # spot z is in um
         if z_offset:
             phase_spot = phase_spot - self.generate_defocus_phase(z_offset)
         return self._finalize(phase_spot, trg=trg)
 
-    def compute_cgh_multiplane(self, spots, z_bin=1e-6, plane_weights=None, trg=True):
+    def compute_cgh_multiplane(self, spots, z_bin_um=1.0, plane_weights=None, trg=True):
         """
         Multi-plane hologram for all given spots. Groups spots by z
-        (binned to z_bin meters) and runs iterative multi-plane weighted GS.
+        (spot z in um, binned to z_bin_um) and runs iterative multi-plane weighted GS.
         Returns the uint8 SLM pattern.
         """
         groups = {}
         for (x0, y0, z0, I0) in spots:
-            key = round(z0 / z_bin)
+            key = round(z0 / z_bin_um)
             groups.setdefault(key, []).append((x0, y0, I0))
 
         targets, defocus_phases = [], []
         for key, group in groups.items():
-            z_offset = key * z_bin
+            z_offset = key * z_bin_um * 1e-6  # m
             spots_sample = []
             for (x0, y0, I0) in group:
                 xy = self._map_spot(x0, y0)
