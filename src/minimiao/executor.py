@@ -12,8 +12,6 @@ import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 
 from . import run_threads, logger
-from .computations import labelling as lbl
-from .computations.image_reconstructions import ImgRecon
 from .utilities import image_processor as ipr
 
 
@@ -31,6 +29,8 @@ class CommandExecutor(QObject):
         self.ao_panel = self.vw.ao_panel
         self.rec = cmp.rec
         self.trg = cmp.trg
+        self.lbl = cmp.lbl
+        self.lbl_rec = cmp.lbl_rec
         self.path = path
         self.config = config
         self.cfd = cf
@@ -884,14 +884,6 @@ class CommandExecutor(QObject):
     # ------------------------------------------------------------------
     # Labelling measurement
     # ------------------------------------------------------------------
-    # Pre-scan pixel dwell (readout only) and spot detection / dither settings.
-    labelling_prescan_dwell_s = 50e-6
-    labelling_spot_sigma = 1.0  # px, smoothing before peak finding
-    labelling_spot_min_distance = 2  # px between two point sources
-    labelling_spot_threshold = 5.0  # x noise above background
-    labelling_dither_radius_px = 0.5  # dither half-width, in pre-scan pixel steps
-    labelling_dither_freq_hz = 2000.0  # reduced automatically to the galvo limits
-
     @staticmethod
     def _labelling_channels(dn):
         """Gate / counter / analog reader channels for the selected detectors
@@ -937,7 +929,7 @@ class CommandExecutor(QObject):
 
     def labelling_measurement(self):
         """
-        1. quick readout-only RESOLFT frame (``labelling_prescan_dwell_s`` per pixel),
+        1. quick readout-only RESOLFT frame (``self.lbl.prescan_dwell_s`` per pixel),
         2. detect point sources and locate them in galvo voltages,
         3. park the beam on each point source in turn for the 488 readout TTL
            window while dithering both galvos inside the PSF, recording the
@@ -962,7 +954,7 @@ class CommandExecutor(QObject):
 
             # ---- 1. pre-scan -------------------------------------------------
             dtr, gtr, dch, gch, pos, gts, pdw = self.trg.generate_labelling_prescan(
-                gate_channel, dwell_s=self.labelling_prescan_dwell_s, readout_laser=readout_laser)
+                gate_channel, dwell_s=self.lbl.prescan_dwell_s, readout_laser=readout_laser)
             gtr = np.atleast_2d(gtr)
             if gtr.shape[0] != 2:
                 raise ValueError("Labelling measurement needs both galvo axes scanning")
@@ -995,14 +987,14 @@ class CommandExecutor(QObject):
         # ---- 2. point sources ------------------------------------------------
         try:
             img = prescan[slots].sum(axis=0)
-            spots = lbl.find_point_sources(img, sigma=self.labelling_spot_sigma,
-                                           min_distance=self.labelling_spot_min_distance,
-                                           threshold_sigma=self.labelling_spot_threshold)
-            vmaps = lbl.pixel_voltage_maps(gtr, gts[0], ny, nx, pdw)
+            spots = self.lbl.find_point_sources(img, sigma=self.lbl.spot_sigma,
+                                                min_distance=self.lbl.spot_min_distance,
+                                                threshold_sigma=self.lbl.spot_threshold)
+            vmaps = self.lbl.pixel_voltage_maps(gtr, gts[0], ny, nx, pdw)
             if vmaps is None:
                 raise ValueError("pre-scan gate does not match the image size")
             for sp in spots:
-                sp["volts"] = lbl.voltages_at(vmaps, sp["y"], sp["x"])
+                sp["volts"] = self.lbl.voltages_at(vmaps, sp["y"], sp["x"])
             self._labelling_save_points(prefix, spots, gch)
             self.logg.info(f"Labelling measurement: {len(spots)} point sources found")
             if not spots:
@@ -1015,19 +1007,19 @@ class CommandExecutor(QObject):
 
         # ---- 3. dithered readout on each point source -----------------------
         try:
-            radius = self.labelling_dither_radius_px * float(min(abs(d) for d in self.trg.dot_steps))
+            radius = self.lbl.dither_radius_px * float(min(abs(d) for d in self.trg.dot_steps))
             targets = np.array([sp["volts"] for sp in spots])
             tail = 4
-            gseq, move_samples, freqs = lbl.build_dither_sequences(
+            gseq, move_samples, freqs = self.lbl.build_dither_sequences(
                 targets, start=gtr[:, -1], galvo=self.trg.galvo, sample_rate=self.trg.sample_rate,
-                readout_samples=readout_samples, radius=radius, freq_hz=self.labelling_dither_freq_hz,
+                readout_samples=readout_samples, radius=radius, freq_hz=self.lbl.dither_freq_hz,
                 min_move_samples=self.trg.galvo_step_response_samples, tail_samples=tail)
             ddch = [readout_laser] + [g + 3 for g in gate_channel]
-            dseq, gate = lbl.build_dither_triggers(len(spots), len(ddch), move_samples, readout_samples, tail)
+            dseq, gate = self.lbl.build_dither_triggers(len(spots), len(ddch), move_samples, readout_samples, tail)
             self.devs.daq.write_triggers(analog_sequences=gseq, analog_channels=gch,
                                          digital_sequences=dseq, digital_channels=ddch,
                                          reader_channels=reader_channel, finite=True)
-            lab_rec = ImgRecon(logg=self.logg)
+            lab_rec = self.lbl_rec
             lab_rec.point_scan_gate_mask = gate
             lab_rec.set_point_scan_params(n_lines=1, n_pixels=len(spots), dwell_samples=readout_samples)
             lab_rec.prepare_point_scan_live_recon()
@@ -1044,8 +1036,8 @@ class CommandExecutor(QObject):
         try:
             self.devs.daq.run_triggers()
             time.sleep(0.2)
-            traces = np.stack([lbl.split_traces(lab_rec.live_counts[i], len(spots), move_samples, readout_samples)
-                               for i in range(len(lab_rec.live_counts))], axis=1).astype(np.float32)
+            traces = np.stack([self.lbl.split_traces(cnt, len(spots), move_samples, readout_samples)
+                               for cnt in lab_rec.live_counts], axis=1).astype(np.float32)
             np.savez(prefix + "_labelling_traces.npz",
                      traces=traces,  # (n_points, detector slot, readout samples)
                      iy=np.array([sp["iy"] for sp in spots]), ix=np.array([sp["ix"] for sp in spots]),
@@ -1053,7 +1045,7 @@ class CommandExecutor(QObject):
                      volts=targets, galvo_channels=np.array(gch), detector=np.array(dn),
                      sample_rate=self.trg.sample_rate, readout_samples=readout_samples,
                      move_samples=move_samples, dither_radius_v=radius, dither_freq_hz=freqs,
-                     prescan_dwell_s=self.labelling_prescan_dwell_s,
+                     prescan_dwell_s=self.lbl.prescan_dwell_s,
                      laser_powers=np.array(self.ctrl_panel.get_cobolt_laser_power("all")))
             if self.devs.daq.analog_data is not None:
                 np.save(prefix + "_labelling_position_records.npy", self.devs.daq.analog_data)

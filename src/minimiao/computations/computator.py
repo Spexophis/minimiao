@@ -4,7 +4,7 @@
 
 
 from minimiao import logger
-from . import image_reconstructions, trigger_generator
+from . import image_reconstructions, trigger_generator, labelling
 
 
 class ComputationManager:
@@ -17,3 +17,5 @@ class ComputationManager:
         self.trg = trigger_generator.TriggerSequence(galvo=self.dev.gvs,
                                                      piezo=self.dev.pz,
                                                      logg=self.logg)
+        self.lbl = labelling.LabellingMeasurement(logg=self.logg)
+        self.lbl_rec = image_reconstructions.ImgRecon(logg=self.logg)
