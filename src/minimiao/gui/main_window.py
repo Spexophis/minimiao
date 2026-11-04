@@ -9,9 +9,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 
 try:
-    from . import controller_panel, hg_panel, viewer_window
+    from . import controller_panel, hg_panel, viewer_window, acq_panel
 except ImportError:
-    from minimiao.gui import controller_panel, hg_panel, viewer_window
+    from minimiao.gui import controller_panel, hg_panel, viewer_window, acq_panel
 
 try:
     from . import custom_widgets as cw
@@ -51,6 +51,13 @@ class MainWindow(QMainWindow):
         self.hg_dock = cw.DockWidget("HG Panel")
         self.hg_dock.setWidget(self.hg_panel)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.hg_dock)
+
+        self.acq_panel = acq_panel.AcqPanel(self.logg)
+        self.acq_dock = cw.DockWidget("Acq Panel")
+        self.acq_dock.setWidget(self.acq_panel)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.acq_dock)
+        self.tabifyDockWidget(self.hg_dock, self.acq_dock)
+        self.hg_dock.raise_()
 
     def _set_dark_theme(self):
         dark_stylesheet = """

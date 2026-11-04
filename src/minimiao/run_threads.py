@@ -296,3 +296,111 @@ class TaskWorker(QThread):
     @staticmethod
     def _do_nothing():
         pass
+
+
+class StackRecorder:
+    """
+    Lossless recording of a camera stream into ONE multi-page (3D) TIFF.
+
+    poll() must return (frame ndarray, frame_nr) for the next unread frame,
+    or None if no frame arrived within its own timeout. A poller thread
+    drains the SDK buffer as fast as frames arrive; a writer thread appends
+    frames to the TIFF so slow disks do not stall polling. Gaps in frame_nr
+    are recorded as dropped frames.
+
+    stop(): keeps draining until the stream is idle (external trigger) or
+    `drain_s` has passed (free-running), then returns a summary dict.
+    """
+
+    def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3):
+        self.poll = poll
+        self.path = str(path)
+        self.bigtiff = bigtiff
+        self.preview = preview
+        self.preview_period = 1.0 / preview_hz if preview_hz else None
+        self.drain_s = drain_s
+        self._queue = Queue()
+        self._stop = threading.Event()
+        self._t_stop = None
+        self.frame_nrs = []
+        self.timestamps = []  # time.perf_counter() when each frame was retrieved
+        self.max_backlog = 0
+        self.error = None
+        self.shape = None
+        self.dtype = None
+        self._poller = threading.Thread(target=self._poll_loop, daemon=True)
+        self._writer = threading.Thread(target=self._write_loop, daemon=True)
+
+    def start(self):
+        self._writer.start()
+        self._poller.start()
+
+    def _poll_loop(self):
+        import time
+        last_preview = 0.0
+        try:
+            while True:
+                if self._stop.is_set() and time.perf_counter() - self._t_stop > self.drain_s:
+                    break
+                got = self.poll()
+                if got is None:
+                    if self._stop.is_set():
+                        break  # idle after stop request: stream finished
+                    continue
+                frame, frame_nr = got
+                t = time.perf_counter()
+                self.frame_nrs.append(frame_nr)
+                self.timestamps.append(t)
+                self._queue.put(frame)
+                self.max_backlog = max(self.max_backlog, self._queue.qsize())
+                if self.preview is not None and self.preview_period and t - last_preview >= self.preview_period:
+                    last_preview = t
+                    try:
+                        self.preview(frame)
+                    except Exception:
+                        pass
+        except Exception as e:
+            self.error = f"poll: {e}"
+        finally:
+            self._queue.put(None)
+
+    def _write_loop(self):
+        try:
+            with tf.TiffWriter(self.path, bigtiff=self.bigtiff) as tw:
+                while True:
+                    frame = self._queue.get()
+                    if frame is None:
+                        break
+                    if self.shape is None:
+                        self.shape, self.dtype = frame.shape, frame.dtype
+                    tw.write(frame, contiguous=True, photometric="minisblack")
+        except Exception as e:
+            self.error = f"write: {e}"
+            while self._queue.get() is not None:  # keep draining so the poller never blocks
+                pass
+
+    def stop(self, timeout=60.0):
+        import time
+        self._t_stop = time.perf_counter()
+        self._stop.set()
+        self._poller.join(timeout=timeout)
+        self._writer.join(timeout=timeout)
+        nrs = [n for n in self.frame_nrs if n is not None]
+        dropped = []
+        for a, b in zip(nrs[:-1], nrs[1:]):
+            if b - a > 1:
+                dropped.extend(range(a + 1, b))
+        dt = np.diff(self.timestamps) if len(self.timestamps) > 1 else np.array([])
+        return {
+            "path": self.path,
+            "n_frames": len(self.frame_nrs),
+            "frame_shape": list(self.shape) if self.shape is not None else None,
+            "dtype": str(self.dtype) if self.dtype is not None else None,
+            "frame_nrs": self.frame_nrs,
+            "timestamps_perf_s": self.timestamps,
+            "dropped_frame_nrs": dropped,
+            "n_dropped": len(dropped),
+            "measured_fps": float(1.0 / np.median(dt)) if dt.size else None,
+            "max_write_backlog": self.max_backlog,
+            "error": self.error,
+        }

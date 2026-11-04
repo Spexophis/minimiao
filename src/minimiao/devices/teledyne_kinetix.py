@@ -89,6 +89,8 @@ class KinetixCamera:
         self._last_frame_count = -1
         self.data = None
         self.acq_thread = None
+        self.recorder = None
+        self.trigger_mode = "internal"
         self._initialize_sdk()
         if self.cam is not None:
             self.get_sn()
@@ -264,10 +266,11 @@ class KinetixCamera:
             except Exception as e:
                 self.logg.error(f"Error setting expose-out mode: {e}")
 
-    def set_exposure_time(self, t_ms=10):
-        """Set exposure time in milliseconds."""
+    def set_exposure_time(self, t_ms=None):
+        """Set exposure time in milliseconds (integer ms; None = use settings value)."""
         if t_ms is not None:
-            self._settings.t_exposure = int(t_ms)
+            self._settings.t_exposure = t_ms
+        self._settings.t_exposure = max(1, int(round(self._settings.t_exposure)))
         try:
             self.cam.exp_time = self._settings.t_exposure
             self.logg.info(f"Exposure time: {self._settings.t_exposure} ms")
@@ -417,3 +420,79 @@ class KinetixCamera:
         if self.data is not None:
             return self.data.get_elements()
         return None
+
+    # ---- lossless single-stack recording ---------------------------------------
+
+    TRIGGER_MODES = {"internal": pvc_consts.EXT_TRIG_INTERNAL,
+                     "external": pvc_consts.EXT_TRIG_EDGE_RISING}
+
+    def prepare_recording(self, trigger="internal", port=1, speed=0, gain=1, expose_out=0):
+        """
+        Configure for recording. trigger: 'internal' (free-running, frame rate
+        set by exposure/readout) or 'external' (one frame per rising edge on
+        the trigger input).
+        """
+        if trigger not in self.TRIGGER_MODES:
+            raise ValueError(f"Unknown trigger mode {trigger!r}")
+        self.set_readout_port(port)
+        self.set_speed(speed)
+        self.set_gain(gain)
+        self.set_roi()
+        self.set_trigger_mode(self.TRIGGER_MODES[trigger], expose_out)
+        self.set_exposure_time()
+        self.trigger_mode = trigger
+        self.get_acquisition_timings()
+
+    def get_recording_info(self):
+        """Settings actually applied, for metadata."""
+        info = {"exposure_ms": self._settings.t_exposure, "trigger_mode": self.trigger_mode,
+                "s1": self._settings.s1, "p1": self._settings.p1,
+                "pixels_x": self._settings.pixels_x, "pixels_y": self._settings.pixels_y,
+                "s_bin": self._settings.s_bin, "p_bin": self._settings.p_bin,
+                "port_index": self._settings.port_index, "speed_index": self._settings.speed_index,
+                "gain_index": self._settings.gain_index}
+        for key, getter in (("readout_time_ms", lambda: self.cam.get_param(pvc_consts.PARAM_READOUT_TIME)),
+                            ("serial_no", lambda: self.cam.serial_no),
+                            ("temperature_c", lambda: self.cam.temp),
+                            ("speed_name", lambda: self.cam.speed_name),
+                            ("gain_name", lambda: self.cam.gain_name)):
+            try:
+                info[key] = getter()
+            except Exception:
+                info[key] = None
+        return info
+
+    def _poll_one(self, timeout_ms=50):
+        """Oldest unread frame from the SDK buffer as (pixel_data, frame_nr), or None."""
+        try:
+            frame_dict, fps, frame_count = self.cam.poll_frame(timeout_ms=timeout_ms, oldestFrame=True,
+                                                               copyData=True)
+        except Exception:
+            return None
+        if frame_dict is None or frame_dict.get('pixel_data') is None:
+            return None
+        return frame_dict['pixel_data'], frame_count
+
+    def start_recording(self, path, buffer_mb=512, bigtiff=False, preview=None):
+        """Start acquisition and stream every frame into one TIFF at `path`."""
+        frame_bytes = max(1, self._settings.pixels_x * self._settings.pixels_y * 2)
+        self._settings.buffer_frame_count = int(min(1024, max(16, buffer_mb * 2 ** 20 // frame_bytes)))
+        self.recorder = run_threads.StackRecorder(self._poll_one, path, bigtiff=bigtiff, preview=preview)
+        self.cam.start_live(exp_time=self._settings.t_exposure,
+                            buffer_frame_count=self._settings.buffer_frame_count)
+        self.recorder.start()
+        self.logg.info(f"Recording to {path} (buffer {self._settings.buffer_frame_count} frames)")
+
+    def stop_recording(self):
+        """Drain remaining frames, stop the camera, close the TIFF; returns the recording summary."""
+        if self.recorder is None:
+            return None
+        summary = self.recorder.stop()
+        self.recorder = None
+        try:
+            self.cam.finish()
+        except Exception as e:
+            self.logg.error(f"Error stopping recording: {e}")
+        summary["buffer_frame_count"] = self._settings.buffer_frame_count
+        self.logg.info(f"Recording stopped: {summary['n_frames']} frames, {summary['n_dropped']} dropped")
+        return summary

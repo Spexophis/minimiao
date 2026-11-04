@@ -12,10 +12,12 @@ from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 
 from . import run_threads
 from .computations import slm_calibration as slm_cal
+from .experiments import acquisition as acq
 
 
 class CommandExecutor(QObject):
     svd = pyqtSignal(str)
+    sig_progress = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
 
@@ -26,6 +28,8 @@ class CommandExecutor(QObject):
         self.ctrl_panel = self.vw.ctrl_panel
         self.viewer = self.vw.viewer
         self.hg_panel = self.vw.hg_panel
+        self.acq_panel = self.vw.acq_panel
+        self.runner = None
         self.trg = cmp.trg
         self.cgh = cmp.cgh
         self.path = path
@@ -70,6 +74,11 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_calib_load.connect(self.load_calibration)
         self.hg_panel.Signal_calib_use.connect(self.use_calibration)
         self.hg_panel.Signal_calib_auto.connect(self.auto_calibration)
+        # Acquisition blocks
+        self.acq_panel.Signal_run_block.connect(self.run_acquisition_block)
+        self.acq_panel.Signal_run_slot_loop.connect(self.run_slot_loop)
+        self.acq_panel.Signal_run_power_loop.connect(self.run_power_loop)
+        self.sig_progress.connect(self._show_progress)
 
     def _initial_setup(self):
         try:
@@ -87,6 +96,121 @@ class CommandExecutor(QObject):
             self.devs.camera.t_exposure = self.ctrl_panel.get_scmos_exposure()
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
+
+    # ---- acquisition blocks / loops --------------------------------------------
+
+    def _show_progress(self, msg: str):
+        if getattr(self.vw, "dialog_text", None) is not None:
+            self.vw.dialog_text.setText(f"{msg}  (Esc to abort)")
+
+    def _slot_info(self, slot):
+        entry = self.slot_patterns.get(slot)
+        if entry is None:
+            return {"label": None, "pattern_sha1": None, "note": "slot not written in this session"}
+        return {"label": entry[0], "pattern_sha1": acq.pattern_sha1(entry[1])}
+
+    def _acq_context(self):
+        hs = self.cgh.holo_sys
+        return {
+            "cgh_at_last_hologram_computation": {"magnification": hs.magnification, "center": [hs.image_center_x, hs.image_center_y],
+                    "f_fresnel_m": hs.f_fresnel, "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
+                    "correction_value": hs.correction_value, "mode_last_computed": self.hg_panel.get_cgh_mode(),
+                    "spots_xy_um_z": [list(map(float, sp)) for sp in (self.cgh.spots_xy or [])]},
+            "affine_calibration": {"in_use": bool(self.cgh.use_affine and self.cgh.affine is not None),
+                                   "M": None if self.cgh.affine is None else self.cgh.affine.tolist(),
+                                   "meta": self.calib_meta},
+            "camera_roi_gui": list(self.ctrl_panel.get_scmos_roi()),
+            "exposure_ms_gui": self.ctrl_panel.get_scmos_exposure(),
+        }
+
+    def _start_acquisition_task(self, title, settings: dict, job):
+        """Common checks + camera setup, then run job(runner, block_settings) in the worker thread."""
+        if self._slm_busy():
+            return
+        missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
+        if missing:
+            self.logg.error(f"Acquisition needs: {', '.join(missing)} (not connected)")
+            return
+        try:
+            bs = acq.BlockSettings(**settings)
+            acq.build_sequence(bs)  # validates timing / TriggerBox clock before touching hardware
+            exposure = self.ctrl_panel.get_scmos_exposure()
+            if bs.camera_trigger == "external" and round(exposure) >= 1000.0 / bs.frame_rate_hz:
+                raise ValueError(f"exposure {round(exposure)} ms must be shorter than the frame period "
+                                 f"{1000.0 / bs.frame_rate_hz:.2f} ms (exposure is whole ms)")
+        except Exception as e:
+            self.logg.error(f"Invalid acquisition settings: {e}")
+            return
+        if getattr(self.viewer, "live_worker", None) is not None:
+            self.logg.info("Stopping live video for the acquisition")
+            self.stop_video()
+            self.ctrl_panel.QPushButton_video.setChecked(False)
+        self.set_camera_roi()
+        runner = acq.AcquisitionRunner(self.devs, self.logg, slot_info=self._slot_info,
+                                       context=self._acq_context(), progress=self.sig_progress.emit)
+        self.runner = runner
+
+        def task():
+            try:
+                runner.prepare_camera(bs.camera_trigger)
+                job(runner, bs)
+            except acq.AcquisitionAborted:
+                self.logg.info(f"{title} aborted; partial data and metadata saved")
+            except Exception as e:
+                self.logg.error(f"{title} failed: {e}")
+
+        def finish():
+            self.runner = None
+        self._after_task = finish
+        self.vw.get_dialog(title, interrupt=True)
+        self.vw.dialog.dialog_closed.connect(runner.abort.set)
+        self.run_task(task=task)
+
+    def _stem(self, bs, kind):
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        name = f"_{bs.name}" if bs.name else ""
+        return f"{stamp}{name}_{kind}"
+
+    @pyqtSlot(dict)
+    def run_acquisition_block(self, settings: dict):
+        def job(runner, bs):
+            stem = os.path.join(self.path, self._stem(bs, f"block_slot{bs.slot:02d}_{bs.laser_power_mw:.2f}mW"))
+            meta = runner.run_block(bs, stem)
+            self.logg.info(f"Block saved: {stem}.tif ({meta['camera'].get('n_frames')} frames); "
+                           f"warnings: {meta['warnings'] or 'none'}")
+        self._start_acquisition_task("Acquisition Block", settings, job)
+
+    @pyqtSlot(dict, str, float)
+    def run_slot_loop(self, settings: dict, slots_text: str, interval_s: float):
+        try:
+            slots = acq.parse_slots(slots_text)
+        except Exception as e:
+            self.logg.error(f"Invalid slot list {slots_text!r}: {e}")
+            return
+
+        def job(runner, bs):
+            folder = os.path.join(self.path, self._stem(bs, "slotloop"))
+            s = runner.run_slot_loop(bs, slots, folder, interval_s)
+            self.logg.info(f"Slot loop saved: {folder} ({s['n_blocks']} blocks)")
+        self._start_acquisition_task("Slot Loop", settings, job)
+
+    @pyqtSlot(dict, float, float, int, float)
+    def run_power_loop(self, settings: dict, start: float, step: float, n: int, interval_s: float):
+        try:
+            powers = acq.power_steps(start, step, n)
+        except Exception as e:
+            self.logg.error(f"Invalid power steps: {e}")
+            return
+        max_p = self.ctrl_panel.QDoubleSpinBox_laserpower_473.maximum()
+        if max(powers) > max_p:
+            self.logg.error(f"Power loop exceeds {max_p} mW: {powers}")
+            return
+
+        def job(runner, bs):
+            folder = os.path.join(self.path, self._stem(bs, "powerloop"))
+            s = runner.run_power_loop(bs, powers, folder, interval_s)
+            self.logg.info(f"Power loop saved: {folder} ({s['n_blocks']} blocks)")
+        self._start_acquisition_task("Power Loop", settings, job)
 
     CORRECTION_SLOT = 0  # holds the correction pattern; never overwritten by holograms
     FIRST_HOLOGRAM_SLOT = 1

@@ -33,6 +33,7 @@ class DeviceManager:
         self.camera = None
         self.laser = None
         self.slm = None
+        self.trg = None
 
         try:
             self.camera = kinetix_camera_proxy.KinetixCameraProxy(logg=self.logg)

@@ -348,6 +348,30 @@ def suggest_sysclk(pulse_freqs: list[int], max_hz: int = SAFE_SYSCLK_HZ) -> Opti
     return (max_hz // l) * l if l <= max_hz else None
 
 
+def choose_sysclk(pulse_freqs: list[int], min_width_us: float = 0.0,
+                  max_hz: int = SAFE_SYSCLK_HZ, widths_us: Optional[list] = None) -> Optional[int]:
+    """
+    Highest SYSCLK (<= max_hz) that is a multiple of LCM(pulse_freqs) (pulses
+    phase-locked to ticks), has a common GCLK4 prescaler with every PWM
+    frequency (spec 9.6), and makes the shortest pulse >= 2 ticks.
+    E.g. a 10 Hz train needs SYSCLK <= ~6.5 kHz because of the shared prescaler.
+    """
+    l = 1
+    for fq in pulse_freqs:
+        l = l * fq // math.gcd(l, fq)
+    top = (max_hz // l) * l
+    # first pass: every pulse width is a whole number of ticks; second pass: any feasible clock
+    for exact in ((True, False) if widths_us else (False,)):
+        f = top
+        while f >= l and f >= 1:
+            if (gclk4_prescaler(f, pulse_freqs) is not None
+                    and (min_width_us <= 0 or min_width_us >= 2e6 / f)
+                    and (not exact or all((w * f) % 1_000_000 == 0 for w in widths_us))):
+                return f
+            f -= l
+    return None
+
+
 class TriggerBox:
     def __init__(self, port: str = "COM7", baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
                  raise_on_error: bool = True, logg=None):
