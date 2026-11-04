@@ -73,6 +73,8 @@ class CGH:
         self.itn = 64
         self.phase_slm = None
         self.holograms = []
+        self.affine = None        # 2x3 camera -> hologram-plane matrix (slm_calibration)
+        self.use_affine = False
         self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
 
     def load_correction_pattern(self, file):
@@ -226,10 +228,21 @@ class CGH:
         self.phase_slm = holograms[0]["pattern"] if holograms else None
         return holograms
 
+    def set_affine(self, M):
+        """Set (or clear with None) the 2x3 camera -> hologram-plane affine."""
+        self.affine = None if M is None else np.asarray(M, dtype=float).reshape(2, 3)
+
     def _map_spot(self, x0, y0):
-        """Camera pixel -> hologram-plane pixel, or None if outside the field."""
-        x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
-        y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
+        """Camera pixel -> hologram-plane pixel, or None if outside the field.
+        Uses the affine calibration when enabled, else magnification + center."""
+        if self.use_affine and self.affine is not None:
+            x1, y1 = self.affine @ np.array([x0, y0, 1.0])
+        else:
+            x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
+            y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
+        return self._in_field(x1, y1)
+
+    def _in_field(self, x1, y1):
         # target index is phase_n - round(coord), so round(coord) must be in 1..phase_n
         if 1 <= round(x1) <= self.holo_sys.phase_nx and 1 <= round(y1) <= self.holo_sys.phase_ny:
             return x1, y1
@@ -266,9 +279,16 @@ class CGH:
         xy = self._map_spot(x0, y0)
         if xy is None:
             return None
-        target = self.build_target_from_spots([(*xy, 0, 1.0)])
+        return self.compute_hologram_point(*xy, z_um=round(z0 / z_bin_um) * z_bin_um, trg=trg)
+
+    def compute_hologram_point(self, x1, y1, z_um=0.0, trg=True):
+        """Exact single-spot hologram at hologram-plane pixel (x1, y1), z in um.
+        Returns None if the point is outside the field."""
+        if self._in_field(x1, y1) is None:
+            return None
+        target = self.build_target_from_spots([(x1, y1, 0, 1.0)])
         phase_spot = np.angle(np.fft.ifft2(np.fft.ifftshift(target)))
-        z_offset = round(z0 / z_bin_um) * z_bin_um * 1e-6  # spot z is in um
+        z_offset = z_um * 1e-6
         if z_offset:
             phase_spot = phase_spot - self.generate_defocus_phase(z_offset)
         return self._finalize(phase_spot, trg=trg)

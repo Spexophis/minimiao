@@ -11,6 +11,7 @@ import tifffile as tf
 from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 
 from . import run_threads
+from .computations import slm_calibration as slm_cal
 
 
 class CommandExecutor(QObject):
@@ -35,6 +36,9 @@ class CommandExecutor(QObject):
         self.task_worker = None
         self._after_task = None
         self.slot_patterns = {}  # SLM memory slot -> (label, uint8 pattern) written this session
+        self.calib_holo_pts = None  # hologram-plane points currently in slots 1..K
+        self.calib_meta = {}  # metadata of the active affine calibration
+        self._calib_result = None
 
     @staticmethod
     def setup_logging():
@@ -61,6 +65,10 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_compute_cgh.connect(self.compute_cgh_pattern)
         self.hg_panel.Signal_save_pattern.connect(self.save_cgh_pattern)
         self.hg_panel.Signal_display_slot.connect(self.display_slm_slot)
+        self.hg_panel.Signal_calib_generate.connect(self.generate_calibration_holograms)
+        self.hg_panel.Signal_calib_measure.connect(self.measure_calibration)
+        self.hg_panel.Signal_calib_load.connect(self.load_calibration)
+        self.hg_panel.Signal_calib_use.connect(self.use_calibration)
 
     def _initial_setup(self):
         try:
@@ -410,6 +418,12 @@ class CommandExecutor(QObject):
         n, m, f, c = self.hg_panel.get_cgh_parameters()
         o, idx = self.ctrl_panel.get_slm_parameters()
         self.cgh.update_parameters(n, m, f * 1e-3, c, o)
+        if self.cgh.use_affine and self.cgh.affine is not None:
+            self.logg.info("Using affine calibration; Magnification / Center-X / Center-Y are ignored")
+            roi = list(self.ctrl_panel.get_scmos_roi())
+            if self.calib_meta.get("camera_roi") not in (None, roi):
+                self.logg.warning(f"Camera ROI/binning {roi} differs from calibration "
+                                  f"{self.calib_meta.get('camera_roi')}; spot positions will be wrong")
         rows = self.viewer.get_target_spots()
         # skip empty / incomplete table rows
         pts = [tuple(float(v) for v in r) for r in rows
@@ -442,6 +456,161 @@ class CommandExecutor(QObject):
             self.hg_panel.set_pattern_image(entry[1])
             self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.FIRST_HOLOGRAM_SLOT)
 
+    def _clear_hologram_slots(self):
+        """Forget hologram slots >= 1 so stale patterns are not mistaken for the current set."""
+        for slot in [k for k in self.slot_patterns if k >= self.FIRST_HOLOGRAM_SLOT]:
+            del self.slot_patterns[slot]
+        self.cgh.holograms = []
+        self.calib_holo_pts = None
+
+    # ---- camera -> SLM affine calibration ------------------------------------
+
+    @pyqtSlot(int, float)
+    def generate_calibration_holograms(self, n: int, span: float):
+        """Write one single-spot hologram per grid point to SLM slots 1..n*n."""
+        if self._slm_busy():
+            return
+        if self.devs.slm is None:
+            self.logg.error("No SLM connected")
+            return
+        try:
+            self.update_cgh_parameters()
+        except Exception as e:
+            self.logg.error(f"Error reading CGH parameters: {e}")
+            return
+        grid = slm_cal.make_grid(self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny, n, span)
+        self._clear_hologram_slots()
+
+        def task():
+            for k, (x1, y1) in enumerate(grid):
+                slot = self.FIRST_HOLOGRAM_SLOT + k
+                pattern = self.cgh.compute_hologram_point(x1, y1)
+                if pattern is None:
+                    self.logg.error(f"Calibration point {k} ({x1:.1f}, {y1:.1f}) is outside the field")
+                    return
+                try:
+                    self.devs.slm.write_array(pattern, slot)
+                except Exception as e:
+                    self.logg.error(f"Error loading calibration hologram to slot {slot}: {e}")
+                    return
+                self.slot_patterns[slot] = (f"calib {k} ({x1:.1f}, {y1:.1f})", pattern)
+            self.calib_holo_pts = grid
+            self.logg.info(f"Calibration: {len(grid)} holograms in slots "
+                           f"{self.FIRST_HOLOGRAM_SLOT}..{self.FIRST_HOLOGRAM_SLOT + len(grid) - 1}")
+
+        self._after_task = lambda: self.hg_panel.set_calibration_status(
+            f"Calibration holograms: {len(grid)} in slots 1..{len(grid)}" if self.calib_holo_pts is not None
+            else "Calibration holograms: failed (see log)")
+        self.vw.get_dialog(r"Calibration Holograms")
+        self.run_task(task=task)
+
+    def _grab_frame(self, n_avg: int, exposure_s: float):
+        frames = []
+        for _ in range(n_avg):
+            f = self.devs.camera.get_last_image()
+            if f is not None:
+                frames.append(np.asarray(f, dtype=np.float64))
+            time.sleep(exposure_s)
+        if not frames:
+            raise RuntimeError("No camera frames; is live video running?")
+        return np.mean(frames, axis=0)
+
+    @pyqtSlot(int, int)
+    def measure_calibration(self, settle_ms: int, n_avg: int):
+        """Step through the calibration slots, locate each spot on the camera, fit the affine."""
+        if self._slm_busy():
+            return
+        holo_pts = self.calib_holo_pts
+        if holo_pts is None:
+            self.logg.error("Generate calibration holograms first")
+            return
+        if self.devs.camera is None or getattr(self.devs.camera, "data", None) is None:
+            self.logg.error("Start live video (laser on) before measuring the calibration")
+            return
+        exposure_s = max(float(getattr(self.devs.camera, "t_exposure", 20) or 20), 1.0) * 1e-3
+        wait_s = settle_ms * 1e-3 + 2 * exposure_s  # SLM settle + flush frames exposed during the switch
+        roi = list(self.ctrl_panel.get_scmos_roi())
+        self._calib_result = None
+
+        def task():
+            try:
+                frames = []
+                for k in range(len(holo_pts)):
+                    self.devs.slm.display_pattern(self.FIRST_HOLOGRAM_SLOT + k)
+                    time.sleep(wait_s)
+                    frames.append(self._grab_frame(n_avg, exposure_s))
+                self.devs.slm.display_pattern(self.CORRECTION_SLOT)
+                frames = np.stack(frames)
+                cam_pts, snr, max_proj = slm_cal.detect_spots(frames)
+                n_bad = int(np.sum(~np.isfinite(cam_pts[:, 0])))
+                if n_bad:
+                    self.logg.warning(f"Calibration: {n_bad} spot(s) not detected (SNR {np.round(snr, 1).tolist()})")
+                M, res = slm_cal.fit_affine(cam_pts, holo_pts)
+                stamp = time.strftime("%Y%m%d%H%M%S")
+                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration")
+                meta = {"camera_roi": roi, "settle_ms": settle_ms, "n_avg": n_avg,
+                        "snr": snr.tolist(),
+                        "phase_n": [self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny],
+                        "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
+                        "f_fresnel": self.cgh.holo_sys.f_fresnel}
+                data = slm_cal.save_calibration(base + ".json", M, cam_pts, holo_pts, res, meta)
+                tf.imwrite(base + "_frames.tif", frames.astype(np.float32))
+                self.cgh.set_affine(M)
+                self.calib_meta = meta
+                self._calib_result = (data, cam_pts, max_proj, base + ".json")
+                self.logg.info(f"Calibration saved: {base}.json; rms {data['rms_cam_px']:.2f} cam px; "
+                               f"{data['summary']}")
+                if np.nanmax(res) > 3.0:
+                    self.logg.warning(f"Calibration: max residual {np.nanmax(res):.1f} cam px; "
+                                      f"check per-point residuals in the JSON")
+            except Exception as e:
+                self.logg.error(f"Calibration measurement failed: {e}")
+
+        self._after_task = self._show_calibration_result
+        self.vw.get_dialog(r"Calibration Measurement")
+        self.run_task(task=task)
+
+    def _show_calibration_result(self):
+        if self._calib_result is None:
+            self.hg_panel.set_calibration_status("Calibration: measurement failed (see log)")
+            return
+        data, cam_pts, max_proj, path = self._calib_result
+        self.viewer.set_graph_image(max_proj)
+        ok = np.all(np.isfinite(cam_pts), axis=1)
+        self.viewer.target_spots_item.setData(cam_pts[ok, 0], cam_pts[ok, 1])
+        self._set_calib_status(data, os.path.basename(path))
+
+    def _set_calib_status(self, data, name):
+        sm = data.get("summary", {})
+        self.hg_panel.set_calibration_status(
+            f"{name}: rms {data.get('rms_cam_px', float('nan')):.2f} px, "
+            f"rot {sm.get('rotation_deg', 0):.1f} deg, scale {sm.get('scale_x', 0):.3f}/{sm.get('scale_y', 0):.3f}"
+            f"{', mirrored' if sm.get('mirrored') else ''}", use=True)
+
+    @pyqtSlot()
+    def load_calibration(self):
+        file_name = self.vw.get_file_name()
+        if file_name is None:
+            return
+        try:
+            M, data = slm_cal.load_calibration(file_name)
+        except Exception as e:
+            self.logg.error(f"Error loading calibration: {e}")
+            return
+        self.cgh.set_affine(M)
+        self.calib_meta = data.get("meta", {})
+        self.logg.info(f"Calibration loaded: {file_name}")
+        self._set_calib_status(data, os.path.basename(file_name))
+
+    @pyqtSlot(bool)
+    def use_calibration(self, use: bool):
+        if use and self.cgh.affine is None:
+            self.logg.error("No affine calibration loaded or measured")
+            self.hg_panel.set_calibration_status("Calibration: none", use=False)
+            return
+        self.cgh.use_affine = use
+        self.logg.info(f"Affine calibration {'enabled' if use else 'disabled'}")
+
     def compute_cgh_pattern(self):
         if self._slm_busy():
             return
@@ -451,10 +620,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error reading CGH parameters: {e}")
             return
         mode = self.hg_panel.get_cgh_mode()
-        # stale hologram slots from a previous run must not be mistaken for the current set
-        for slot in [k for k in self.slot_patterns if k >= self.FIRST_HOLOGRAM_SLOT]:
-            del self.slot_patterns[slot]
-        self.cgh.holograms = []
+        self._clear_hologram_slots()
         self._after_task = self._show_first_hologram
         self.vw.get_dialog(r"CGH Computation")
         self.run_task(task=lambda: self.cgh_computation(mode))

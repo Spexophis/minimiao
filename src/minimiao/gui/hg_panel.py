@@ -22,6 +22,10 @@ class HGPanel(QWidget):
     Signal_compute_cgh = pyqtSignal()
     Signal_save_pattern = pyqtSignal()
     Signal_display_slot = pyqtSignal(int)
+    Signal_calib_generate = pyqtSignal(int, float)
+    Signal_calib_measure = pyqtSignal(int, int)
+    Signal_calib_load = pyqtSignal()
+    Signal_calib_use = pyqtSignal(bool)
 
     def __init__(self, logg=None, parent=None):
         super().__init__(parent)
@@ -36,6 +40,9 @@ class HGPanel(QWidget):
 
         control_widget = self._create_cgh_panel()
         splitter.addWidget(control_widget)
+
+        calib_widget = self._create_calibration_panel()
+        splitter.addWidget(calib_widget)
 
         plot_widget = QWidget()
         plot_layout = self._create_plot_widgets()
@@ -90,6 +97,46 @@ class HGPanel(QWidget):
         group.setLayout(group_layout)
         return group
 
+    def _create_calibration_panel(self):
+        group = cw.GroupWidget()
+        calib_scroll_area, calib_scroll_layout = cw.create_scroll_area("G")
+
+        self.QSpinBox_Calib_Grid = cw.SpinBoxWidget(2, 10, 1, 4)
+        self.QDoubleSpinBox_Calib_Span = cw.DoubleSpinBoxWidget(0.05, 0.95, 0.05, 2, 0.5)
+        self.QSpinBox_Calib_Settle = cw.SpinBoxWidget(0, 5000, 10, 300)
+        self.QSpinBox_Calib_Average = cw.SpinBoxWidget(1, 20, 1, 3)
+        self.QPushButton_Calib_Generate = cw.PushButtonWidget('Calib Holograms')
+        self.QPushButton_Calib_Measure = cw.PushButtonWidget('Calib Measure')
+        self.QPushButton_Calib_Load = cw.PushButtonWidget('Load Calib')
+        self.QCheckBox_Calib_Use = cw.CheckBoxWidget('Use Calib')
+        self.QLabel_Calib_Status = cw.LabelWidget('Calibration: none')
+
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Camera-SLM Affine Calibration')), 0, 0, 1, 3)
+        calib_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
+        calib_scroll_layout.addWidget(self.QPushButton_Calib_Generate, 2, 0, 1, 1)
+        calib_scroll_layout.addWidget(self.QPushButton_Calib_Measure, 3, 0, 1, 1)
+        calib_scroll_layout.addWidget(self.QPushButton_Calib_Load, 4, 0, 1, 1)
+        calib_scroll_layout.addWidget(self.QCheckBox_Calib_Use, 5, 0, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Grid N x N')), 2, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QSpinBox_Calib_Grid, 2, 2, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Span (field)')), 3, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QDoubleSpinBox_Calib_Span, 3, 2, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Settle / ms')), 4, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QSpinBox_Calib_Settle, 4, 2, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Avg frames')), 5, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QSpinBox_Calib_Average, 5, 2, 1, 1)
+        calib_scroll_layout.addWidget(self.QLabel_Calib_Status, 6, 0, 1, 3)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(calib_scroll_area)
+        group.setLayout(group_layout)
+        return group
+
+    def set_calibration_status(self, text: str, use: bool = None):
+        self.QLabel_Calib_Status.setText(text)
+        if use is not None:
+            self.QCheckBox_Calib_Use.setChecked(use)
+
     def _create_plot_widgets(self):
         layout_plot = QVBoxLayout()
 
@@ -110,6 +157,14 @@ class HGPanel(QWidget):
         self.QPushButton_CGH_Compute.clicked.connect(self.compute_cgh)
         self.QPushButton_CGH_Save.clicked.connect(self.save_pattern)
         self.QPushButton_SLM_Display.clicked.connect(self.display_slot)
+        self.QPushButton_Calib_Generate.clicked.connect(
+            lambda: self.Signal_calib_generate.emit(self.QSpinBox_Calib_Grid.value(),
+                                                    self.QDoubleSpinBox_Calib_Span.value()))
+        self.QPushButton_Calib_Measure.clicked.connect(
+            lambda: self.Signal_calib_measure.emit(self.QSpinBox_Calib_Settle.value(),
+                                                   self.QSpinBox_Calib_Average.value()))
+        self.QPushButton_Calib_Load.clicked.connect(self.Signal_calib_load.emit)
+        self.QCheckBox_Calib_Use.toggled.connect(self.Signal_calib_use.emit)
 
     @pyqtSlot()
     def load_target(self):
