@@ -95,20 +95,19 @@ def build_sequence(bs: BlockSettings):
     """
     bs.validate()
     pre_ms = int(round(bs.pre_delay_s * 1000))
-    period = bs.pulse_period_ms
-    freq = int(round(1000.0 / period))
-    width_us = int(round(bs.pulse_width_ms * 1000))
-    train_stop = pre_ms + int(math.ceil((bs.n_pulses - 1) * period + bs.pulse_width_ms))
-    onsets_ms = [pre_ms + k * period for k in range(bs.n_pulses)]
+    train = tbx.PulseTrain(bs.n_pulses, bs.pulse_width_ms, bs.pulse_period_ms, pre_ms,
+                           bs.laser_channel, bs.laser_channel)
+    train_stop = train.stop_ms
+    onsets_ms = train.onsets_ms
+    last_end = train.last_pulse_end_ms
 
-    channels = [tbx.DigitalPulse(bs.laser_channel, start_ms=pre_ms, stop_ms=train_stop,
-                                 freq_hz=freq, width_us=width_us, output=bs.laser_channel)]
-    freqs, widths = [freq], [width_us]
+    channels = [train.channel_def()]
+    freqs, widths = [train.freq_hz], [train.width_us]
     timing = {"pre_ms": pre_ms, "train_start_ms": pre_ms, "train_stop_ms": train_stop,
-              "pulse_onsets_ms": onsets_ms, "pulse_freq_hz": freq}
+              "last_pulse_end_ms": last_end, "pulse_onsets_ms": onsets_ms, "pulse_freq_hz": train.freq_hz}
 
     if bs.camera_trigger == "external":
-        total = train_stop + int(round(bs.post_delay_s * 1000))
+        total = int(math.ceil(last_end + bs.post_delay_s * 1000))
         fps = int(bs.frame_rate_hz)
         channels.append(tbx.DigitalPulse(bs.camera_channel, start_ms=0, stop_ms=total, freq_hz=fps,
                                          width_us=int(bs.camera_trigger_width_us), output=bs.camera_channel))
@@ -268,7 +267,9 @@ class AcquisitionRunner:
             self._wait_sequence(timing["sequence_stop_ms"])
             t["sequence_done"] = time.perf_counter()
             if bs.camera_trigger == "internal":
-                self._sleep(bs.post_delay_s)
+                # post delay counts from the end of the last pulse, not the window stop
+                done_ms = timing["sequence_stop_ms"] - timing["last_pulse_end_ms"]
+                self._sleep(bs.post_delay_s - done_ms / 1000.0)
             else:  # post delay is inside the camera clock; let the last frames arrive
                 self._sleep(2.0 / bs.frame_rate_hz + 0.05)
             meta["status"] = "complete"

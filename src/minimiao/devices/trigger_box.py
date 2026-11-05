@@ -372,6 +372,89 @@ def choose_sysclk(pulse_freqs: list[int], min_width_us: float = 0.0,
     return None
 
 
+@dataclass
+class PulseTrain:
+    """
+    N identical TTL pulses on one TriggerBox channel.
+
+    interval_ms is onset-to-onset (e.g. 100 ms -> 10 Hz). The TriggerBox
+    generates it as one PWM window (DIGn); the window stops halfway into the
+    gap after the last pulse, so the last pulse always completes and no
+    extra pulse can start.
+    """
+    n_pulses: int = 5
+    width_ms: float = 10.0
+    interval_ms: float = 100.0
+    start_ms: int = 0
+    channel: int = 1
+    output: Optional[int] = None  # defaults to the channel number
+
+    def __post_init__(self):
+        errs = []
+        if self.n_pulses < 1:
+            errs.append("n_pulses must be >= 1")
+        if not 0 < self.width_ms < self.interval_ms:
+            errs.append(f"need 0 < width ({self.width_ms} ms) < interval ({self.interval_ms} ms)")
+        f = 1000.0 / self.interval_ms if self.interval_ms > 0 else 0
+        if self.interval_ms > 0 and abs(f - round(f)) > 1e-9:
+            errs.append(f"interval {self.interval_ms} ms = {f:.4g} Hz; the TriggerBox needs a whole-number "
+                        f"frequency, i.e. interval = 1000/N ms (100, 50, 25, 20, ...)")
+        if self.channel not in PWM_CHANNELS:
+            errs.append(f"channel must be one of {PWM_CHANNELS} (PWM-capable)")
+        if self.start_ms < 0 or self.start_ms != int(self.start_ms):
+            errs.append("start_ms must be a whole number >= 0")
+        if errs:
+            raise ValueError("Invalid pulse train: " + "; ".join(errs))
+
+    @property
+    def freq_hz(self) -> int:
+        return int(round(1000.0 / self.interval_ms))
+
+    @property
+    def width_us(self) -> int:
+        return int(round(self.width_ms * 1000))
+
+    @property
+    def onsets_ms(self) -> list:
+        return [self.start_ms + k * self.interval_ms for k in range(self.n_pulses)]
+
+    @property
+    def last_pulse_end_ms(self) -> float:
+        return self.start_ms + (self.n_pulses - 1) * self.interval_ms + self.width_ms
+
+    @property
+    def stop_ms(self) -> int:
+        """Window stop: middle of the gap after the last pulse (whole ms)."""
+        gap = self.interval_ms - self.width_ms
+        return int(math.floor(self.last_pulse_end_ms + gap / 2))
+
+    def channel_def(self) -> DigitalPulse:
+        return DigitalPulse(self.channel, start_ms=int(self.start_ms), stop_ms=self.stop_ms,
+                            freq_hz=self.freq_hz, width_us=self.width_us, output=self.output)
+
+
+def pulse_train_sequence(n_pulses=5, width_ms=10.0, interval_ms=100.0, start_ms=0, channel=1, output=None,
+                         extra=(), max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigger=False):
+    """
+    Sequence with one pulse train (default: 5 x 10 ms pulses, 100 ms apart, on DIG1 -> OUT1),
+    plus any `extra` channel definitions (e.g. a camera clock). SYSCLK is chosen so all PWM
+    frequencies share one GCLK4 prescaler and pulse widths are whole ticks.
+    Returns (Sequence, PulseTrain).
+    """
+    train = PulseTrain(n_pulses, width_ms, interval_ms, int(start_ms), channel, output)
+    channels = [train.channel_def(), *extra]
+    pwm = [c for c in channels if isinstance(c, DigitalPulse)]
+    freqs, widths = [c.freq_hz for c in pwm], [c.width_us for c in pwm]
+    sysclk = choose_sysclk(freqs, min_width_us=min(widths), max_hz=max_sysclk_hz, widths_us=widths)
+    if sysclk is None:
+        raise ValueError(f"No TriggerBox system clock fits PWM frequencies {freqs} Hz with widths {widths} us "
+                         f"(frequency spread too wide for the shared prescaler, or pulses too short)")
+    seq = Sequence(sysclk_hz=sysclk, external_trigger=external_trigger)
+    seq.add(*channels)
+    seq.validate()
+    return seq, train
+
+
 class TriggerBox:
     def __init__(self, port: str = "COM7", baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
                  raise_on_error: bool = True, logg=None):
@@ -536,6 +619,13 @@ class TriggerBox:
             self.wait_until_done()
         return info
 
+    def run_pulse_train(self, n_pulses=5, width_ms=10.0, interval_ms=100.0, start_ms=0, channel=1,
+                        output=None, wait=True) -> PulseTrain:
+        """Upload, ARM and RUN a single pulse train (default 5 x 10 ms, 100 ms apart, DIG1 -> OUT1)."""
+        seq, train = pulse_train_sequence(n_pulses, width_ms, interval_ms, start_ms, channel, output)
+        self.execute(seq, wait=wait)
+        return train
+
     def repl(self):
         print("Triggerbox terminal. Empty line or 'exit' quits.")
         raise_, self.raise_on_error = self.raise_on_error, False
@@ -552,7 +642,13 @@ class TriggerBox:
 if __name__ == '__main__':
     print(TriggerBox.list_ports())
 
+    # 5 x 10 ms pulses, 100 ms apart, on DIG1 -> OUT1: preview, then run
+    seq, train = pulse_train_sequence(n_pulses=5, width_ms=10, interval_ms=100)
+    print(seq.commands(), train.onsets_ms)
+    seq.plot()
+
     tb = TriggerBox()
+    tb.run_pulse_train(n_pulses=5, width_ms=10, interval_ms=100)
 
     seq = Sequence(sysclk_hz=10_000, external_trigger=False)
     seq.add(
