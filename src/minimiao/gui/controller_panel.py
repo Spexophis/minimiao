@@ -20,7 +20,7 @@ class ControlPanel(QWidget):
     Signal_slm_correction = pyqtSignal()
     Signal_slm_load = pyqtSignal()
     Signal_slm_set = pyqtSignal()
-    Signal_slm_lens = pyqtSignal()
+    Signal_slm_base = pyqtSignal(bool, bool)  # lens on, cross on -> rewrite slot 0
     Signal_slm_display = pyqtSignal(int)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_trigger_reset = pyqtSignal()
@@ -88,7 +88,8 @@ class ControlPanel(QWidget):
         self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -100)
         self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -80)
         self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 455)
-        self.QPushButton_SLM_Lens = cw.PushButtonWidget('Apply Lens (Slot 0)')
+        self.QPushButton_SLM_Lens = cw.PushButtonWidget('Add Lens', checkable=True)
+        self.QPushButton_SLM_Cross = cw.PushButtonWidget('Add Cross', checkable=True)
         self.QLabel_SLM_Lens = cw.LabelWidget('Lens D: -')
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('Hamamatsu SLM')))
@@ -101,7 +102,7 @@ class ControlPanel(QWidget):
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset X')), self.QSpinBox_SLM_OffsetX)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset Y')), self.QSpinBox_SLM_OffsetY)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Fresnel f / mm')), self.QDoubleSpinBox_SLM_Focal)
-        slm_scroll_layout.addRow(self.QPushButton_SLM_Lens)
+        slm_scroll_layout.addRow(self.QPushButton_SLM_Lens, self.QPushButton_SLM_Cross)
         slm_scroll_layout.addRow(self.QLabel_SLM_Lens)
 
         group_layout = QHBoxLayout(group)
@@ -247,7 +248,10 @@ class ControlPanel(QWidget):
     def _set_signal_connections(self):
         self.QPushButton_SLM_Correction.clicked.connect(self.load_slm_correction)
         self.QPushButton_SLM_Load.clicked.connect(self.load_slm_pattern)
-        self.QPushButton_SLM_Lens.clicked.connect(self.Signal_slm_lens.emit)
+        self.QPushButton_SLM_Lens.clicked.connect(self.emit_slm_base)
+        self.QPushButton_SLM_Cross.clicked.connect(self.emit_slm_base)
+        self.QDoubleSpinBox_SLM_Focal.editingFinished.connect(
+            lambda: self.emit_slm_base() if self.QPushButton_SLM_Lens.isChecked() else None)
         self.QPushButton_SLM_Display.clicked.connect(
             lambda: self.Signal_slm_display.emit(self.QSpinBox_SLM_Slot.value()))
         self.QDoubleSpinBox_stage_x.valueChanged.connect(self.set_stage_x)
@@ -294,6 +298,16 @@ class ControlPanel(QWidget):
     def display_loaded_pattern(self, filename=None):
         if filename is not None:
             self.QLineEdit_SLM_Pattern.setText(str(filename))
+
+    def emit_slm_base(self):
+        self.Signal_slm_base.emit(self.QPushButton_SLM_Lens.isChecked(), self.QPushButton_SLM_Cross.isChecked())
+
+    def set_slm_base_buttons(self, lens: bool, cross: bool):
+        """Reflect the state actually applied (e.g. after an error) without re-emitting."""
+        for btn, on in ((self.QPushButton_SLM_Lens, lens), (self.QPushButton_SLM_Cross, cross)):
+            btn.blockSignals(True)
+            btn.setChecked(on)
+            btn.blockSignals(False)
 
     def display_lens_aperture(self, diameter_px: float, diameter_mm: float):
         self.QLabel_SLM_Lens.setText(f"Lens D: {diameter_px:.0f} px ({diameter_mm:.2f} mm)"

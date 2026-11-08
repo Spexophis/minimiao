@@ -35,6 +35,11 @@ class HoloSystem:
 
     trigger_value: int = 128
 
+    # SLM base settings (slot 0): Fresnel lens (f_fresnel) and 2x2 0/pi cross.
+    # Holograms include the lens when lens_enabled; the cross is slot 0 only.
+    lens_enabled: bool = False
+    cross_enabled: bool = False
+
     def __post_init__(self):
         self._correction_pattern = np.zeros((self.slm_ny, self.slm_nx), dtype=np.uint8)
 
@@ -73,6 +78,7 @@ class CGH:
         self.itn = 64
         self.phase_slm = None
         self.holograms = []
+        self.holograms_lens = {"lens_in_holograms": False, "f_fresnel_m": None}
         self.affine = None        # 2x3 camera -> hologram-plane matrix (slm_calibration)
         self.use_affine = False
         self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
@@ -225,6 +231,8 @@ class CGH:
                     continue
                 holograms.append({"label": f"spot {i}", "spots": [i], "pattern": pattern})
         self.holograms = holograms
+        self.holograms_lens = {"lens_in_holograms": bool(self.holo_sys.lens_enabled),
+                               "f_fresnel_m": self.holo_sys.f_fresnel if self.holo_sys.lens_enabled else None}
         self.phase_slm = holograms[0]["pattern"] if holograms else None
         return holograms
 
@@ -249,13 +257,10 @@ class CGH:
         return None
 
     def _finalize(self, phase_spots, trg=True):
-        """Quantize, embed in the correction pattern, add trigger patch.
-        Holograms carry no Fresnel lens; the lens is an SLM-level setting
-        applied only to slot 0 (compute_lens_pattern)."""
-        phase_total = phase_spots % (2.0 * np.pi)
-        phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
-        pattern = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
-                                  self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
+        """Hologram for an SLM slot: correction + Fresnel lens (if lens_enabled) + multifocal
+        hologram phase, then the trigger patch. No cross (that is slot 0 only)."""
+        f = self.holo_sys.f_fresnel if self.holo_sys.lens_enabled else None
+        pattern, _ = self.compose_slm_pattern(phase_region=phase_spots, lens_f_m=f, cross=False)
         if trg:
             self.add_trigger_pattern(pattern)
         return pattern
@@ -323,48 +328,77 @@ class CGH:
         phase_spots = self.gerchberg_saxton_multiplane(targets, defocus_phases, plane_weights)
         return self._finalize(phase_spots, trg=trg)
 
-    def lens_aperture(self):
-        """
-        Lens centre and largest diameter that fits on the SLM for the current
-        offset. The centre is the hologram centre (SLM centre + offset, same
-        convention as add_arrays / generate_fresnel_lens_phase); the diameter
-        is twice the distance from it to the nearest SLM edge.
-        Returns dict: center_x, center_y (SLM pixel coords), diameter_px, diameter_mm.
-        """
+    def slm_center(self):
+        """Hologram centre in SLM pixel coordinates (SLM centre + offset; same convention as
+        add_arrays and generate_fresnel_lens_phase)."""
         hs = self.holo_sys
         H, W = hs.correction_pattern.shape[:2]
         cx = (W - hs.phase_nx) // 2 + hs.slm_offset_x + hs.phase_nx / 2 - 0.5
         cy = (H - hs.phase_ny) // 2 + hs.slm_offset_y + hs.phase_ny / 2 - 0.5
+        return cx, cy
+
+    def lens_aperture(self):
+        """
+        Lens centre and largest diameter that fits on the SLM for the current
+        offset (twice the distance from the hologram centre to the nearest edge).
+        Returns dict: center_x, center_y (SLM pixel coords), diameter_px, diameter_mm.
+        """
+        hs = self.holo_sys
+        H, W = hs.correction_pattern.shape[:2]
+        cx, cy = self.slm_center()
         r = min(cx + 0.5, W - 0.5 - cx, cy + 0.5, H - 0.5 - cy)
         if r <= 0:
             raise ValueError(f"Lens centre ({cx:.1f}, {cy:.1f}) is outside the SLM; check the SLM offset")
         return {"center_x": float(cx), "center_y": float(cy), "diameter_px": float(2 * r),
                 "diameter_mm": float(2 * r * hs.slm_pixel_pitch * 1e3)}
 
-    def compute_lens_pattern(self, f_m=None):
-        """
-        Slot-0 pattern: correction + Fresnel lens of focal length f_m (metres;
-        default holo_sys.f_fresnel) inside a circular aperture centred on the
-        hologram centre (SLM centre + offset) with the largest diameter that
-        fits on the SLM (lens_aperture). Outside the aperture: correction only.
-        No trigger patch. f_m <= 0 gives the correction alone.
-        Returns (pattern uint8, aperture dict).
-        """
+    def lens_phase_full(self, f_m):
+        """Fresnel lens phase on the full SLM grid inside the fitted circular aperture (0 outside)."""
         hs = self.holo_sys
-        f = hs.f_fresnel if f_m is None else f_m
-        pattern = hs.correction_pattern.copy()
-        if not f or f <= 0:
-            return pattern, {"diameter_px": 0.0, "diameter_mm": 0.0, "center_x": None, "center_y": None}
         ap = self.lens_aperture()
-        H, W = pattern.shape[:2]
+        H, W = hs.correction_pattern.shape[:2]
         yy, xx = np.mgrid[0:H, 0:W]
         dx, dy = xx - ap["center_x"], yy - ap["center_y"]
         inside = dx ** 2 + dy ** 2 <= (ap["diameter_px"] / 2) ** 2
         k = 2.0 * np.pi / hs.wavelength
-        phi = -k * ((dx * hs.slm_pixel_pitch) ** 2 + (dy * hs.slm_pixel_pitch) ** 2) / (2.0 * f)
-        lens_uint = self.phase_to_uint(np.mod(phi, 2.0 * np.pi), hs.correction_value)
-        pattern[inside] = pattern[inside] + lens_uint[inside]  # uint8 sum, same as add_arrays
-        return pattern, ap
+        phi = -k * ((dx * hs.slm_pixel_pitch) ** 2 + (dy * hs.slm_pixel_pitch) ** 2) / (2.0 * f_m)
+        return np.where(inside, phi, 0.0), ap
+
+    def cross_phase_full(self):
+        """2 x 2 chess grid of 0 / pi over the full SLM, split at the hologram centre
+        (top-left and bottom-right 0, top-right and bottom-left pi)."""
+        H, W = self.holo_sys.correction_pattern.shape[:2]
+        cx, cy = self.slm_center()
+        yy, xx = np.mgrid[0:H, 0:W]
+        return np.where((xx > cx) ^ (yy > cy), np.pi, 0.0)
+
+    def compose_slm_pattern(self, phase_region=None, lens_f_m=None, cross=False):
+        """
+        correction + quantize((hologram + lens + cross) mod 2 pi) on the full SLM.
+        phase_region: hologram phase (phase_ny x phase_nx), placed at the SLM offset.
+        lens_f_m: Fresnel focal length in metres, or None / <= 0 for no lens.
+        Returns (pattern uint8, lens aperture dict or None).
+        """
+        hs = self.holo_sys
+        H, W = hs.correction_pattern.shape[:2]
+        region = None if phase_region is None else np.asarray(phase_region)
+        # keep the hologram's own float precision so quantization matches the hologram alone exactly
+        dtype = region.dtype if region is not None and np.issubdtype(region.dtype, np.floating) else np.float64
+        total = np.zeros((H, W), dtype=dtype)
+        if region is not None:
+            total = self.add_arrays(region.astype(dtype, copy=False), total, hs.slm_offset_x, hs.slm_offset_y)
+        ap = None
+        if lens_f_m is not None and lens_f_m > 0:
+            lens, ap = self.lens_phase_full(lens_f_m)
+            total = total + lens
+        if cross:
+            total = total + self.cross_phase_full()
+        q = self.phase_to_uint(np.mod(total, 2.0 * np.pi), hs.correction_value)
+        return hs.correction_pattern.copy() + q, ap  # uint8 sum, as before
+
+    def compute_base_pattern(self, lens_f_m=None, cross=False):
+        """Slot-0 pattern: correction + lens (if lens_f_m > 0) + cross (if cross). No trigger patch."""
+        return self.compose_slm_pattern(None, lens_f_m=lens_f_m, cross=cross)
 
     def generate_defocus_phase(self, delta_z: float) -> np.ndarray:
         """
