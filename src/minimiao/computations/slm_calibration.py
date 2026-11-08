@@ -203,3 +203,64 @@ def equivalent_simple_params(M, phase_n=(850, 850)):
             "center_x": float(cx), "center_y": float(cy),
             "exact": abs(d["rotation_deg"]) < 0.5 and not d["mirrored"] and abs(d["shear"]) < 0.01
             and abs(d["scale_x"] - d["scale_y"]) < 0.005 * d["scale_x"]}
+
+
+# ---- simple model: magnification + center (the hologram panel parameters) -----
+
+def simple_to_affine(magnification, center_x, center_y, phase_n=(850, 850)):
+    """CGH._map_spot without affine: holo = m * (cam - c) + n / 2, as a 2x3 matrix."""
+    nx, ny = phase_n
+    m = float(magnification)
+    return np.array([[m, 0.0, nx / 2 - m * center_x],
+                     [0.0, m, ny / 2 - m * center_y]])
+
+
+def fit_simple(cam_pts, holo_pts, phase_n=(850, 850)):
+    """
+    Least-squares fit of magnification m and center (cx, cy) in
+        holo_x - nx/2 = m * (cam_x - cx),   holo_y - ny/2 = m * (cam_y - cy)
+    over valid (non-NaN) pairs. m may be negative (180 deg rotation).
+    Returns ({magnification, center_x, center_y}, residuals in camera px (NaN for unused)).
+    """
+    cam_pts = np.asarray(cam_pts, float)
+    holo_pts = np.asarray(holo_pts, float)
+    nx, ny = phase_n
+    ok = np.all(np.isfinite(cam_pts), axis=1)
+    k = int(ok.sum())
+    if k < 2:
+        raise ValueError(f"Need >= 2 detected spots to fit magnification/center, got {k}")
+    c, h = cam_pts[ok], holo_pts[ok]
+    # unknowns: m, bx, by  with holo - n/2 = m * cam + b
+    A = np.zeros((2 * k, 3))
+    A[:k, 0], A[:k, 1] = c[:, 0], 1.0
+    A[k:, 0], A[k:, 2] = c[:, 1], 1.0
+    rhs = np.concatenate([h[:, 0] - nx / 2, h[:, 1] - ny / 2])
+    (m, bx, by), *_ = np.linalg.lstsq(A, rhs, rcond=None)
+    if abs(m) < 1e-9:
+        raise ValueError("Degenerate fit (magnification ~ 0)")
+    params = {"magnification": float(m), "center_x": float(-bx / m), "center_y": float(-by / m)}
+    pred_cam = (h - np.array([nx / 2, ny / 2])) / m + np.array([params["center_x"], params["center_y"]])
+    res = np.full(len(cam_pts), np.nan)
+    res[ok] = np.linalg.norm(pred_cam - c, axis=1)
+    return params, res
+
+
+def model_check(cam_pts, holo_pts):
+    """
+    Fit the full affine on the same data and report what the simple model cannot
+    represent (mirror, rotation other than 0/180 deg, unequal x/y scale, shear).
+    """
+    M, _ = fit_affine(cam_pts, holo_pts)
+    d = describe(M)
+    rot = d["rotation_deg"]
+    rot_off = min(abs(rot), abs(abs(rot) - 180.0))
+    problems = []
+    if d["mirrored"]:
+        problems.append("mirror flip")
+    if rot_off > 1.0:
+        problems.append(f"rotation {rot:.1f} deg")
+    if abs(d["scale_x"] - d["scale_y"]) > 0.01 * max(d["scale_x"], d["scale_y"]):
+        problems.append(f"unequal x/y scale ({d['scale_x']:.4f} / {d['scale_y']:.4f})")
+    if abs(d["shear"]) > 0.01:
+        problems.append(f"shear {d['shear']:.3f}")
+    return {"affine": d, "simple_model_ok": not problems, "problems": problems}

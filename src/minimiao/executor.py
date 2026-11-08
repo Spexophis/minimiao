@@ -82,6 +82,7 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_calib_load.connect(self.load_calibration)
         self.hg_panel.Signal_calib_use.connect(self.use_calibration)
         self.hg_panel.Signal_calib_auto.connect(self.auto_calibration)
+        self.hg_panel.Signal_calib_simple.connect(self.auto_calibrate_mag_center)
         # Acquisition blocks
         self.acq_panel.Signal_run_block.connect(self.run_acquisition_block)
         self.acq_panel.Signal_run_slot_loop.connect(self.run_slot_loop)
@@ -922,6 +923,166 @@ class CommandExecutor(QObject):
 
         self._after_task = finish
         self.vw.get_dialog(r"Auto Calibration")
+        self.run_task(task=task)
+
+    def _calib_prepare(self):
+        """Common set-up for automatic calibrations: checks, live video on, laser to constant power.
+        Returns (power, laser_was_on) or None if a check failed."""
+        if self._slm_busy():
+            return None
+        if self.devs.slm is None or self.devs.camera is None:
+            self.logg.error("Calibration needs both the SLM and the camera")
+            return None
+        power = self.ctrl_panel.QDoubleSpinBox_laserpower_473.value()
+        laser_was_on = self.ctrl_panel.QPushButton_laser_473.isChecked()
+        if power <= 0:
+            self.logg.error("Set a laser power > 0 for calibration")
+            return None
+        try:
+            self.update_cgh_parameters()
+        except Exception as e:
+            self.logg.error(f"Error reading CGH parameters: {e}")
+            return None
+        if getattr(self.devs.camera, "data", None) is None:
+            self.video(True, self.ctrl_panel.QComboBox_live_modes.currentText())
+            self.ctrl_panel.QPushButton_video.setChecked(True)
+        if not laser_was_on:
+            self.set_laser(["473"], True, power)
+        return power, laser_was_on
+
+    def _wait_first_frame(self, timeout_s=10):
+        t0 = time.monotonic()
+        while True:
+            f = self.devs.camera.get_last_image()
+            if f is not None:
+                return f
+            if time.monotonic() - t0 > timeout_s:
+                raise RuntimeError(f"No camera frames after {timeout_s} s")
+            time.sleep(0.1)
+
+    @pyqtSlot(dict)
+    def auto_calibrate_mag_center(self, settings: dict):
+        """
+        Closed-loop calibration of the hologram panel's Magnification, Center-X and Center-Y.
+
+        Each iteration: a grid of target points over the camera field -> holograms made with
+        the current parameters -> projected and detected on the fluorescent layer -> landing
+        error (landed vs target) reported -> parameters re-fitted from all landings so far.
+        Stops when the landing error is within tolerance (or after max iterations), then
+        writes the parameters into the hologram panel and turns 'Use Calib' (affine) off.
+        """
+        prep = self._calib_prepare()
+        if prep is None:
+            return
+        power, laser_was_on = prep
+        hs = self.cgh.holo_sys
+        params = {"magnification": hs.magnification, "center_x": float(hs.image_center_x),
+                  "center_y": float(hs.image_center_y)}
+        exposure_s = max(float(getattr(self.devs.camera, "t_exposure", 20) or 20), 1.0) * 1e-3
+        wait_s = settings["settle_ms"] * 1e-3 + 2 * exposure_s
+        n_avg, n_grid = settings["n_avg"], max(2, settings["grid"])
+        max_iter, tol = int(settings["max_iter"]), float(settings["tol_px"])
+        phase_n = (hs.phase_nx, hs.phase_ny)
+        roi = list(self.ctrl_panel.get_scmos_roi())
+        result = {"params": None}
+
+        def task():
+            iterations, holo_all, cam_all = [], [], []
+            mp = None
+            try:
+                shape = np.asarray(self._wait_first_frame()).shape[:2]
+                cur = dict(params)
+                converged = False
+                for it in range(1, max_iter + 1):
+                    M = slm_cal.simple_to_affine(cur["magnification"], cur["center_x"], cur["center_y"], phase_n)
+                    holo, cam_target = slm_cal.camera_grid_to_holo(M, shape, n_grid, phase_n=phase_n)
+                    if len(holo) < 3:
+                        raise RuntimeError(
+                            f"Iteration {it}: with magnification {cur['magnification']:.5f} and center "
+                            f"({cur['center_x']:.1f}, {cur['center_y']:.1f}) fewer than 3 grid points fall inside "
+                            f"the hologram field. Set rough values first (e.g. the old defaults).")
+                    holo_r, landed, snr, mp_it = self._project_and_detect(holo, wait_s, n_avg, exposure_s,
+                                                                          f"mag/center iter {it}")
+                    mp = mp_it if mp is None else np.maximum(mp, mp_it)
+                    # target position of each projected spot under the parameters used (rounded holo px)
+                    target = slm_cal.holo_to_cam(M, holo_r)
+                    ok = np.isfinite(landed[:, 0])
+                    if ok.sum() < 3:
+                        raise RuntimeError(f"Iteration {it}: only {int(ok.sum())} spots detected; "
+                                           f"increase laser power / averaging or check focus")
+                    err = np.linalg.norm(landed[ok] - target[ok], axis=1)
+                    rec = {"iteration": it, "params_used": dict(cur), "n_spots": int(len(holo)),
+                           "n_detected": int(ok.sum()), "rms_error_px": float(np.sqrt(np.mean(err ** 2))),
+                           "max_error_px": float(err.max()),
+                           "targets_cam": target.tolist(), "landed_cam": landed.tolist()}
+                    iterations.append(rec)
+                    self.logg.info(f"Mag/center iteration {it}: m={cur['magnification']:.5f}, "
+                                   f"c=({cur['center_x']:.1f}, {cur['center_y']:.1f}) -> landing error "
+                                   f"rms {rec['rms_error_px']:.2f} px, max {rec['max_error_px']:.2f} px "
+                                   f"({rec['n_detected']}/{rec['n_spots']} spots)")
+                    holo_all.append(holo_r)
+                    cam_all.append(landed)
+                    if rec["rms_error_px"] <= tol:
+                        converged = True
+                        break
+                    check = slm_cal.model_check(np.vstack(cam_all), np.vstack(holo_all))
+                    if not check["simple_model_ok"]:
+                        cur = None  # the three parameters cannot describe these optics: keep the GUI values
+                        break
+                    cur, _ = slm_cal.fit_simple(np.vstack(cam_all), np.vstack(holo_all), phase_n)
+                check = slm_cal.model_check(np.vstack(cam_all), np.vstack(holo_all))
+                if not check["simple_model_ok"]:
+                    self.logg.warning("Magnification/center cannot make every spot land: the optics have "
+                                      + ", ".join(check["problems"]) + ". Parameters left unchanged; "
+                                      "use the affine calibration (Auto Calibrate + Use Calib) instead.")
+                stamp = time.strftime("%Y%m%d%H%M%S")
+                base = os.path.join(self.path, f"{stamp}_mag_center_calibration")
+                record = {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "start_params": params,
+                          "final_params": cur, "converged": converged, "tolerance_px": tol,
+                          "verified": converged, "iterations": iterations, "model_check": check,
+                          "camera_roi": roi, "camera_frame_shape": list(shape), "settings": settings,
+                          "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
+                          "lens_in_holograms": bool(hs.lens_enabled),
+                          "f_fresnel_m": hs.f_fresnel if hs.lens_enabled else None}
+                acq.write_json(base + ".json", record)
+                if mp is not None:
+                    tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
+                result.update(params=cur, converged=converged, record=record, mp=mp,
+                              landed=np.vstack(cam_all), path=base + ".json", check=check)
+                if cur is not None:
+                    self.logg.info(f"Mag/center calibration {'converged' if converged else 'NOT verified'}: "
+                                   f"m={cur['magnification']:.5f}, c=({cur['center_x']:.1f}, {cur['center_y']:.1f}); "
+                                   f"saved {base}.json")
+                else:
+                    self.logg.info(f"Mag/center measurements saved: {base}.json")
+            except Exception as e:
+                self.logg.error(f"Mag/center calibration failed: {e}")
+
+        def finish():
+            if not laser_was_on:
+                self.set_laser(["473"], False, power)
+            p = result["params"]
+            if p is None:
+                check = result.get("check")
+                why = ("optics have " + ", ".join(check["problems"]) + "; use affine calibration"
+                       if check and not check["simple_model_ok"] else "failed (see log)")
+                self.hg_panel.set_calibration_status(f"Mag/center: not changed, {why}")
+                return
+            self.hg_panel.set_simple_mapping(p["magnification"], p["center_x"], p["center_y"])
+            last = result["record"]["iterations"][-1]
+            state = (f"converged, landing error rms {last['rms_error_px']:.2f} px" if result["converged"]
+                     else f"not verified after {len(result['record']['iterations'])} iterations "
+                          f"(last error rms {last['rms_error_px']:.2f} px); run again")
+            self.hg_panel.set_calibration_status(
+                f"Mag/center: m={p['magnification']:.5f}, c=({p['center_x']:.1f}, {p['center_y']:.1f}) {state}",
+                use=False)
+            if result["mp"] is not None:
+                self.viewer.set_graph_image(result["mp"])
+                ok = np.all(np.isfinite(result["landed"]), axis=1)
+                self.viewer.show_calibration_points(result["landed"][ok, 0], result["landed"][ok, 1])
+
+        self._after_task = finish
+        self.vw.get_dialog(r"Auto Magnification / Center")
         self.run_task(task=task)
 
     @pyqtSlot(int, int)

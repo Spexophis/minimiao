@@ -27,6 +27,7 @@ class HGPanel(QWidget):
     Signal_calib_load = pyqtSignal()
     Signal_calib_use = pyqtSignal(bool)
     Signal_calib_auto = pyqtSignal(dict)
+    Signal_calib_simple = pyqtSignal(dict)
 
     def __init__(self, logg=None, parent=None):
         super().__init__(parent)
@@ -60,9 +61,10 @@ class HGPanel(QWidget):
         self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
         self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
         self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 32)
-        self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(0, 50, 1, 3, 0.332)
-        self.QSpinBox_CGH_CenterX = cw.SpinBoxWidget(-4096, 8192, 1, 1201)
-        self.QSpinBox_CGH_CenterY = cw.SpinBoxWidget(-4096, 8192, 1, 1208)
+        # 5 decimals: a 0.0005 magnification error already moves edge spots by ~2 camera px
+        self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(-50, 50, 0.001, 5, 0.332)
+        self.QDoubleSpinBox_CGH_CenterX = cw.DoubleSpinBoxWidget(-4096, 8192, 1, 1, 1201)
+        self.QDoubleSpinBox_CGH_CenterY = cw.DoubleSpinBoxWidget(-4096, 8192, 1, 1, 1208)
         self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
         self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
         self.QComboBox_CGH_Mode = cw.ComboBoxWidget(list_items=["Sequential", "Simultaneous", "Hybrid"])
@@ -81,9 +83,9 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Magnification')), 3, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QDoubleSpinBox_CGH_Magnification, 3, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-X')), 4, 1, 1, 1)
-        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterX, 4, 2, 1, 1)
+        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_CGH_CenterX, 4, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-Y')), 5, 1, 1, 1)
-        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
+        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_CGH_CenterY, 5, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Mode')), 7, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QComboBox_CGH_Mode, 7, 2, 1, 1)
         cgh_scroll_layout.addWidget(self.QPushButton_SLM_Display, 8, 0, 1, 1)
@@ -109,6 +111,9 @@ class HGPanel(QWidget):
         self.QCheckBox_Calib_Use = cw.CheckBoxWidget('Use Calib')
         self.QSpinBox_Calib_Refine = cw.SpinBoxWidget(0, 10, 1, 5)
         self.QPushButton_Calib_Auto = cw.PushButtonWidget('Auto Calibrate')
+        self.QPushButton_Calib_Simple = cw.PushButtonWidget('Auto Mag/Center')
+        self.QSpinBox_Calib_Iter = cw.SpinBoxWidget(1, 10, 1, 4)
+        self.QDoubleSpinBox_Calib_Tol = cw.DoubleSpinBoxWidget(0.1, 50, 0.5, 1, 2.0)
         self.QLabel_Calib_Status = cw.LabelWidget('Calibration: none')
 
         calib_scroll_layout.addWidget(cw.LabelWidget(str('Camera-SLM Affine Calibration')), 0, 0, 1, 3)
@@ -128,7 +133,12 @@ class HGPanel(QWidget):
         calib_scroll_layout.addWidget(self.QPushButton_Calib_Auto, 6, 0, 1, 1)
         calib_scroll_layout.addWidget(cw.LabelWidget(str('Refine grid')), 6, 1, 1, 1)
         calib_scroll_layout.addWidget(self.QSpinBox_Calib_Refine, 6, 2, 1, 1)
-        calib_scroll_layout.addWidget(self.QLabel_Calib_Status, 7, 0, 1, 3)
+        calib_scroll_layout.addWidget(self.QPushButton_Calib_Simple, 7, 0, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Max iterations')), 7, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QSpinBox_Calib_Iter, 7, 2, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('Tolerance / px')), 8, 1, 1, 1)
+        calib_scroll_layout.addWidget(self.QDoubleSpinBox_Calib_Tol, 8, 2, 1, 1)
+        calib_scroll_layout.addWidget(self.QLabel_Calib_Status, 9, 0, 1, 3)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(calib_scroll_area)
@@ -142,8 +152,8 @@ class HGPanel(QWidget):
 
     def set_simple_mapping(self, magnification: float, center_x: float, center_y: float):
         self.QDoubleSpinBox_CGH_Magnification.setValue(magnification)
-        self.QSpinBox_CGH_CenterX.setValue(int(round(center_x)))
-        self.QSpinBox_CGH_CenterY.setValue(int(round(center_y)))
+        self.QDoubleSpinBox_CGH_CenterX.setValue(round(center_x, 1))
+        self.QDoubleSpinBox_CGH_CenterY.setValue(round(center_y, 1))
 
     def set_calibration_status(self, text: str, use: bool = None):
         self.QLabel_Calib_Status.setText(text)
@@ -179,6 +189,10 @@ class HGPanel(QWidget):
         self.QPushButton_Calib_Load.clicked.connect(self.Signal_calib_load.emit)
         self.QPushButton_Calib_Auto.clicked.connect(
             lambda: self.Signal_calib_auto.emit(self.get_calibration_settings()))
+        self.QPushButton_Calib_Simple.clicked.connect(
+            lambda: self.Signal_calib_simple.emit(dict(self.get_calibration_settings(),
+                                                       max_iter=self.QSpinBox_Calib_Iter.value(),
+                                                       tol_px=self.QDoubleSpinBox_Calib_Tol.value())))
         self.QCheckBox_Calib_Use.toggled.connect(self.Signal_calib_use.emit)
 
     @pyqtSlot()
@@ -207,8 +221,8 @@ class HGPanel(QWidget):
     def get_cgh_parameters(self):
         n  = self.QSpinBox_CGH_Iteration.value()
         m = self.QDoubleSpinBox_CGH_Magnification.value()
-        c0 = self.QSpinBox_CGH_CenterX.value()
-        c1 = self.QSpinBox_CGH_CenterY.value()
+        c0 = self.QDoubleSpinBox_CGH_CenterX.value()
+        c1 = self.QDoubleSpinBox_CGH_CenterY.value()
         return n, m, (c0, c1)
 
     def set_pattern_image(self, img2d: np.ndarray, levels=None):
