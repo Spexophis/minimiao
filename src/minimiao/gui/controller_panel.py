@@ -21,6 +21,7 @@ class ControlPanel(QWidget):
     Signal_slm_load = pyqtSignal()
     Signal_slm_set = pyqtSignal()
     Signal_slm_lens = pyqtSignal()
+    Signal_slm_display = pyqtSignal(int)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_trigger_reset = pyqtSignal()
     Signal_trigger_fire = pyqtSignal(list)
@@ -81,7 +82,9 @@ class ControlPanel(QWidget):
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
         self.QPushButton_SLM_Load = cw.PushButtonWidget('Load Pattern')
         self.QLineEdit_SLM_Pattern = cw.LineEditWidget(True)
-        self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(1, 1024, 1, 1)  # slot 0 is reserved for the correction
+        # Load Pattern refuses slot 0 (correction); Display Pattern can show any slot including 0
+        self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(0, 1024, 1, 1)
+        self.QPushButton_SLM_Display = cw.PushButtonWidget('Display Pattern')
         self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -100)
         self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -80)
         self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 455)
@@ -94,6 +97,7 @@ class ControlPanel(QWidget):
         slm_scroll_layout.addRow(self.QPushButton_SLM_Load)
         slm_scroll_layout.addRow(self.QLineEdit_SLM_Pattern)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Slot')), self.QSpinBox_SLM_Slot)
+        slm_scroll_layout.addRow(self.QPushButton_SLM_Display)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset X')), self.QSpinBox_SLM_OffsetX)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset Y')), self.QSpinBox_SLM_OffsetY)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Fresnel f / mm')), self.QDoubleSpinBox_SLM_Focal)
@@ -244,6 +248,8 @@ class ControlPanel(QWidget):
         self.QPushButton_SLM_Correction.clicked.connect(self.load_slm_correction)
         self.QPushButton_SLM_Load.clicked.connect(self.load_slm_pattern)
         self.QPushButton_SLM_Lens.clicked.connect(self.Signal_slm_lens.emit)
+        self.QPushButton_SLM_Display.clicked.connect(
+            lambda: self.Signal_slm_display.emit(self.QSpinBox_SLM_Slot.value()))
         self.QDoubleSpinBox_stage_x.valueChanged.connect(self.set_stage_x)
         self.QDoubleSpinBox_stage_y.valueChanged.connect(self.set_stage_y)
         self.QDoubleSpinBox_stage_z.valueChanged.connect(self.set_stage_z)

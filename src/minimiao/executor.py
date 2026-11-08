@@ -60,6 +60,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_slm_correction.connect(self.load_slm_correction)
         self.ctrl_panel.Signal_slm_load.connect(self.load_slm_pattern)
         self.ctrl_panel.Signal_slm_lens.connect(self.apply_slm_lens)
+        self.ctrl_panel.Signal_slm_display.connect(self.display_slm_slot)
         # Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
         # Trigger
@@ -365,6 +366,9 @@ class CommandExecutor(QObject):
     @pyqtSlot(int)
     def display_slm_slot(self, slot: int):
         if self._slm_busy():
+            return
+        if self.devs.slm is None:
+            self.logg.error("No SLM connected")
             return
         try:
             self.devs.slm.display_pattern(slot)
