@@ -249,9 +249,10 @@ class CGH:
         return None
 
     def _finalize(self, phase_spots, trg=True):
-        """Add lens, quantize, embed in the correction pattern, add trigger patch."""
-        phase_fresnel_lens = self.generate_fresnel_lens_phase()
-        phase_total = (phase_spots + phase_fresnel_lens) % (2.0 * np.pi)
+        """Quantize, embed in the correction pattern, add trigger patch.
+        Holograms carry no Fresnel lens; the lens is an SLM-level setting
+        applied only to slot 0 (compute_lens_pattern)."""
+        phase_total = phase_spots % (2.0 * np.pi)
         phase_uint = self.phase_to_uint(phase_total, self.holo_sys.correction_value)
         pattern = self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
                                   self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
@@ -322,6 +323,22 @@ class CGH:
         phase_spots = self.gerchberg_saxton_multiplane(targets, defocus_phases, plane_weights)
         return self._finalize(phase_spots, trg=trg)
 
+    def compute_lens_pattern(self, f_m=None):
+        """
+        Slot-0 pattern: correction + Fresnel lens of focal length f_m (metres;
+        default holo_sys.f_fresnel) over the hologram region (same size and
+        SLM offset as holograms), no trigger patch. f_m <= 0 or None-equivalent
+        zero gives the correction alone.
+        """
+        f = self.holo_sys.f_fresnel if f_m is None else f_m
+        if f and f > 0:
+            phase = self.generate_fresnel_lens_phase(f)
+        else:
+            phase = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx))
+        phase_uint = self.phase_to_uint(phase, self.holo_sys.correction_value)
+        return self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
+                               self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
+
     def generate_defocus_phase(self, delta_z: float) -> np.ndarray:
         """
         Exact (non-paraxial) defocus phase for an axial offset delta_z from the
@@ -337,7 +354,7 @@ class CGH:
         phi = k * delta_z * (np.sqrt(np.clip(1.0 - rho2 / f ** 2, 0.0, None)) - 1.0)
         return np.mod(phi, 2.0 * np.pi)
 
-    def generate_fresnel_lens_phase(self):
+    def generate_fresnel_lens_phase(self, f_m=None):
         """
         Generate a Fresnel lens phase pattern
 
@@ -351,7 +368,8 @@ class CGH:
         y = (np.arange(self.holo_sys.phase_ny) - self.holo_sys.phase_ny / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
         X, Y = np.meshgrid(x, y)
         k = 2.0 * np.pi / self.holo_sys.wavelength
-        phi = -k * (X ** 2 + Y ** 2) / (2.0 * self.holo_sys.f_fresnel)
+        f = self.holo_sys.f_fresnel if f_m is None else f_m
+        phi = -k * (X ** 2 + Y ** 2) / (2.0 * f)
         phase = np.mod(phi, 2.0 * np.pi)
         return phase
 

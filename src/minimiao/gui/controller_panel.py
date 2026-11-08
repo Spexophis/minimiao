@@ -20,6 +20,7 @@ class ControlPanel(QWidget):
     Signal_slm_correction = pyqtSignal()
     Signal_slm_load = pyqtSignal()
     Signal_slm_set = pyqtSignal()
+    Signal_slm_lens = pyqtSignal()
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_trigger_update = pyqtSignal(int)
     Signal_trigger_reset = pyqtSignal()
@@ -81,6 +82,8 @@ class ControlPanel(QWidget):
         self.QSpinBox_SLM_Slot = cw.SpinBoxWidget(1, 1024, 1, 1)  # slot 0 is reserved for the correction
         self.QSpinBox_SLM_OffsetX = cw.SpinBoxWidget(-512, 512, 1, -100)
         self.QSpinBox_SLM_OffsetY = cw.SpinBoxWidget(-512, 512, 1, -80)
+        self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 455)
+        self.QPushButton_SLM_Lens = cw.PushButtonWidget('Apply Lens (Slot 0)')
 
         slm_scroll_layout.addRow(cw.LabelWidget(str('Hamamatsu SLM')))
         slm_scroll_layout.addRow(cw.FrameWidget())
@@ -90,6 +93,8 @@ class ControlPanel(QWidget):
         slm_scroll_layout.addRow(cw.LabelWidget(str('Slot')), self.QSpinBox_SLM_Slot)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset X')), self.QSpinBox_SLM_OffsetX)
         slm_scroll_layout.addRow(cw.LabelWidget(str('Offset Y')), self.QSpinBox_SLM_OffsetY)
+        slm_scroll_layout.addRow(cw.LabelWidget(str('Fresnel f / mm')), self.QDoubleSpinBox_SLM_Focal)
+        slm_scroll_layout.addRow(self.QPushButton_SLM_Lens)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(scmos_scroll_area)
@@ -256,6 +261,7 @@ class ControlPanel(QWidget):
     def _set_signal_connections(self):
         self.QPushButton_SLM_Correction.clicked.connect(self.load_slm_correction)
         self.QPushButton_SLM_Load.clicked.connect(self.load_slm_pattern)
+        self.QPushButton_SLM_Lens.clicked.connect(self.Signal_slm_lens.emit)
         self.QDoubleSpinBox_stage_x.valueChanged.connect(self.set_stage_x)
         self.QDoubleSpinBox_stage_y.valueChanged.connect(self.set_stage_y)
         self.QDoubleSpinBox_stage_z.valueChanged.connect(self.set_stage_z)
@@ -300,6 +306,10 @@ class ControlPanel(QWidget):
     def display_loaded_pattern(self, filename=None):
         if filename is not None:
             self.QLineEdit_SLM_Pattern.setText(str(filename))
+
+    def get_slm_focal_mm(self):
+        """Fresnel lens focal length for slot 0 (mm; 0 = no lens)."""
+        return self.QDoubleSpinBox_SLM_Focal.value()
 
     def get_slm_parameters(self):
         ox = self.QSpinBox_SLM_OffsetX.value()

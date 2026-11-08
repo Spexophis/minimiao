@@ -54,6 +54,7 @@ class CommandExecutor(QObject):
         # SLM
         self.ctrl_panel.Signal_slm_correction.connect(self.load_slm_correction)
         self.ctrl_panel.Signal_slm_load.connect(self.load_slm_pattern)
+        self.ctrl_panel.Signal_slm_lens.connect(self.apply_slm_lens)
         # Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
         # Trigger
@@ -113,7 +114,7 @@ class CommandExecutor(QObject):
         hs = self.cgh.holo_sys
         return {
             "cgh_at_last_hologram_computation": {"magnification": hs.magnification, "center": [hs.image_center_x, hs.image_center_y],
-                    "f_fresnel_m": hs.f_fresnel, "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
+                    "f_reference_m": hs.f_fresnel, "holograms_include_lens": False, "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
                     "correction_value": hs.correction_value, "mode_last_computed": self.hg_panel.get_cgh_mode(),
                     "spots_xy_um_z": [list(map(float, sp)) for sp in (self.cgh.spots_xy or [])]},
             "affine_calibration": {"in_use": bool(self.cgh.use_affine and self.cgh.affine is not None),
@@ -259,6 +260,30 @@ class CommandExecutor(QObject):
         self.slot_patterns[slot] = (file_name, self.devs.slm.pattern)
         self.ctrl_panel.display_loaded_pattern(file_name)
         self.hg_panel.set_pattern_image(self.devs.slm.pattern)
+
+    @pyqtSlot()
+    def apply_slm_lens(self):
+        """Replace slot 0 with correction + Fresnel lens (f from the SLM panel; 0 = correction only)."""
+        if self._slm_busy():
+            return
+        if self.devs.slm is None:
+            self.logg.error("No SLM connected")
+            return
+        f_mm = self.ctrl_panel.get_slm_focal_mm()
+        (ox, oy), _ = self.ctrl_panel.get_slm_parameters()
+        self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y = ox, oy
+        try:
+            pattern = self.cgh.compute_lens_pattern(f_mm * 1e-3)
+            self.devs.slm.write_array(pattern, self.CORRECTION_SLOT)
+            self.devs.slm.display_pattern(self.CORRECTION_SLOT)
+        except Exception as e:
+            self.logg.error(f"Error applying Fresnel lens to slot 0: {e}")
+            return
+        label = f"correction + Fresnel lens f={f_mm:g} mm" if f_mm > 0 else "correction (no lens)"
+        self.slot_patterns[self.CORRECTION_SLOT] = (label, pattern)
+        self.hg_panel.set_pattern_image(pattern)
+        self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.CORRECTION_SLOT)
+        self.logg.info(f"SLM slot 0: {label}, offset ({ox}, {oy})")
 
     @pyqtSlot(int)
     def display_slm_slot(self, slot: int):
@@ -540,9 +565,11 @@ class CommandExecutor(QObject):
         self.viewer.start_target_picking()
 
     def update_cgh_parameters(self):
-        n, m, f, c = self.hg_panel.get_cgh_parameters()
+        n, m, c = self.hg_panel.get_cgh_parameters()
         o, idx = self.ctrl_panel.get_slm_parameters()
-        self.cgh.update_parameters(n, m, f * 1e-3, c, o)
+        f_mm = self.ctrl_panel.get_slm_focal_mm()
+        # holograms carry no lens; f is only the reference distance for z-offset spots
+        self.cgh.update_parameters(n, m, f_mm * 1e-3 if f_mm > 0 else self.cgh.holo_sys.f_fresnel, c, o)
         if self.cgh.use_affine and self.cgh.affine is not None:
             self.logg.info("Using affine calibration; Magnification / Center-X / Center-Y are ignored")
             roi = list(self.ctrl_panel.get_scmos_roi())

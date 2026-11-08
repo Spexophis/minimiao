@@ -63,7 +63,6 @@ class HGPanel(QWidget):
         self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(0, 50, 1, 3, 0.332)
         self.QSpinBox_CGH_CenterX = cw.SpinBoxWidget(-4096, 8192, 1, 1201)
         self.QSpinBox_CGH_CenterY = cw.SpinBoxWidget(-4096, 8192, 1, 1208)
-        self.QDoubleSpinBox_SLM_Focal = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 455)
         self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
         self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
         self.QComboBox_CGH_Mode = cw.ComboBoxWidget(list_items=["Sequential", "Simultaneous", "Hybrid"])
@@ -85,8 +84,6 @@ class HGPanel(QWidget):
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterX, 4, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Center-Y')), 5, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QSpinBox_CGH_CenterY, 5, 2, 1, 1)
-        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Focal Length')), 6, 1, 1, 1)
-        cgh_scroll_layout.addWidget(self.QDoubleSpinBox_SLM_Focal, 6, 2, 1, 1)
         cgh_scroll_layout.addWidget(cw.LabelWidget(str('Mode')), 7, 1, 1, 1)
         cgh_scroll_layout.addWidget(self.QComboBox_CGH_Mode, 7, 2, 1, 1)
         cgh_scroll_layout.addWidget(self.QPushButton_SLM_Display, 8, 0, 1, 1)
@@ -210,10 +207,9 @@ class HGPanel(QWidget):
     def get_cgh_parameters(self):
         n  = self.QSpinBox_CGH_Iteration.value()
         m = self.QDoubleSpinBox_CGH_Magnification.value()
-        f = self.QDoubleSpinBox_SLM_Focal.value()
         c0 = self.QSpinBox_CGH_CenterX.value()
         c1 = self.QSpinBox_CGH_CenterY.value()
-        return n, m, f, (c0, c1)
+        return n, m, (c0, c1)
 
     def set_pattern_image(self, img2d: np.ndarray, levels=None):
         self.pattern_img_item.clear()
