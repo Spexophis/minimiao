@@ -634,6 +634,7 @@ class CommandExecutor(QObject):
     @pyqtSlot()
     def load_cgh_target(self):
         file_name = self.vw.get_file_name()
+        self.viewer.clear_calibration_points()
         if file_name is not None:
             self.cgh.load_mask(file_name)
             self.viewer.set_graph_image(self.cgh.cell_mask)
@@ -657,8 +658,7 @@ class CommandExecutor(QObject):
             if self.calib_meta.get("camera_roi") not in (None, roi):
                 self.logg.warning(f"Camera ROI/binning {roi} differs from calibration "
                                   f"{self.calib_meta.get('camera_roi')}; spot positions will be wrong")
-        rows = self.viewer.get_target_spots()
-        # skip empty / incomplete table rows
+        rows = self.viewer.get_target_spots()  # picked spots, index = hologram "spot i"
         pts = [tuple(float(v) for v in r) for r in rows
                if r is not None and all(isinstance(v, (int, float)) for v in r)]
         self.cgh.load_spots_picked(pts)
@@ -681,7 +681,8 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Error loading hologram '{h['label']}' to SLM slot {slot}: {e}")
                 return
             self.slot_patterns[slot] = (h["label"], h["pattern"])
-            self.logg.info(f"SLM slot {slot}: {h['label']}")
+            coords = ", ".join(f"({self.cgh.spots_xy[i][0]:.0f}, {self.cgh.spots_xy[i][1]:.0f})" for i in h["spots"])
+            self.logg.info(f"SLM slot {slot}: {h['label']} at cam px {coords}")
 
     def _show_first_hologram(self):
         entry = self.slot_patterns.get(self.FIRST_HOLOGRAM_SLOT)
@@ -948,7 +949,7 @@ class CommandExecutor(QObject):
         data, cam_pts, max_proj, path = self._calib_result
         self.viewer.set_graph_image(max_proj)
         ok = np.all(np.isfinite(cam_pts), axis=1)
-        self.viewer.target_spots_item.setData(cam_pts[ok, 0], cam_pts[ok, 1])
+        self.viewer.show_calibration_points(cam_pts[ok, 0], cam_pts[ok, 1])
         self._set_calib_status(data, os.path.basename(path))
 
     def _set_calib_status(self, data, name):

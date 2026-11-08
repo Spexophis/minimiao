@@ -52,8 +52,11 @@ class FramePool(QObject):
 class LiveViewer(QWidget):
     """
     Top: live camera display (vispy, GPU; contrast min/max, fit, auto, cursor readout).
-    Bottom: target image for spot picking / calibration results (pyqtgraph) + spot table.
+    Bottom: target image for spot picking / calibration results (pyqtgraph). Picked spots
+    are drawn as numbered markers; the index matches the hologram labels ("spot i").
     """
+    SPOT_DEFAULT_Z_UM = 0.0
+    SPOT_DEFAULT_INTENSITY = 1.0
     frame_token_signal = pyqtSignal(object)
 
     def __init__(self, logg, parent=None):
@@ -73,8 +76,13 @@ class LiveViewer(QWidget):
         self.image_plot.setFocusPolicy(Qt.FocusPolicy.ClickFocus)
         self.image_plot.installEventFilter(self)
 
-        self.target_spots_item = pg.ScatterPlotItem(size=8, pen=pg.mkPen(width=2))
+        # picked spots: ring markers + index labels; calibration detections: separate cross markers
+        self.target_spots_item = pg.ScatterPlotItem(size=12, pen=pg.mkPen((255, 220, 0), width=2),
+                                                    brush=None, symbol="o")
         self.image_plot.addItem(self.target_spots_item)
+        self._spot_labels = []
+        self.calib_spots_item = pg.ScatterPlotItem(size=10, pen=pg.mkPen((0, 220, 255), width=2), symbol="+")
+        self.image_plot.addItem(self.calib_spots_item)
 
         self._setup_signal_connections()
 
@@ -91,12 +99,8 @@ class LiveViewer(QWidget):
         image_widget = self._create_image_widgets()
         splitter.addWidget(image_widget)
 
-        table_widget = self._create_table_widget()
-        splitter.addWidget(table_widget)
-
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
-        splitter.setStretchFactor(2, 0)
         layout.addWidget(splitter)
         self.setLayout(layout)
 
@@ -154,19 +158,6 @@ class LiveViewer(QWidget):
         image_widget.setLayout(layout_image)
 
         return image_widget
-
-    def _create_table_widget(self):
-        layout_table = QVBoxLayout()
-
-        self.spot_table = cw.TableWidget(headers=['X', 'Y', 'Z (um)', 'Intensity'], n_rows=2)
-
-        layout_table.addWidget(cw.LabelWidget("Spot Coordinates"))
-        layout_table.addWidget(self.spot_table)
-
-        table_widget = QWidget()
-        table_widget.setLayout(layout_table)
-
-        return table_widget
 
     def _setup_signal_connections(self):
         self.QSlider_black.valueChanged.connect(self.on_black_change)
@@ -269,6 +260,9 @@ class LiveViewer(QWidget):
         self._picking_enabled = False
         self.image_plot.unsetCursor()
         self._update_pick_status(done=True)
+        spots = self.get_target_spots()
+        self.logg.info(f"Picked {len(spots)} spot(s) [index: x, y (cam px), z (um), intensity]: "
+                       + "; ".join(f"{i}: {x:.0f}, {y:.0f}, {z:g}, {a:g}" for i, (x, y, z, a) in enumerate(spots)))
 
     def cancel_target_picking(self):
         self._picking_enabled = False
@@ -276,7 +270,16 @@ class LiveViewer(QWidget):
         self._update_pick_status(cancelled=True)
 
     def get_target_spots(self):
-        return self.spot_table.get_row(-1)
+        """Picked spots as [x, y, z_um, intensity] rows (camera pixels), index = hologram spot index."""
+        return [[float(u), float(v), self.SPOT_DEFAULT_Z_UM, self.SPOT_DEFAULT_INTENSITY]
+                for (u, v) in self.target_points]
+
+    def show_calibration_points(self, xs, ys):
+        """Overlay calibration detections (no index labels; picked spots stay visible)."""
+        self.calib_spots_item.setData(list(xs), list(ys))
+
+    def clear_calibration_points(self):
+        self.calib_spots_item.setData([], [])
 
     def _update_pick_status(self, done=False, cancelled=False):
         n = len(getattr(self, "target_points", []))
@@ -316,17 +319,24 @@ class LiveViewer(QWidget):
         u = int(np.clip(np.floor(x), 0, w - 1))
         v = int(np.clip(np.floor(y), 0, h - 1))
         self.target_points.append((u, v))
-        self.spot_table.fill_row(len(self.target_points) - 1, [u, v, 0.0, 1.0])
         self._update_target_spots_overlay()
         self._update_pick_status()
 
     def _update_target_spots_overlay(self):
+        for t in self._spot_labels:
+            self.image_plot.removeItem(t)
+        self._spot_labels = []
         if not self.target_points:
             self.target_spots_item.setData([], [])
             return
         xs = [p[0] for p in self.target_points]
         ys = [p[1] for p in self.target_points]
         self.target_spots_item.setData(xs, ys)
+        for i, (u, v) in enumerate(self.target_points):
+            label = pg.TextItem(str(i), color=(255, 220, 0), anchor=(-0.3, 1.1))
+            label.setPos(u, v)
+            self.image_plot.addItem(label)
+            self._spot_labels.append(label)
 
     def eventFilter(self, obj, event):
         if obj is self.image_plot and self._picking_enabled:
