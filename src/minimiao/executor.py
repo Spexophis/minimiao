@@ -3,6 +3,7 @@
 
 
 import os
+import threading
 import time
 
 import numpy as np
@@ -13,11 +14,13 @@ from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
 from . import run_threads
 from .computations import slm_calibration as slm_cal
 from .experiments import acquisition as acq
+from .devices import trigger_box as tbx
 
 
 class CommandExecutor(QObject):
     svd = pyqtSignal(str)
     sig_progress = pyqtSignal(str)
+    sig_trigger_status = pyqtSignal(str)
     sig_plt = pyqtSignal(list, list)
     sig_auto_focus = pyqtSignal(float)
 
@@ -30,6 +33,8 @@ class CommandExecutor(QObject):
         self.hg_panel = self.vw.hg_panel
         self.acq_panel = self.vw.acq_panel
         self.runner = None
+        self._fire_thread = None
+        self._fire_stopped = threading.Event()
         self.trg = cmp.trg
         self.cgh = cmp.cgh
         self.path = path
@@ -58,8 +63,9 @@ class CommandExecutor(QObject):
         # Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
         # Trigger
-        # self.ctrl_panel.Signal_trigger_reset.connect(self.reset_trigger_channels)
-        # self.ctrl_panel.Signal_trigger_update.connect(self.update_trigger_sample_rate)
+        self.ctrl_panel.Signal_trigger_fire.connect(self.fire_trigger)
+        self.ctrl_panel.Signal_trigger_reset.connect(self.stop_trigger)
+        self.sig_trigger_status.connect(self.ctrl_panel.display_trigger_status)
         # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
@@ -98,6 +104,70 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Camera Error: {e}")
 
+    # ---- TriggerBox: manual fire -------------------------------------------------
+
+    def _trigger_firing(self):
+        return self._fire_thread is not None and self._fire_thread.is_alive()
+
+    @pyqtSlot(list)
+    def fire_trigger(self, outputs: list):
+        """Build one sequence from the DO#1..8 rows (start / pulse / interval / N) and fire it."""
+        tb = getattr(self.devs, "trg", None)
+        if tb is None:
+            self.logg.error("TriggerBox not connected")
+            return
+        if self._trigger_firing():
+            self.logg.error("TriggerBox is already firing; press Stop / Reset to abort it")
+            return
+        if getattr(self, "task_worker", None) is not None and self.task_worker.isRunning():
+            self.logg.error("A task is running (it may be using the TriggerBox); fire refused")
+            return
+        try:
+            seq, summary = tbx.sequence_from_outputs(outputs)
+        except Exception as e:
+            self.logg.error(f"Trigger settings: {e}")
+            self.ctrl_panel.display_trigger_status(f"Error: {e}")
+            return
+        desc = "; ".join(f"DO#{s['channel']}: {len(s['onsets_ms'])} x {s['width_ms']:g} ms"
+                         + (f" every {s['onsets_ms'][1] - s['onsets_ms'][0]:g} ms" if len(s['onsets_ms']) > 1 else "")
+                         + f" from {s['onsets_ms'][0]:g} ms" for s in summary)
+        total = max(s["end_ms"] for s in summary)
+        self.logg.info(f"Firing TriggerBox ({seq.sysclk_hz} Hz clock, {total:g} ms): {desc}")
+        self.ctrl_panel.display_trigger_status(f"Firing... {desc}")
+
+        self._fire_stopped.clear()
+
+        def job():
+            try:
+                tb.execute(seq, wait=True)
+                if self._fire_stopped.is_set():
+                    self.sig_trigger_status.emit(f"Stopped early: {desc}")
+                else:
+                    self.sig_trigger_status.emit(f"Done ({total:g} ms): {desc}")
+            except Exception as e:
+                self.logg.error(f"TriggerBox fire failed: {e}")
+                self.sig_trigger_status.emit(f"Error: {e}")
+
+        self._fire_thread = threading.Thread(target=job, daemon=True)
+        self._fire_thread.start()
+
+    @pyqtSlot()
+    def stop_trigger(self):
+        """Stop any running sequence and reset the TriggerBox."""
+        tb = getattr(self.devs, "trg", None)
+        if tb is None:
+            self.logg.error("TriggerBox not connected")
+            return
+        if self._trigger_firing():
+            self._fire_stopped.set()
+        try:
+            tb.stop()
+            tb.reset()
+            self.ctrl_panel.display_trigger_status("Stopped / reset")
+            self.logg.info("TriggerBox stopped and reset")
+        except Exception as e:
+            self.logg.error(f"TriggerBox stop/reset failed: {e}")
+
     # ---- acquisition blocks / loops --------------------------------------------
 
     def _show_progress(self, msg: str):
@@ -127,6 +197,9 @@ class CommandExecutor(QObject):
     def _start_acquisition_task(self, title, settings: dict, job):
         """Common checks + camera setup, then run job(runner, block_settings) in the worker thread."""
         if self._slm_busy():
+            return
+        if self._trigger_firing():
+            self.logg.error("TriggerBox is busy firing; wait or press Stop / Reset")
             return
         missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
         if missing:

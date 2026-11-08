@@ -13,6 +13,7 @@ Replies are "OK: ..." or "ERR N: ...".
 
 import math
 import re
+import threading
 import time
 import warnings
 from dataclasses import dataclass, field
@@ -455,6 +456,63 @@ def pulse_train_sequence(n_pulses=5, width_ms=10.0, interval_ms=100.0, start_ms=
     return seq, train
 
 
+def sequence_from_outputs(outputs, max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigger=False):
+    """
+    One Sequence from per-output pulse settings (the GUI's DO#1..8 rows).
+
+    outputs: iterable of dicts with keys
+        channel (1..8; DOn -> DIGn -> OUTn), start_ms, width_ms, interval_ms, n_pulses
+    n_pulses == 0  -> output not used
+    n_pulses == 1  -> single level pulse (DIGTRIG), any channel 1-8, whole-ms start and width
+    n_pulses >= 2  -> pulse train (DIG PWM), channels 1-5, interval = onset-to-onset = 1000/N ms
+
+    Returns (Sequence, summary list of {channel, onsets_ms, width_ms, end_ms}).
+    """
+    channels, summary = [], []
+    for o in outputs:
+        ch, n = int(o["channel"]), int(o["n_pulses"])
+        start, width, interval = float(o["start_ms"]), float(o["width_ms"]), float(o["interval_ms"])
+        if n <= 0:
+            continue
+        tag = f"DO#{ch}"
+        if not 1 <= ch <= N_DIGITAL:
+            raise ValueError(f"{tag}: channel must be 1-{N_DIGITAL}")
+        if start < 0 or abs(start - round(start)) > 1e-9:
+            raise ValueError(f"{tag}: start must be a whole number of ms >= 0 (got {start})")
+        if width <= 0:
+            raise ValueError(f"{tag}: pulse width must be > 0")
+        start = int(round(start))
+        if n == 1:
+            if abs(width - round(width)) > 1e-9:
+                raise ValueError(f"{tag}: a single pulse is a level output with 1 ms resolution; "
+                                 f"use a whole-ms width (got {width})")
+            channels.append(DigitalTrigger(ch, start_ms=start, stop_ms=start + int(round(width)), output=ch))
+            summary.append({"channel": ch, "onsets_ms": [start], "width_ms": width, "end_ms": start + width})
+        else:
+            try:
+                train = PulseTrain(n, width, interval, start, ch, ch)
+            except ValueError as e:
+                raise ValueError(f"{tag}: {e}") from None
+            channels.append(train.channel_def())
+            summary.append({"channel": ch, "onsets_ms": train.onsets_ms, "width_ms": width,
+                            "end_ms": train.last_pulse_end_ms})
+    if not channels:
+        raise ValueError("No output enabled (set N > 0 for at least one DO)")
+    pwm = [c for c in channels if isinstance(c, DigitalPulse)]
+    if pwm:
+        freqs, widths = [c.freq_hz for c in pwm], [c.width_us for c in pwm]
+        sysclk = choose_sysclk(freqs, min_width_us=min(widths), max_hz=max_sysclk_hz, widths_us=widths)
+        if sysclk is None:
+            raise ValueError(f"No TriggerBox system clock fits pulse frequencies {freqs} Hz together "
+                             f"(spread too wide for the shared prescaler, or pulses too short)")
+    else:
+        sysclk = 1000  # level outputs only: 1 ms ticks match the ms resolution
+    seq = Sequence(sysclk_hz=sysclk, external_trigger=external_trigger)
+    seq.add(*channels)
+    seq.validate()
+    return seq, summary
+
+
 class TriggerBox:
     def __init__(self, port: str = "COM7", baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
                  raise_on_error: bool = True, logg=None):
@@ -467,6 +525,7 @@ class TriggerBox:
         self.quiet = quiet
         self.raise_on_error = raise_on_error
         self.last_sequence: Optional[Sequence] = None
+        self._lock = threading.RLock()  # one command/reply exchange at a time across threads
         self._ser = serial.Serial(port, baud, bytesize=8, parity="N", stopbits=1, timeout=0)
         time.sleep(0.1)
         self._ser.reset_input_buffer()
@@ -511,9 +570,10 @@ class TriggerBox:
     def send(self, cmd: str, timeout: Optional[float] = None) -> str:
         """Send one command, return the reply text. Raises TriggerBoxError on 'ERR N'."""
         cmd = cmd.strip()
-        self._ser.reset_input_buffer()
-        self._ser.write(cmd.encode("ascii") + b"\r")
-        reply = self._read_reply(self.timeout if timeout is None else timeout)
+        with self._lock:
+            self._ser.reset_input_buffer()
+            self._ser.write(cmd.encode("ascii") + b"\r")
+            reply = self._read_reply(self.timeout if timeout is None else timeout)
         self.logg.info(f">> {cmd}\n   {reply.replace(chr(10), chr(10) + '   ') or '[no reply]'}")
         m = re.search(r"ERR\s*(\d+)\s*:?\s*(.*)", reply)
         if m and self.raise_on_error:
@@ -618,6 +678,12 @@ class TriggerBox:
         if wait:
             self.wait_until_done()
         return info
+
+    def fire_outputs(self, outputs, wait=True) -> list:
+        """Build a sequence from per-output settings (see sequence_from_outputs), upload, ARM, RUN."""
+        seq, summary = sequence_from_outputs(outputs)
+        self.execute(seq, wait=wait)
+        return summary
 
     def run_pulse_train(self, n_pulses=5, width_ms=10.0, interval_ms=100.0, start_ms=0, channel=1,
                         output=None, wait=True) -> PulseTrain:

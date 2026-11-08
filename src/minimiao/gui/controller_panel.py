@@ -22,8 +22,10 @@ class ControlPanel(QWidget):
     Signal_slm_set = pyqtSignal()
     Signal_slm_lens = pyqtSignal()
     Signal_set_laser = pyqtSignal(list, bool, float)
-    Signal_trigger_update = pyqtSignal(int)
     Signal_trigger_reset = pyqtSignal()
+    Signal_trigger_fire = pyqtSignal(list)
+    N_TTL = 8
+    TTL_FIELDS = ("start", "pulse", "interval", "n")
     Signal_video = pyqtSignal(bool, str)
     Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
@@ -157,56 +159,34 @@ class ControlPanel(QWidget):
         stage_scroll_layout.addWidget(self.QDoubleSpinBox_step_z, 12, 1)
         stage_scroll_layout.addWidget(self.QDoubleSpinBox_range_z, 12, 2)
 
-        self.QSpinBox_trigger_sample_rate = cw.SpinBoxWidget(100, 1250, 1, 250)
-        self.QPushButton_reset_trigger = cw.PushButtonWidget("Reset")
-        self.QDoubleSpinBox_ttl_start_1 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_1 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_2 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_2 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_3 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_3 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_4 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_4 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_5 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_5 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_6 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_6 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_7 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_7 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-        self.QDoubleSpinBox_ttl_start_8 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.008)
-        self.QDoubleSpinBox_ttl_stop_8 = cw.DoubleSpinBoxWidget(0, 50, 0.001, 5, 0.032)
-
+        self.QPushButton_reset_trigger = cw.PushButtonWidget("Stop / Reset")
+        self.QPushButton_fire_trigger = cw.PushButtonWidget("Fire")
+        self.QLabel_trigger_status = cw.LabelWidget("Not fired")
         trigger_scroll_layout.addWidget(cw.LabelWidget(str('Trigger Box')), 0, 0)
-        trigger_scroll_layout.addWidget(self.QPushButton_reset_trigger, 0, 1)
-        trigger_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('Sample Rate / KS/s')), 2, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QSpinBox_trigger_sample_rate, 2, 1, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('From / s')), 3, 1, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('To / s')), 3, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#1')), 4, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_1, 4, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_1, 4, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#2')), 5, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_2, 5, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_2, 5, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#3')), 6, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_3, 6, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_3, 6, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#4')), 7, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_4, 7, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_4, 7, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#5')), 8, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_5, 8, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_5, 8, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#6')), 9, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_6, 9, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_6, 9, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#7')), 10, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_7, 10, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_7, 10, 2, 1, 1)
-        trigger_scroll_layout.addWidget(cw.LabelWidget(str('DO#8')), 11, 0, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_start_8, 11, 1, 1, 1)
-        trigger_scroll_layout.addWidget(self.QDoubleSpinBox_ttl_stop_8, 11, 2, 1, 1)
+        trigger_scroll_layout.addWidget(self.QPushButton_fire_trigger, 0, 1, 1, 2)
+        trigger_scroll_layout.addWidget(self.QPushButton_reset_trigger, 0, 3, 1, 2)
+        trigger_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 5)
+        for col, text in enumerate(('', 'Start / ms', 'Pulse / ms', 'Interval / ms', 'N')):
+            if text:
+                trigger_scroll_layout.addWidget(cw.LabelWidget(text), 2, col, 1, 1)
+        # DO#n -> TriggerBox DIGn -> OUTn. N = 0: output off. N >= 2 needs DO#1-5 (PWM channels).
+        # Default DO#1: Exp1 laser train, 5 x 10 ms pulses, 100 ms apart.
+        for n in range(1, self.N_TTL + 1):
+            start = cw.DoubleSpinBoxWidget(0, 600000, 1, 0, 0)
+            pulse = cw.DoubleSpinBoxWidget(0.01, 600000, 1, 2, 10.0)
+            interval = cw.DoubleSpinBoxWidget(0.01, 600000, 10, 2, 100.0)
+            count = cw.SpinBoxWidget(0, 100000, 1, 5 if n == 1 else 0)
+            setattr(self, f"QDoubleSpinBox_ttl_start_{n}", start)
+            setattr(self, f"QDoubleSpinBox_ttl_pulse_{n}", pulse)
+            setattr(self, f"QDoubleSpinBox_ttl_interval_{n}", interval)
+            setattr(self, f"QSpinBox_ttl_n_{n}", count)
+            row = 2 + n
+            trigger_scroll_layout.addWidget(cw.LabelWidget(f'DO#{n}'), row, 0, 1, 1)
+            trigger_scroll_layout.addWidget(start, row, 1, 1, 1)
+            trigger_scroll_layout.addWidget(pulse, row, 2, 1, 1)
+            trigger_scroll_layout.addWidget(interval, row, 3, 1, 1)
+            trigger_scroll_layout.addWidget(count, row, 4, 1, 1)
+        trigger_scroll_layout.addWidget(self.QLabel_trigger_status, 3 + self.N_TTL, 0, 1, 5)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(stage_scroll_area)
@@ -272,8 +252,8 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_stage_z_usb.valueChanged.connect(self.set_stage_z_usb)
         self.QPushButton_laser_473.clicked.connect(self.set_laser_473)
         self.QDoubleSpinBox_laserpower_473.valueChanged.connect(self.pw_laser_473)
-        self.QSpinBox_trigger_sample_rate.valueChanged.connect(self.update_trigger)
         self.QPushButton_reset_trigger.clicked.connect(self.reset_trigger)
+        self.QPushButton_fire_trigger.clicked.connect(lambda: self.Signal_trigger_fire.emit(self.get_digital_parameters()))
         self.QPushButton_video.clicked.connect(self.run_video)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
         self.QComboBox_live_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
@@ -391,22 +371,24 @@ class ControlPanel(QWidget):
         power = self.QDoubleSpinBox_laserpower_473.value()
         self.Signal_set_laser.emit(["473"], checked, power)
 
-    @pyqtSlot(int)
-    def update_trigger(self, sample_rate: int):
-        self.Signal_trigger_update.emit(sample_rate)
-
     @pyqtSlot()
     def reset_trigger(self):
         self.Signal_trigger_reset.emit()
 
+    def _ttl_widget(self, field, n):
+        prefix = "QSpinBox" if field == "n" else "QDoubleSpinBox"
+        return getattr(self, f"{prefix}_ttl_{field}_{n}")
+
     def get_digital_parameters(self):
-        digital_starts = [self.QDoubleSpinBox_ttl_start_1.value(), self.QDoubleSpinBox_ttl_start_2.value(),
-                          self.QDoubleSpinBox_ttl_start_3.value(), self.QDoubleSpinBox_ttl_start_4.value(),
-                          self.QDoubleSpinBox_ttl_start_4.value()]
-        digital_ends = [self.QDoubleSpinBox_ttl_stop_1.value(), self.QDoubleSpinBox_ttl_stop_2.value(),
-                        self.QDoubleSpinBox_ttl_stop_3.value(), self.QDoubleSpinBox_ttl_stop_4.value(),
-                        self.QDoubleSpinBox_ttl_stop_4.value()]
-        return digital_starts, digital_ends
+        """Per-output pulse settings for TriggerBox DO#1..8 (all rows; n_pulses = 0 means off)."""
+        return [{"channel": n,
+                 "start_ms": self._ttl_widget("start", n).value(),
+                 "width_ms": self._ttl_widget("pulse", n).value(),
+                 "interval_ms": self._ttl_widget("interval", n).value(),
+                 "n_pulses": self._ttl_widget("n", n).value()} for n in range(1, self.N_TTL + 1)]
+
+    def display_trigger_status(self, text: str):
+        self.QLabel_trigger_status.setText(text)
 
     @pyqtSlot()
     def run_video(self):
@@ -428,25 +410,12 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def load_selected_digital_timing_presets(self):
         text = self.QComboBox_live_modes.currentText()
-        values = self.digital_timing_presets.get(text, {})
-        self.QDoubleSpinBox_ttl_start_1.setValue(values.get("QDoubleSpinBox_ttl_start_1", 0))
-        self.QDoubleSpinBox_ttl_stop_1.setValue(values.get("QDoubleSpinBox_ttl_stop_1", 0))
-        self.QDoubleSpinBox_ttl_start_2.setValue(values.get("QDoubleSpinBox_ttl_start_2", 0))
-        self.QDoubleSpinBox_ttl_stop_2.setValue(values.get("QDoubleSpinBox_ttl_stop_2", 0))
-        self.QDoubleSpinBox_ttl_start_3.setValue(values.get("QDoubleSpinBox_ttl_start_3", 0))
-        self.QDoubleSpinBox_ttl_stop_3.setValue(values.get("QDoubleSpinBox_ttl_stop_3", 0))
-        self.QDoubleSpinBox_ttl_start_4.setValue(values.get("QDoubleSpinBox_ttl_start_4", 0))
-        self.QDoubleSpinBox_ttl_stop_4.setValue(values.get("QDoubleSpinBox_ttl_stop_4", 0))
-        self.QDoubleSpinBox_ttl_start_4.setValue(values.get("QDoubleSpinBox_ttl_start_4", 0))
-        self.QDoubleSpinBox_ttl_stop_4.setValue(values.get("QDoubleSpinBox_ttl_stop_4", 0))
-        self.QDoubleSpinBox_ttl_start_5.setValue(values.get("QDoubleSpinBox_ttl_start_5", 0))
-        self.QDoubleSpinBox_ttl_stop_5.setValue(values.get("QDoubleSpinBox_ttl_stop_5", 0))
-        self.QDoubleSpinBox_ttl_start_6.setValue(values.get("QDoubleSpinBox_ttl_start_6", 0))
-        self.QDoubleSpinBox_ttl_stop_6.setValue(values.get("QDoubleSpinBox_ttl_stop_6", 0))
-        self.QDoubleSpinBox_ttl_start_7.setValue(values.get("QDoubleSpinBox_ttl_start_7", 0))
-        self.QDoubleSpinBox_ttl_stop_7.setValue(values.get("QDoubleSpinBox_ttl_stop_7", 0))
-        self.QDoubleSpinBox_ttl_start_8.setValue(values.get("QDoubleSpinBox_ttl_start_8", 0))
-        self.QDoubleSpinBox_ttl_stop_8.setValue(values.get("QDoubleSpinBox_ttl_stop_8", 0))
+        values = getattr(self, "digital_timing_presets", {}).get(text, {})
+        for n in range(1, self.N_TTL + 1):
+            for field in self.TTL_FIELDS:
+                key = f"ttl_{field}_{n}"
+                if key in values:
+                    self._ttl_widget(field, n).setValue(values[key])
 
     @pyqtSlot(str)
     def save_digital_timing_preset(self, m: str):
@@ -457,23 +426,14 @@ class ControlPanel(QWidget):
         else:
             set_name = None
         if set_name:
+            if not getattr(self, "digital_timing_presets", None):
+                self.digital_timing_presets = {}
+            if not self.config.get("Digital Timing Presets"):
+                self.logg.error("No file configured for digital timing presets; preset not saved")
+                return
             self.digital_timing_presets[set_name] = {
-                "QDoubleSpinBox_ttl_start_1": self.QDoubleSpinBox_ttl_start_1.value(),
-                "QDoubleSpinBox_ttl_stop_1": self.QDoubleSpinBox_ttl_stop_1.value(),
-                "QDoubleSpinBox_ttl_start_2": self.QDoubleSpinBox_ttl_start_2.value(),
-                "QDoubleSpinBox_ttl_stop_2": self.QDoubleSpinBox_ttl_stop_2.value(),
-                "QDoubleSpinBox_ttl_start_3": self.QDoubleSpinBox_ttl_start_3.value(),
-                "QDoubleSpinBox_ttl_stop_3": self.QDoubleSpinBox_ttl_stop_3.value(),
-                "QDoubleSpinBox_ttl_start_4": self.QDoubleSpinBox_ttl_start_4.value(),
-                "QDoubleSpinBox_ttl_stop_4": self.QDoubleSpinBox_ttl_stop_4.value(),
-                "QDoubleSpinBox_ttl_start_5": self.QDoubleSpinBox_ttl_start_5.value(),
-                "QDoubleSpinBox_ttl_stop_5": self.QDoubleSpinBox_ttl_stop_5.value(),
-                "QDoubleSpinBox_ttl_start_6": self.QDoubleSpinBox_ttl_start_6.value(),
-                "QDoubleSpinBox_ttl_stop_6": self.QDoubleSpinBox_ttl_stop_6.value(),
-                "QDoubleSpinBox_ttl_start_7": self.QDoubleSpinBox_ttl_start_7.value(),
-                "QDoubleSpinBox_ttl_stop_7": self.QDoubleSpinBox_ttl_stop_7.value(),
-                "QDoubleSpinBox_ttl_start_8": self.QDoubleSpinBox_ttl_start_8.value(),
-                "QDoubleSpinBox_ttl_stop_8": self.QDoubleSpinBox_ttl_stop_8.value()}
+                f"ttl_{field}_{n}": self._ttl_widget(field, n).value()
+                for n in range(1, self.N_TTL + 1) for field in self.TTL_FIELDS}
             with open(self.config["Digital Timing Presets"], 'w') as f:
                 json.dump(self.digital_timing_presets, f, indent=4)
         else:
