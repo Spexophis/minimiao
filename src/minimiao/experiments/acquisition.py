@@ -174,12 +174,14 @@ class AcquisitionRunner:
     """
 
     def __init__(self, devs, logg, slot_info: Optional[Callable[[int], dict]] = None,
-                 context: Optional[dict] = None, progress: Optional[Callable[[str], None]] = None):
+                 context: Optional[dict] = None, progress: Optional[Callable[[str], None]] = None,
+                 preview: Optional[Callable] = None):
         self.devs = devs
         self.logg = logg
         self.slot_info = slot_info or (lambda s: {})
         self.context = context or {}
         self.progress = progress or (lambda msg: None)
+        self.preview = preview  # thread-safe frame sink for the ~10 Hz recording preview
         self.abort = threading.Event()
         self.camera_info = {}
 
@@ -260,6 +262,8 @@ class AcquisitionRunner:
             t["camera_start"] = time.perf_counter()
             cam.start_recording(tif_path, bigtiff=bigtiff)
             recording = True
+            if self.preview is not None and getattr(cam, "data", None) is not None:
+                cam.data.on_update(self.preview)
             self.progress(f"slot {bs.slot}, {bs.laser_power_mw:g} mW: recording")
 
             t["run"] = time.perf_counter()

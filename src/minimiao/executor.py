@@ -148,7 +148,8 @@ class CommandExecutor(QObject):
             self.ctrl_panel.QPushButton_video.setChecked(False)
         self.set_camera_roi()
         runner = acq.AcquisitionRunner(self.devs, self.logg, slot_info=self._slot_info,
-                                       context=self._acq_context(), progress=self.sig_progress.emit)
+                                       context=self._acq_context(), progress=self.sig_progress.emit,
+                                       preview=self.viewer.on_camera_update_from_thread)
         self.runner = runner
 
         def task():
