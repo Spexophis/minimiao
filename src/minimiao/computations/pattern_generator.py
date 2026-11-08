@@ -323,21 +323,48 @@ class CGH:
         phase_spots = self.gerchberg_saxton_multiplane(targets, defocus_phases, plane_weights)
         return self._finalize(phase_spots, trg=trg)
 
+    def lens_aperture(self):
+        """
+        Lens centre and largest diameter that fits on the SLM for the current
+        offset. The centre is the hologram centre (SLM centre + offset, same
+        convention as add_arrays / generate_fresnel_lens_phase); the diameter
+        is twice the distance from it to the nearest SLM edge.
+        Returns dict: center_x, center_y (SLM pixel coords), diameter_px, diameter_mm.
+        """
+        hs = self.holo_sys
+        H, W = hs.correction_pattern.shape[:2]
+        cx = (W - hs.phase_nx) // 2 + hs.slm_offset_x + hs.phase_nx / 2 - 0.5
+        cy = (H - hs.phase_ny) // 2 + hs.slm_offset_y + hs.phase_ny / 2 - 0.5
+        r = min(cx + 0.5, W - 0.5 - cx, cy + 0.5, H - 0.5 - cy)
+        if r <= 0:
+            raise ValueError(f"Lens centre ({cx:.1f}, {cy:.1f}) is outside the SLM; check the SLM offset")
+        return {"center_x": float(cx), "center_y": float(cy), "diameter_px": float(2 * r),
+                "diameter_mm": float(2 * r * hs.slm_pixel_pitch * 1e3)}
+
     def compute_lens_pattern(self, f_m=None):
         """
         Slot-0 pattern: correction + Fresnel lens of focal length f_m (metres;
-        default holo_sys.f_fresnel) over the hologram region (same size and
-        SLM offset as holograms), no trigger patch. f_m <= 0 or None-equivalent
-        zero gives the correction alone.
+        default holo_sys.f_fresnel) inside a circular aperture centred on the
+        hologram centre (SLM centre + offset) with the largest diameter that
+        fits on the SLM (lens_aperture). Outside the aperture: correction only.
+        No trigger patch. f_m <= 0 gives the correction alone.
+        Returns (pattern uint8, aperture dict).
         """
-        f = self.holo_sys.f_fresnel if f_m is None else f_m
-        if f and f > 0:
-            phase = self.generate_fresnel_lens_phase(f)
-        else:
-            phase = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx))
-        phase_uint = self.phase_to_uint(phase, self.holo_sys.correction_value)
-        return self.add_arrays(phase_uint, self.holo_sys.correction_pattern.copy(),
-                               self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y)
+        hs = self.holo_sys
+        f = hs.f_fresnel if f_m is None else f_m
+        pattern = hs.correction_pattern.copy()
+        if not f or f <= 0:
+            return pattern, {"diameter_px": 0.0, "diameter_mm": 0.0, "center_x": None, "center_y": None}
+        ap = self.lens_aperture()
+        H, W = pattern.shape[:2]
+        yy, xx = np.mgrid[0:H, 0:W]
+        dx, dy = xx - ap["center_x"], yy - ap["center_y"]
+        inside = dx ** 2 + dy ** 2 <= (ap["diameter_px"] / 2) ** 2
+        k = 2.0 * np.pi / hs.wavelength
+        phi = -k * ((dx * hs.slm_pixel_pitch) ** 2 + (dy * hs.slm_pixel_pitch) ** 2) / (2.0 * f)
+        lens_uint = self.phase_to_uint(np.mod(phi, 2.0 * np.pi), hs.correction_value)
+        pattern[inside] = pattern[inside] + lens_uint[inside]  # uint8 sum, same as add_arrays
+        return pattern, ap
 
     def generate_defocus_phase(self, delta_z: float) -> np.ndarray:
         """

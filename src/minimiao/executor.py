@@ -273,13 +273,16 @@ class CommandExecutor(QObject):
         (ox, oy), _ = self.ctrl_panel.get_slm_parameters()
         self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y = ox, oy
         try:
-            pattern = self.cgh.compute_lens_pattern(f_mm * 1e-3)
+            pattern, ap = self.cgh.compute_lens_pattern(f_mm * 1e-3)
             self.devs.slm.write_array(pattern, self.CORRECTION_SLOT)
             self.devs.slm.display_pattern(self.CORRECTION_SLOT)
         except Exception as e:
             self.logg.error(f"Error applying Fresnel lens to slot 0: {e}")
             return
-        label = f"correction + Fresnel lens f={f_mm:g} mm" if f_mm > 0 else "correction (no lens)"
+        label = (f"correction + Fresnel lens f={f_mm:g} mm, D={ap['diameter_px']:.0f} px "
+                 f"({ap['diameter_mm']:.2f} mm) at ({ap['center_x']:.1f}, {ap['center_y']:.1f})"
+                 if f_mm > 0 else "correction (no lens)")
+        self.ctrl_panel.display_lens_aperture(ap["diameter_px"], ap["diameter_mm"])
         self.slot_patterns[self.CORRECTION_SLOT] = (label, pattern)
         self.hg_panel.set_pattern_image(pattern)
         self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.CORRECTION_SLOT)
