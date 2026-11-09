@@ -34,7 +34,7 @@ import time
 
 from minimiao import logger
 
-LCC25D_DIR = r"C:\Program Files (x86)\Thorlabs\LCC25D\Documents\Thorlabs_LCC25D_Python_SDK"
+LCC25D_DIR = r"C:\Program Files (x86)\Thorlabs\LCC25D\Documents\Thorlabs_LCC25D_PythonSDK"
 
 MAX_VOLTAGE = 25.0  # V
 MIN_MODULATION_HZ, MAX_MODULATION_HZ = 0.5, 150.0
@@ -48,23 +48,19 @@ CHANNEL_STATES = {1: "Normal", 2: "Warning", 3: "Error"}
 
 
 class LCC25DRetarder:
-    def __init__(self, logg=None, sn=None, ip=None, key=None, lib_dir=LCC25D_DIR):
+    def __init__(self, logg=None, sn=None):
         """
         sn: serial number of the USB device to open (None: the first one found).
-        ip: IP address or serial number of an Ethernet device (key: its password, None if not set); overrides USB.
         """
         self.logg = logg or logger.setup_logging()
-        self.lib_dir = lib_dir
+        self.lib_dir = LCC25D_DIR
         self.hdl = -1
         self.sn = None
         self._lcc = None
         self._load_sdk()
         self._lcc = self._sdk.LCC25D()
         try:
-            if ip is not None:
-                self._open_ethernet(ip, key)
-            else:
-                self._open_usb(sn)
+            self._open_usb(sn)
         except Exception:
             self._release()
             raise
@@ -118,6 +114,8 @@ class LCC25DRetarder:
     def close(self):
         """Close the connection. The outputs are left as they are; use set_output(ch, False) before if wanted."""
         try:
+            self.set_output(0, False)  # channel 1 output off (add channel 1 if you use it)
+            # self.set_heating(0, False)  # only if you ever turned heating on; not needed for your LCC1613-A
             if self.hdl >= 0:
                 self._lcc.close()
                 self.hdl = -1

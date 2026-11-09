@@ -54,6 +54,10 @@ class TriggerSequence:
         self.galvo_pos = [galvo_positions(_start, _stop, _step) for (_start, _stop, _step) in
                           zip(self.galvo_starts, self.galvo_stops, self.galvo_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.galvo_pos]
+        # phase retarder
+        self.phase_retards = np.array([1.8, 0.999, 0.73, 0.59, 0.52, 0.47])
+        self.phase_settle_time = 0.04  # ~40 ms
+        self.phase_settle_samples = round(self.phase_settle_time * self.sample_rate)
         # TTL
         self.trigger_pulse_width = 0.00010  # s
         self.trigger_pulse_samples = int(np.ceil(self.trigger_pulse_width * self.sample_rate))
@@ -255,35 +259,29 @@ class TriggerSequence:
         digital_triggers[1, act_samples + self.interval_samples:act_samples + self.interval_samples + self.trigger_pulse_samples] = 1
         digital_triggers[2, act_samples + self.interval_samples:act_samples + self.interval_samples + self.trigger_pulse_samples] = 1
         digital_triggers = np.tile(digital_triggers, (1, nph))
+        digital_channels = [0, 2, 3]
         if rot:
-            digital_channels = [0, 2, 3, 4, 5, 6]
-            motor_triggers = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
-            digital_triggers = np.concatenate((digital_triggers, motor_triggers), axis=0)
-            rn = 1  # (90 // nang) // self.motor_jog
-            motor_offset = max(self.motor_rot_samples * rn - max(self.transfer_samples, self.standby_samples), 0)
-            if motor_offset > 0:
-                digital_triggers = np.concatenate((digital_triggers, np.zeros((6, motor_offset), dtype=np.uint8)), axis=1)
-            motor_start = max(self.motor_rot_samples * rn, max(self.transfer_samples, self.standby_samples))
-            digital_triggers[3, -motor_start:] = 0  # move
-            digital_triggers[4, -motor_start:] = 1
-            digital_triggers[5, -motor_start:] = 1
-            for n in range(rn):
-                digital_triggers[5, -motor_start + n * self.motor_rot_samples + 5 * self.motor_jog_samples:-motor_start + n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0  # forward
+            galvo_triggers, galvo_channels = self.generate_galvo_triggers(digital_triggers[0])
+            if nang == 2:
+                angs = [0, 3]
+            elif nang == 3:
+                angs = [0, 2, 4]
+            elif nang == 6:
+                angs = [0, 1, 2, 3, 4, 5]
+            else:
+                angs = [0] * nang
+            ang = self.phase_retards[angs]
+            offset_samples = max(0, self.phase_settle_samples - self.standby_samples)
+            digital_triggers = np.pad(digital_triggers, ((0, 0), (0, offset_samples)), mode='edge')
+            galvo_triggers = np.pad(galvo_triggers, ((0, 0), (0, offset_samples)), mode='edge')
+            analog_triggers = np.repeat(ang, digital_triggers.shape[1])
+            analog_triggers = shift_array(analog_triggers, self.phase_settle_samples, fill=analog_triggers[0], direction="backward")
             digital_triggers = np.tile(digital_triggers, (1, nang))
-            # digital_triggers[3, -motor_start:] = 0  # move
-            # digital_triggers[4, -motor_start:] = 1
-            # digital_triggers[5, -motor_start:] = 1
-            # for n in range(rn):
-            #     digital_triggers[4, -motor_start + n * self.motor_rot_samples + 5 * self.motor_jog_samples:-motor_start + n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0  # backward
-            # if nang > 2:
-            #     motor_back_triggers = np.ones((6, self.motor_rot_samples * rn * (nang - 2)), dtype=np.uint8)
-            #     motor_back_triggers[:4, :] = 0
-            #     for n in range(rn * (nang - 2)):
-            #         motor_back_triggers[4, n * self.motor_rot_samples + 5 * self.motor_jog_samples:n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0
-            #     digital_triggers = np.concatenate((digital_triggers, motor_back_triggers), axis=1)
+            galvo_triggers = np.tile(galvo_triggers, (1, nang))
+            analog_triggers = np.vstack((galvo_triggers, analog_triggers))
+            analog_channels = [0, 1, 2]
         else:
-            digital_channels = [0, 2, 3]
-        analog_triggers, analog_channels = self.generate_galvo_triggers(digital_triggers[0])
+            analog_triggers, analog_channels = self.generate_galvo_triggers(digital_triggers[0])
         return digital_triggers, digital_channels, analog_triggers, analog_channels
 
     def generate_sim_scan(self, nang=3 , nph=6, rot=True):
@@ -327,35 +325,29 @@ class TriggerSequence:
         digital_triggers[1, act_samples + self.slm_sw_total_samples + self.interval_samples:act_samples + self.slm_sw_total_samples + self.interval_samples + self.trigger_pulse_samples] = 1
         digital_triggers[2, act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_start_samples:act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_start_samples + self.trigger_pulse_samples] = 1
         digital_triggers = np.tile(digital_triggers, (1, nph))
+        digital_channels = [0, 2, 3]
         if rot:
-            digital_channels = [0, 2, 3, 4, 5, 6]
-            motor_triggers = np.ones((3, self.cycle_samples * nph), dtype=np.uint8)
-            digital_triggers = np.concatenate((digital_triggers, motor_triggers), axis=0)
-            rn = 1  # (90 // nang) // self.motor_jog
-            motor_offset = max(self.motor_rot_samples * rn - max(self.transfer_samples, self.standby_samples), 0)
-            if motor_offset > 0:
-                digital_triggers = np.concatenate((digital_triggers, np.zeros((6, motor_offset), dtype=np.uint8)), axis=1)
-            motor_start = max(self.motor_rot_samples * rn, max(self.transfer_samples, self.standby_samples))
-            digital_triggers[3, -motor_start:] = 0  # move
-            digital_triggers[4, -motor_start:] = 1
-            digital_triggers[5, -motor_start:] = 1
-            for n in range(rn):
-                digital_triggers[5, -motor_start + n * self.motor_rot_samples + 5 * self.motor_jog_samples:-motor_start + n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0  # forward
+            galvo_triggers, galvo_channels = self.generate_galvo_triggers(digital_triggers[0])
+            if nang == 2:
+                angs = [0, 3]
+            elif nang == 3:
+                angs = [0, 2, 4]
+            elif nang == 6:
+                angs = [0, 1, 2, 3, 4, 5]
+            else:
+                angs = [0] * nang
+            ang = self.phase_retards[angs]
+            offset_samples = max(0, self.phase_settle_samples - self.standby_samples)
+            digital_triggers = np.pad(digital_triggers, ((0, 0), (0, offset_samples)), mode='edge')
+            galvo_triggers = np.pad(galvo_triggers, ((0, 0), (0, offset_samples)), mode='edge')
+            analog_triggers = np.repeat(ang, digital_triggers.shape[1])
+            analog_triggers = shift_array(analog_triggers, self.phase_settle_samples, fill=analog_triggers[0], direction="backward")
             digital_triggers = np.tile(digital_triggers, (1, nang))
-            # digital_triggers[3, -motor_start:] = 0  # move
-            # digital_triggers[4, -motor_start:] = 1
-            # digital_triggers[5, -motor_start:] = 1
-            # for n in range(rn):
-            #     digital_triggers[4, -motor_start + n * self.motor_rot_samples + 5 * self.motor_jog_samples:-motor_start + n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0  # backward
-            # if nang > 2:
-            #     motor_back_triggers = np.ones((6, self.motor_rot_samples * rn * (nang - 2)), dtype=np.uint8)
-            #     motor_back_triggers[:4, :] = 0
-            #     for n in range(rn * (nang - 2)):
-            #         motor_back_triggers[4, n * self.motor_rot_samples + 5 * self.motor_jog_samples:n * self.motor_rot_samples + 6 * self.motor_jog_samples] = 0
-            #     digital_triggers = np.concatenate((digital_triggers, motor_back_triggers), axis=1)
+            galvo_triggers = np.tile(galvo_triggers, (1, nang))
+            analog_triggers = np.vstack((galvo_triggers, analog_triggers))
+            analog_channels = [0, 1, 2]
         else:
-            digital_channels = [0, 2, 3]
-        analog_triggers, analog_channels = self.generate_galvo_triggers(digital_triggers[0])
+            analog_triggers, analog_channels = self.generate_galvo_triggers(digital_triggers[0])
         return digital_triggers, digital_channels, analog_triggers, analog_channels
 
     def generate_galvo_scan(self, laser_ttl):

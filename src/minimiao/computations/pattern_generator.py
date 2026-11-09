@@ -564,3 +564,4 @@ def simulate_phase_pattern(N=1024, dx=0.1e-6, wavelength=488e-9, na=1.3,
         plt.tight_layout()
         plt.show()
     return phase_mask, np.abs(E_fourier) ** 2, np.abs(E_fourier_filtered) ** 2, I_unfiltered, I_focal
+

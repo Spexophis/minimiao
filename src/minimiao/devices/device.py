@@ -7,10 +7,10 @@ from minimiao import logger
 
 try:
     from . import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, thorlab_scmos, \
-        thorlabs_motor, neopixel_ring, hamamatsu_scmos, revealer_scmos, lcc25d_retarder, scannermax_galvo
+        neopixel_ring, hamamatsu_scmos, revealer_scmos, lcc25d_retarder, scannermax_galvo
 except ImportError as e:
     from minimiao.devices import andor_emccd, cobolt_laser, fdd_slm, mcl_deck, mcl_piezo, ni_daq, phaseform_dpp, \
-        thorlab_scmos, thorlabs_motor, neopixel_ring, hamamatsu_scmos, revealer_scmos, lcc25d_retarder, scannermax_galvo
+        thorlab_scmos, neopixel_ring, hamamatsu_scmos, revealer_scmos, lcc25d_retarder, scannermax_galvo
 
 
 class DeviceManager:
@@ -54,12 +54,8 @@ class DeviceManager:
             self.piezo = mcl_piezo.MCLNanoDrive(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
-        # try:
-        #     self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg)
-        # except Exception as e:
-        #     self.logg.error(f"{e}")
         try:
-            self.motor = thorlabs_motor.ELL14(logg=self.logg)
+            self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg, sn="02577527")
         except Exception as e:
             self.logg.error(f"{e}")
         try:
@@ -106,13 +102,9 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.motor.close()
+            self.retard.close()
         except Exception as e:
             self.logg.error(f"{e}")
-        # try:
-        #     self.retard.close()
-        # except Exception as e:
-        #     self.logg.error(f"{e}")
         try:
             del self.gvs
         except Exception as e:

@@ -36,7 +36,7 @@ class NIDAQ:
         self.tasks, self._active, self._running, = self._configure()
         self.sample_rate = int(2.0e5)
         self.duty_cycle = float(0.5)
-        self.analog_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2", "Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
+        self.analog_channels = ["Dev1/ao0", "Dev1/ao1", "Dev1/ao2", "Dev1/ao3", "Dev2/ao0", "Dev2/ao1", "Dev2/ao2"]
         self.digital_channels = ["Dev1/port0/line0", "Dev1/port0/line1", "Dev1/port0/line3", "Dev1/port0/line4",
                                  "Dev1/port0/line5", "Dev1/port0/line6", "Dev1/port0/line7"]
         self.led_channels = ["Dev2/port0/line0", "Dev2/port0/line1"]
@@ -90,7 +90,7 @@ class NIDAQ:
         try:
             with nidaqmx.Task() as task:
                 for ind in indices:
-                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind + 3], min_val=0., max_val=10.)
+                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind + 4], min_val=0., max_val=10.)
                 task.write(pos)
                 task.wait_until_done(WAIT_INFINITELY)
                 task.stop()
@@ -149,6 +149,27 @@ class NIDAQ:
                                                 samps_per_chan=16, active_edge=Edge.RISING)
                 pos = task.read(number_of_samples_per_channel=16)
             return [sum(p) / len(p) for p in pos]
+        except nidaqmx.DaqWarning as e:
+            self.logg.warning("DaqWarning caught as exception: %s", e)
+            try:
+                assert e.error_code == DAQmxWarnings.STOPPED_BEFORE_DONE, "Unexpected error code: {}".format(
+                    e.error_code)
+            except AssertionError as ae:
+                self.logg.error("Assertion Error: %s", ae)
+
+    def set_retarder_phase(self, phs, indices=None):
+        if indices is None:
+            indices = [2, 3]
+        if len(phs) != len(indices):
+            self.logg.error("WARNING: Length of pos and indices differ, skipping piezo position update.")
+            return
+        try:
+            with nidaqmx.Task() as task:
+                for ind in indices:
+                    task.ao_channels.add_ao_voltage_chan(self.analog_channels[ind], min_val=0., max_val=5.)
+                task.write(phs)
+                task.wait_until_done(WAIT_INFINITELY)
+                task.stop()
         except nidaqmx.DaqWarning as e:
             self.logg.warning("DaqWarning caught as exception: %s", e)
             try:

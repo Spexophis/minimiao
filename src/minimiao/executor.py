@@ -72,10 +72,8 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_galvo_positions.connect(self.set_galvo_positions)
         # Cobolt Lasers
         self.ctrl_panel.Signal_set_laser.connect(self.set_laser)
-        # Thorlabs Motor
-        self.ctrl_panel.Signal_motor_home.connect(self.home_motor)
-        self.ctrl_panel.Signal_motor_step.connect(self.set_motor_step)
-        self.ctrl_panel.Signal_motor_move.connect(self.move_motor)
+        # phase
+        self.ctrl_panel.Signal_phase_retard.connect(self.set_retard_phase)
         # DAQ
         self.ctrl_panel.Signal_daq_reset.connect(self.reset_daq_channels)
         self.ctrl_panel.Signal_daq_update.connect(self.update_daq_sample_rate)
@@ -109,18 +107,24 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         try:
-            self.devs.motor.move_to(0)
-            self.devs.motor.set_velocity(100)
-            self.set_motor_step(45)
-        except Exception as e:
-            self.logg.error(f"Initial setup Error: {e}")
-        try:
             for key in self.devs.slm.ord_dict.keys():
                 self.ctrl_panel.QComboBox_slm_sequence.addItem(key)
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         try:
             self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
+        except Exception as e:
+            self.logg.error(f"Initial setup Error: {e}")
+        self.pol_volts = [1.85, 0.975, 0.72, 0.6, 0.53, 0.477]
+        try:
+            self.devs.retard.set_fast_switching(0, False)
+            self.devs.retard.set_output_mode(0, "v1")
+            time.sleep(0.1)
+            self.devs.retard.set_analog_in(0, True)
+            time.sleep(0.1)
+            self.devs.retard.set_output(0, True)
+            time.sleep(0.1)
+            self.devs.daq.set_retarder_phase([1.85, 0.])
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         self.logg.info("Finish setting up controllers")
@@ -305,18 +309,6 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Galvo Error: {e}")
 
-    @pyqtSlot(float)
-    def home_motor(self, hp: float):
-        self.devs.motor.move_to(hp)
-
-    @pyqtSlot(float)
-    def set_motor_step(self, jog_step: float):
-        self.devs.motor.set_jog_step(jog_step)
-
-    @pyqtSlot(bool)
-    def move_motor(self, direction: bool):
-        self.devs.motor.jog(forward=direction)
-
     @pyqtSlot(list, bool, float)
     def set_laser(self, laser: list, sw: bool, pw: float):
         if sw:
@@ -353,6 +345,10 @@ class CommandExecutor(QObject):
             self.devs.laser.laser_off("all")
         except Exception as e:
             self.logg.error(f"Cobolt Laser Error: {e}")
+
+    @pyqtSlot(float)
+    def set_retard_phase(self, v: float):
+        self.devs.daq.set_retarder_phase([v], [2])
 
     def set_camera_roi(self):
         try:
@@ -421,10 +417,6 @@ class CommandExecutor(QObject):
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         ang, phs, rot = self.ctrl_panel.get_sim_parameters()
-        rh, ra = self.ctrl_panel.get_motor_parameters()
-        self.home_motor(rh)
-        self.set_motor_step(ra)
-        self.trg.motor_jog = ra
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         interval_t, transfer_t = self.ctrl_panel.get_camera_times()
@@ -438,7 +430,7 @@ class CommandExecutor(QObject):
         elif vd_mod == "SIM":
             dtr, chs, atr, ach = self.trg.generate_sim_triggers(1, phs, False)
         elif vd_mod == "NLSIM":
-            if "1msoff" in self.slm_seq:
+            if "2msoff" in self.slm_seq:
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 0, False)
             elif "10msoff" in self.slm_seq:
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 1, False)
@@ -695,7 +687,7 @@ class CommandExecutor(QObject):
                     pn = self.prepare_acquisition(acq_mod, acq_num)
                     self.start_acquisition(folder_name, fn, pn)
             except Exception as e:
-                self.logg.error(f"Error preparing widefield: {e}")
+                self.logg.error(f"Error Preparing Acquisition: {e}")
                 self.devs.daq.stop_triggers()
                 self.lasers_off()
                 return
@@ -713,10 +705,6 @@ class CommandExecutor(QObject):
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         # ang, phs, rot = self.ctrl_panel.get_sim_parameters()
-        rh, ra = self.ctrl_panel.get_motor_parameters()
-        self.home_motor(rh)
-        # self.set_motor_step(ra)
-        # self.trg.motor_jog = ra
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
@@ -788,10 +776,6 @@ class CommandExecutor(QObject):
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         ang, phs, rot = self.ctrl_panel.get_sim_parameters()
-        rh, ra = self.ctrl_panel.get_motor_parameters()
-        self.home_motor(rh)
-        self.set_motor_step(ra)
-        self.trg.motor_jog = ra
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
@@ -799,15 +783,15 @@ class CommandExecutor(QObject):
                                           standby_time=self.devs.img_cam.t_readout,
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_SIM":
-            dtr, chs, atr, ach = self.trg.generate_sim_triggers(1, phs, False)
+            dtr, chs, atr, ach = self.trg.generate_sim_triggers(ang, phs, rot)
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
                                          analog_sequences=atr, analog_channels=ach,
                                          finite=True, trg=False)
         elif aqm == "2D_NLSIM":
-            if "1msoff" in self.slm_seq:
-                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 0, False)
+            if "2msoff" in self.slm_seq:
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 0, True)
             elif "10msoff" in self.slm_seq:
-                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 1, True)
             else:
                 raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
             self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
@@ -849,49 +833,22 @@ class CommandExecutor(QObject):
     def start_sim_acquisition(self, fdn: str, labl: str, aqn: int, ang: int, phs: int):
         try:
             acq_num = ang * phs
-            rh, ra = self.ctrl_panel.get_motor_parameters()
-            angs = rh + np.arange(ang) * (90 / ang)
             self.devs.slm.activate()
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self._sim_stop.clear()
-            if aqn == 0:
-                self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, args=(angs, aqn), daemon=True)
-            else:
-                ordn, _ = self.devs.slm.get_selected_order()
-                self._sim_thread = threading.Thread(target=self._nlsim_acquisition_loop, args=(angs, ordn), daemon=True)
+            self._sim_thread = threading.Thread(target=self._sim_acquisition_loop, daemon=True)
             self._sim_thread.start()
         except Exception as e:
             self.stop_sim_acquisition()
             self.logg.error(f"Error start sim acquisition: {e}")
 
-    def _sim_acquisition_loop(self, angs: list, aqn: int):
+    def _sim_acquisition_loop(self):
         try:
             while not self._sim_stop.is_set():
-                for a in angs:
-                    if self._sim_stop.is_set():
-                        return
-                    self.devs.motor.move_to(a)
-                    time.sleep(0.16)
-                    self.devs.daq.run_triggers()
-                self.devs.motor.move_to(angs[0])
-        except Exception as e:
-            self._sim_stop.set()
-            self.logg.error(f"Error in sim acquisition loop: {e}")
-
-    def _nlsim_acquisition_loop(self, angs: list, pn: int):
-        try:
-            while not self._sim_stop.is_set():
-                for i, a in enumerate(angs):
-                    if self._sim_stop.is_set():
-                        return
-                    self.devs.motor.move_to(a)
-                    self.devs.slm.deactivate()
-                    self.devs.slm.select_order(pn + i)
-                    self.devs.slm.activate()
-                    time.sleep(0.16)
-                    self.devs.daq.run_triggers()
-                self.devs.motor.move_to(angs[0])
+                if self._sim_stop.is_set():
+                    return
+                self.devs.daq.run_triggers()
         except Exception as e:
             self._sim_stop.set()
             self.logg.error(f"Error in sim acquisition loop: {e}")

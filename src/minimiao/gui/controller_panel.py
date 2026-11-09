@@ -25,9 +25,7 @@ class ControlPanel(QWidget):
     Signal_piezo_move = pyqtSignal(str, float, float, float)
     Signal_galvo_positions = pyqtSignal(float, float)
     Signal_set_laser = pyqtSignal(list, bool, float)
-    Signal_motor_home = pyqtSignal(float)
-    Signal_motor_step = pyqtSignal(float)
-    Signal_motor_move = pyqtSignal(bool)
+    Signal_phase_retard = pyqtSignal(float)
     Signal_daq_update = pyqtSignal(int)
     Signal_daq_reset = pyqtSignal()
     Signal_plot_trigger = pyqtSignal()
@@ -362,25 +360,20 @@ class ControlPanel(QWidget):
         self.QComboBox_slm_sequence = cw.ComboBoxWidget(list_items=[], maxlen=256)
         self.QSpinBox_sim_angles = cw.SpinBoxWidget(1, 999, 1, 1)
         self.QSpinBox_sim_phases = cw.SpinBoxWidget(1, 999, 1, 1)
-        self.QRadioButton_motor_rotation = cw.RadioButtonWidget('Rotation')
-        self.QDoubleSpinBox_motor_step = cw.DoubleSpinBoxWidget(0, 180, 1, 1, 14.5)
-        self.QPushButton_motor_fwd = cw.PushButtonWidget("Forward")
-        self.QPushButton_motor_bwd = cw.PushButtonWidget("Backward")
-        self.QDoubleSpinBox_motor_home = cw.DoubleSpinBoxWidget(-180, 360, 1, 1, 5)
-        self.QPushButton_motor_home = cw.PushButtonWidget("Home")
+        self.QRadioButton_pol_rotation = cw.RadioButtonWidget('Polar Rotation')
+        self.QDoubleSpinBox_phase_retard = cw.DoubleSpinBoxWidget(0.0, 5.0, 0.1, 3, 1.8)
+        self.QPushButton_phase_retard = cw.PushButtonWidget("Retard")
 
         slm_scroll_layout.addWidget(cw.LabelWidget(str('SLM')), 0, 0, 1, 1)
         slm_scroll_layout.addWidget(self.QComboBox_slm_sequence, 1, 0, 1, 1)
-        slm_scroll_layout.addWidget(self.QSpinBox_sim_angles, 0, 1, 1, 1)
-        slm_scroll_layout.addWidget(self.QSpinBox_sim_phases, 1, 1, 1, 1)
-        slm_scroll_layout.addWidget(cw.LabelWidget(str('Motor')), 0, 2, 1, 1)
-        slm_scroll_layout.addWidget(self.QRadioButton_motor_rotation, 1, 2, 1, 1)
-        slm_scroll_layout.addWidget(cw.LabelWidget(str('Jog Step')), 0, 3, 1, 1)
-        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_step, 1, 3, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_fwd, 0, 4, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_bwd, 1, 4, 1, 1)
-        slm_scroll_layout.addWidget(self.QDoubleSpinBox_motor_home, 0, 5, 1, 1)
-        slm_scroll_layout.addWidget(self.QPushButton_motor_home, 1, 5, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Angle')), 0, 1, 1, 1)
+        slm_scroll_layout.addWidget(self.QSpinBox_sim_angles, 0, 2, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Phase')), 1, 1, 1, 1)
+        slm_scroll_layout.addWidget(self.QSpinBox_sim_phases, 1, 2, 1, 1)
+        slm_scroll_layout.addWidget(self.QRadioButton_pol_rotation, 1, 3, 1, 1)
+        slm_scroll_layout.addWidget(cw.LabelWidget(str('Phase Retarder')), 0, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QDoubleSpinBox_phase_retard, 1, 4, 1, 1)
+        slm_scroll_layout.addWidget(self.QPushButton_phase_retard, 1, 5, 1, 1)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(slm_scroll_area)
@@ -458,10 +451,7 @@ class ControlPanel(QWidget):
         self.QPushButton_laser_488_0.clicked.connect(self.set_laser_488_0)
         self.QPushButton_laser_488_1.clicked.connect(self.set_laser_488_1)
         self.QPushButton_laser_405.clicked.connect(self.set_laser_405)
-        self.QPushButton_motor_home.clicked.connect(self.motor_home)
-        self.QDoubleSpinBox_motor_step.valueChanged.connect(self.motor_step)
-        self.QPushButton_motor_fwd.clicked.connect(self.motor_fwd)
-        self.QPushButton_motor_bwd.clicked.connect(self.motor_bwd)
+        self.QPushButton_phase_retard.clicked.connect(self.set_phaser_retard)
         self.QSpinBox_daq_sample_rate.valueChanged.connect(self.update_daq)
         self.QPushButton_reset_daq.clicked.connect(self.reset_daq)
         self.QPushButton_plot_trigger.clicked.connect(self.plot_trigger_sequence)
@@ -688,27 +678,12 @@ class ControlPanel(QWidget):
         return None
 
     def get_slm_sequence(self):
-        return self.QComboBox_slm_sequence.currentText(), self.QComboBox_slm_sequence.currentIndex()
+        return self.QComboBox_slm_sequence.currentText()
 
     @pyqtSlot()
-    def motor_home(self):
-        pos = self.QDoubleSpinBox_motor_home.value()
-        self.Signal_motor_home.emit(pos)
-
-    @pyqtSlot(float)
-    def motor_step(self, step_size: float):
-        self.Signal_motor_step.emit(step_size)
-
-    def get_motor_parameters(self):
-        return self.QDoubleSpinBox_motor_home.value(), self.QDoubleSpinBox_motor_step.value()
-
-    @pyqtSlot()
-    def motor_fwd(self):
-        self.Signal_motor_move.emit(True)
-
-    @pyqtSlot()
-    def motor_bwd(self):
-        self.Signal_motor_move.emit(False)
+    def set_phaser_retard(self):
+        v = self.QDoubleSpinBox_phase_retard.value()
+        self.Signal_phase_retard.emit(v)
 
     @pyqtSlot(int)
     def update_daq(self, sample_rate: int):
@@ -739,7 +714,7 @@ class ControlPanel(QWidget):
         return self.QSpinBox_acquisition_interval.value()
 
     def get_sim_parameters(self):
-        return self.QSpinBox_sim_angles.value(), self.QSpinBox_sim_phases.value(), self.QRadioButton_motor_rotation.isChecked()
+        return self.QSpinBox_sim_angles.value(), self.QSpinBox_sim_phases.value(), self.QRadioButton_pol_rotation.isChecked()
 
     @pyqtSlot()
     def run_focus_finding(self):
