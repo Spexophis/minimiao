@@ -48,7 +48,7 @@ CHANNEL_STATES = {1: "Normal", 2: "Warning", 3: "Error"}
 
 
 class LCC25DRetarder:
-    def __init__(self, logg=None, sn=None):
+    def __init__(self, logg=None, sn="02577527"):
         """
         sn: serial number of the USB device to open (None: the first one found).
         """

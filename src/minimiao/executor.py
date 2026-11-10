@@ -88,6 +88,8 @@ class CommandExecutor(QObject):
         self.ctrl_panel.Signal_dpc_acquire.connect(self.dpc_acquisition)
         self.svd.connect(self.save_data)
         self.sig_plt.connect(self.viewer.plot_trace)
+        self.ctrl_panel.Signal_resolft_calibration.connect(self.run_resolft_calibration)
+        self.ctrl_panel.Signal_rsfps_unmixing.connect(self.run_rsfps_unmixing)
         # DM
         self.ao_panel.Signal_set_zernike.connect(self.set_zernike)
         self.ao_panel.Signal_set_dm.connect(self.set_dm_current)
@@ -115,15 +117,14 @@ class CommandExecutor(QObject):
             self.ao_panel.update_dm_display(self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd])
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
-        self.pol_volts = [1.85, 0.975, 0.72, 0.6, 0.53, 0.477]
         try:
             self.devs.retard.set_fast_switching(0, False)
             self.devs.retard.set_output_mode(0, "v1")
-            time.sleep(0.1)
+            time.sleep(0.2)
             self.devs.retard.set_analog_in(0, True)
-            time.sleep(0.1)
+            time.sleep(0.2)
             self.devs.retard.set_output(0, True)
-            time.sleep(0.1)
+            time.sleep(0.2)
             self.devs.daq.set_retarder_phase([1.85, 0.])
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
@@ -704,7 +705,6 @@ class CommandExecutor(QObject):
         self.slm_seq = self.ctrl_panel.get_slm_sequence()
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
-        # ang, phs, rot = self.ctrl_panel.get_sim_parameters()
         self.set_camera_roi()
         self.devs.img_cam.t_exposure = slm_on + 5e-6
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
@@ -975,6 +975,130 @@ class CommandExecutor(QObject):
             self.lasers_off()
             return
         self.run_task(task=self.focus_finding)
+
+    def calibration_iteration(self, las, pws):
+        self.devs.img_cam.start_live()
+        for pw in pws:
+            time.sleep(0.01)
+            try:
+                self.devs.laser.set_modulation_mode([las], [pw])
+            except Exception as e:
+                self.logg.error(f"Cobolt Laser Error: {e}")
+            for i in range(5):
+                self.devs.daq.run_triggers()
+                time.sleep(0.02)
+        time.sleep(0.02)
+        ims = self.devs.img_cam.get_data()
+        self.devs.img_cam.start_live()
+        return ims
+
+    def resolft_calibration(self):
+        try:
+            pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
+            pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+            name = time.strftime("%Y%m%d_%H%M%S_") + '_resolft_calibration_'
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
+        except Exception as e:
+            self.logg.error(f'Error creating directory for resolft calibration: {e}')
+            return
+        try:
+            pw_range = np.arange(2, 200, 4)
+            self.devs.slm.activate()
+            time.sleep(0.02)
+            self.logg.info("Resolft Calibration start")
+            self.vw.dialog_text.setText(f"Laser 405")
+            try:
+                self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
+            except Exception as e:
+                self.logg.error(f"Cobolt Laser Error: {e}")
+            images = self.calibration_iteration(["405"], pw_range)
+            fn = os.path.join(str(new_folder), f"resolft_calibration_405.tiff")
+            tf.imwrite(fn, np.asarray(images, dtype=np.float32))
+            self.vw.dialog_text.setText(f"Laser 488")
+            try:
+                self.devs.laser.set_modulation_mode(["405"], [pw_405])
+            except Exception as e:
+                self.logg.error(f"Cobolt Laser Error: {e}")
+            images = self.calibration_iteration(["488_1"], pw_range)
+            fn = os.path.join(str(new_folder), f"resolft_calibration_488.tiff")
+            tf.imwrite(fn, np.asarray(images, dtype=np.float32))
+            self.finish_task()
+        except Exception as e:
+            self.finish_task()
+            self.logg.error(f"Sensorless AO Error: {e}")
+            return
+
+    @pyqtSlot()
+    def run_resolft_calibration(self):
+        self.vw.get_dialog(txt="RESOLFT Calibration")
+        try:
+            self.prepare_task()
+        except Exception as e:
+            self.logg.error(f"Error Starting Resolft Calibration: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
+        self.run_task(task=self.resolft_calibration)
+
+    def rsfps_unmixing_iteration(self, las, pws):
+        ims = []
+        for pw in pws:
+            try:
+                self.devs.laser.set_modulation_mode([las], [pw])
+            except Exception as e:
+                self.logg.error(f"Cobolt Laser Error: {e}")
+            temps = []
+            for i in range(5):
+                self.devs.img_cam.start_snap()
+                self.devs.daq.run_triggers()
+                time.sleep(0.04)
+                temp = self.devs.img_cam.get_last_snap()
+                self.devs.img_cam.stop_snap()
+                temps.append(temp)
+            ims.append(temps)
+        return ims
+
+    def rsfps_unmixing(self):
+        try:
+            pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
+            pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
+            name = time.strftime("%Y%m%d_%H%M%S_") + '_resolft_calibration_'
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
+        except Exception as e:
+            self.logg.error(f'Error creating directory for resolft calibration: {e}')
+            return
+        try:
+            lasers = ["405", "488_1"]
+            pw_range = np.arange(2, 200, 4)
+            self.devs.slm.activate()
+            time.sleep(0.02)
+            self.logg.info("Resolft Calibration start")
+            for ls in lasers:
+                self.vw.dialog_text.setText(f"Laser #{ls}")
+                images = self.calibration_iteration(ls, pw_range)
+                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
+                tf.imwrite(fn, np.asarray(images, dtype=np.float32))
+            self.finish_task()
+        except Exception as e:
+            self.finish_task()
+            self.logg.error(f"Sensorless AO Error: {e}")
+            return
+
+    @pyqtSlot()
+    def run_rsfps_unmixing(self):
+        self.vw.get_dialog(txt="rsFPs Unmixing")
+        try:
+            self.prepare_task()
+        except Exception as e:
+            self.logg.error(f"Error Starting rsFPs Unmixing: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
+        self.run_task(task=self.rsfps_unmixing)
 
     @pyqtSlot(int)
     def set_dm_current(self, i: int):

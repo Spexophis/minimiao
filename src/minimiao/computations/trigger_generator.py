@@ -55,8 +55,8 @@ class TriggerSequence:
                           zip(self.galvo_starts, self.galvo_stops, self.galvo_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.galvo_pos]
         # phase retarder
-        self.phase_retards = np.array([1.8, 0.999, 0.73, 0.59, 0.52, 0.47])
-        self.phase_settle_time = 0.04  # ~40 ms
+        self.phase_retards = np.array([1.8, 0.99, 0.73, 0.59, 0.52, 0.47])
+        self.phase_settle_time = 0.06  # ~40 ms
         self.phase_settle_samples = round(self.phase_settle_time * self.sample_rate)
         # TTL
         self.trigger_pulse_width = 0.00010  # s

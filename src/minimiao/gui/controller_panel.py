@@ -39,6 +39,8 @@ class ControlPanel(QWidget):
     Signal_dpc_acquire = pyqtSignal(bool, int)
     Signal_data_acquire = pyqtSignal(bool, str, int)
     Signal_save_file = pyqtSignal(str)
+    Signal_resolft_calibration = pyqtSignal()
+    Signal_rsfps_unmixing = pyqtSignal()
 
     def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -400,6 +402,8 @@ class ControlPanel(QWidget):
                                                                          "2D_WideField_Timelapse", "3D_WideField_Timelapse",
                                                                          "2D_SIM_Timelapse", "3D_SIM_Timelapse",
                                                                          "2D_NLSIM_Timelapse"])
+        self.QPushButton_resolft_calibration = cw.PushButtonWidget("RESOLFT Calibration")
+        self.QPushButton_rsfps_unmixing = cw.PushButtonWidget("rsFPs Unmixing")
         self.QSpinBox_acquisition_number = cw.SpinBoxWidget(0, 999, 1, 1)
         self.QSpinBox_acquisition_interval = cw.DoubleSpinBoxWidget(0, 2000, 1, 2, 1)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
@@ -415,6 +419,8 @@ class ControlPanel(QWidget):
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Modes')), 0, 3, 1, 1)
         acq_scroll_layout.addWidget(self.QComboBox_acquisition_modes, 1, 3, 1, 1)
         acq_scroll_layout.addWidget(self.QPushButton_save_acquisition_timing_presets, 2, 3, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_resolft_calibration, 3, 3, 1, 1)
+        acq_scroll_layout.addWidget(self.QPushButton_rsfps_unmixing, 4, 3, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Number')), 0, 4, 1, 1)
         acq_scroll_layout.addWidget(self.QSpinBox_acquisition_number, 1, 4, 1, 1)
         acq_scroll_layout.addWidget(cw.LabelWidget(str('Acq Interval / s')), 2, 4, 1, 1)
@@ -464,6 +470,8 @@ class ControlPanel(QWidget):
         self.QPushButton_plot_profile.clicked.connect(self.run_plot_profile)
         self.QPushButton_add_profile.clicked.connect(self.run_add_profile)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
+        self.QPushButton_resolft_calibration.clicked.connect(self.run_resolft_calibration)
+        self.QPushButton_rsfps_unmixing.clicked.connect(self.run_rsfps_unmixing)
         self.QComboBox_live_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
         self.QComboBox_acquisition_modes.currentIndexChanged.connect(self.load_selected_digital_timing_presets)
         self.QPushButton_save_live_timing_presets.clicked.connect(lambda: self.save_digital_timing_preset("live"))
@@ -784,6 +792,12 @@ class ControlPanel(QWidget):
             self.Signal_data_acquire.emit(True, acq_mode, acq_num)
         else:
             self.Signal_data_acquire.emit(False, "None", 0)
+
+    def run_resolft_calibration(self):
+        self.Signal_resolft_calibration.emit()
+
+    def run_rsfps_unmixing(self):
+        self.Signal_rsfps_unmixing.emit()
 
     @pyqtSlot()
     def load_selected_digital_timing_presets(self):

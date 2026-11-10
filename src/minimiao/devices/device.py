@@ -55,7 +55,7 @@ class DeviceManager:
         except Exception as e:
             self.logg.error(f"{e}")
         try:
-            self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg, sn="02577527")
+            self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
         try:
