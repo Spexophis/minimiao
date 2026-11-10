@@ -976,20 +976,28 @@ class CommandExecutor(QObject):
             return
         self.run_task(task=self.focus_finding)
 
-    def calibration_iteration(self, las, pws):
-        self.devs.img_cam.start_live()
-        for pw in pws:
-            time.sleep(0.01)
-            try:
-                self.devs.laser.set_modulation_mode([las], [pw])
-            except Exception as e:
-                self.logg.error(f"Cobolt Laser Error: {e}")
-            for i in range(5):
-                self.devs.daq.run_triggers()
-                time.sleep(0.02)
+    def calibration_iteration(self, las, pws, n_frames=5):
+        cam = self.devs.img_cam
+        n_total = len(pws) * n_frames
+        if getattr(cam, "buffer_size", n_total) < n_total:
+            cam.buffer_size = n_total
+        cam.start_live()
         time.sleep(0.02)
-        ims = self.devs.img_cam.get_data()
-        self.devs.img_cam.start_live()
+        try:
+            for pw in pws:
+                try:
+                    self.devs.laser.set_modulation_mode([las], [float(pw)])
+                except Exception as e:
+                    self.logg.error(f"Cobolt Laser Error: {e}")
+                for i in range(n_frames):
+                    self.devs.daq.run_triggers()
+                    time.sleep(0.02)
+            time.sleep(0.01)
+            ims = cam.get_data()
+        finally:
+            cam.stop_live()
+        if ims is None or len(ims) != n_total:
+            self.logg.warning(f"RESOLFT calibration {las}: got {0 if ims is None else len(ims)} of {n_total} frames")
         return ims
 
     def resolft_calibration(self):
@@ -1010,24 +1018,24 @@ class CommandExecutor(QObject):
             self.logg.info("Resolft Calibration start")
             self.vw.dialog_text.setText(f"Laser 405")
             try:
-                self.devs.laser.set_modulation_mode(["488_1"], [pw_488])
+                self.devs.laser.set_modulation_mode(["488_1"], pw_488)
             except Exception as e:
                 self.logg.error(f"Cobolt Laser Error: {e}")
-            images = self.calibration_iteration(["405"], pw_range)
+            images = self.calibration_iteration("405", pw_range)
             fn = os.path.join(str(new_folder), f"resolft_calibration_405.tiff")
             tf.imwrite(fn, np.asarray(images, dtype=np.float32))
             self.vw.dialog_text.setText(f"Laser 488")
             try:
-                self.devs.laser.set_modulation_mode(["405"], [pw_405])
+                self.devs.laser.set_modulation_mode(["405"], pw_405)
             except Exception as e:
                 self.logg.error(f"Cobolt Laser Error: {e}")
-            images = self.calibration_iteration(["488_1"], pw_range)
+            images = self.calibration_iteration("488_1", pw_range)
             fn = os.path.join(str(new_folder), f"resolft_calibration_488.tiff")
             tf.imwrite(fn, np.asarray(images, dtype=np.float32))
             self.finish_task()
         except Exception as e:
             self.finish_task()
-            self.logg.error(f"Sensorless AO Error: {e}")
+            self.logg.error(f"RESOLFT Calibration Error: {e}")
             return
 
     @pyqtSlot()
@@ -1042,50 +1050,73 @@ class CommandExecutor(QObject):
             return
         self.run_task(task=self.resolft_calibration)
 
-    def rsfps_unmixing_iteration(self, las, pws):
-        ims = []
-        for pw in pws:
-            try:
-                self.devs.laser.set_modulation_mode([las], [pw])
-            except Exception as e:
-                self.logg.error(f"Cobolt Laser Error: {e}")
-            temps = []
-            for i in range(5):
-                self.devs.img_cam.start_snap()
-                self.devs.daq.run_triggers()
-                time.sleep(0.04)
-                temp = self.devs.img_cam.get_last_snap()
-                self.devs.img_cam.stop_snap()
-                temps.append(temp)
-            ims.append(temps)
+    def rsfps_unmixing_iteration(self, pw_405, n_frames=5):
+
+        cam = self.devs.img_cam
+        n_total = 2 * n_frames * 7
+        cam.buffer_size = n_total * 2
+        cam.start_live()
+        time.sleep(0.02)
+        t = self.trg.digital_ends[0]
+        ms = [0.1, 0.2, 0.5, 1, 2, 4, 5]
+        try:
+            for m in ms:
+                for _ in range(n_frames):
+                    try:
+                        self.devs.laser.set_modulation_mode(["405"], [pw_405])
+                    except Exception as e:
+                        self.logg.error(f"Cobolt Laser Error: {e}")
+                    self.trg.digital_ends[0] = t
+                    dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
+                    self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                                 analog_sequences=atr, analog_channels=ach,
+                                                 finite=True, trg=False)
+                    self.devs.daq.run_triggers()
+                    time.sleep(0.04)
+                    self.devs.daq.stop_triggers()
+                    try:
+                        self.devs.laser.set_modulation_mode(["405"], [pw_405 * m])
+                    except Exception as e:
+                        self.logg.error(f"Cobolt Laser Error: {e}")
+                    self.trg.digital_ends[0] = int(t / m)
+                    dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
+                    self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
+                                                 analog_sequences=atr, analog_channels=ach,
+                                                 finite=True, trg=False)
+                    self.devs.daq.run_triggers()
+                    time.sleep(0.04)
+                    self.devs.daq.stop_triggers()
+            time.sleep(0.04)
+            ims = cam.get_data()
+        finally:
+            cam.stop_live()
+        if ims is None or len(ims) != n_total:
+            self.logg.warning(f"rsFPs unmixing: got {0 if ims is None else len(ims)} of {n_total} frames")
         return ims
 
     def rsfps_unmixing(self):
         try:
             pw_405 = self.ctrl_panel.get_cobolt_laser_power("405")
-            pw_488 = self.ctrl_panel.get_cobolt_laser_power("488_1")
-            name = time.strftime("%Y%m%d_%H%M%S_") + '_resolft_calibration_'
+            name = time.strftime("%Y%m%d_%H%M%S_") + '_rsfps_unmixing_'
             new_folder = os.path.join(self.path, name)
             os.makedirs(new_folder, exist_ok=True)
             self.logg.info(f'Directory {new_folder} has been created successfully.')
         except Exception as e:
-            self.logg.error(f'Error creating directory for resolft calibration: {e}')
+            self.logg.error(f'Error creating directory for rsFPs unmixing: {e}')
             return
         try:
-            lasers = ["405", "488_1"]
-            pw_range = np.arange(2, 200, 4)
+            self.devs.daq.stop_triggers()
             self.devs.slm.activate()
             time.sleep(0.02)
-            self.logg.info("Resolft Calibration start")
-            for ls in lasers:
-                self.vw.dialog_text.setText(f"Laser #{ls}")
-                images = self.calibration_iteration(ls, pw_range)
-                fn = os.path.join(str(new_folder), f"zernike mode #{mode}.tiff")
-                tf.imwrite(fn, np.asarray(images, dtype=np.float32))
+            self.logg.info("rsFPs Unmixing start")
+            self.vw.dialog_text.setText(f"rsFPs Unmixing")
+            images = self.rsfps_unmixing_iteration(pw_405[0])
+            fn = os.path.join(str(new_folder), f"rsfps_unmixing.tiff")
+            tf.imwrite(fn, np.asarray(images, dtype=np.float32))
             self.finish_task()
         except Exception as e:
             self.finish_task()
-            self.logg.error(f"Sensorless AO Error: {e}")
+            self.logg.error(f"rsFPs Unmixing Error: {e}")
             return
 
     @pyqtSlot()
