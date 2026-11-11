@@ -468,6 +468,7 @@ class CommandExecutor(QObject):
             self.devs.slm.activate()
             self.devs.img_cam.start_live()
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
+            time.sleep(2.0)
             self.devs.daq.run_triggers()
             self.logg.info("Live Video Started")
         except Exception as e:
@@ -751,6 +752,7 @@ class CommandExecutor(QObject):
             self.devs.slm.activate()
             self.devs.img_cam.start_data_acquisition(n=acq_num, fd=fdn, fn=labl)
             self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
+            time.sleep(2.0)
             self.devs.daq.run_triggers()
         except Exception as e:
             self.stop_acquisition()
@@ -979,10 +981,9 @@ class CommandExecutor(QObject):
     def calibration_iteration(self, las, pws, n_frames=5):
         cam = self.devs.img_cam
         n_total = len(pws) * n_frames
-        if getattr(cam, "buffer_size", n_total) < n_total:
-            cam.buffer_size = n_total
+        cam.buffer_size = n_total
         cam.start_live()
-        time.sleep(0.02)
+        time.sleep(2.0)
         try:
             for pw in pws:
                 try:
@@ -1051,14 +1052,13 @@ class CommandExecutor(QObject):
         self.run_task(task=self.resolft_calibration)
 
     def rsfps_unmixing_iteration(self, pw_405, n_frames=5):
-
         cam = self.devs.img_cam
-        n_total = 2 * n_frames * 7
+        n_total = 2 * n_frames * 8
         cam.buffer_size = n_total * 2
         cam.start_live()
-        time.sleep(0.02)
+        time.sleep(2.0)
         t = self.trg.digital_ends[0]
-        ms = [0.1, 0.2, 0.5, 1, 2, 4, 5]
+        ms = [1, 0.2, 0.5, 1, 5]
         try:
             for m in ms:
                 for _ in range(n_frames):
@@ -1086,7 +1086,7 @@ class CommandExecutor(QObject):
                     self.devs.daq.run_triggers()
                     time.sleep(0.04)
                     self.devs.daq.stop_triggers()
-            time.sleep(0.04)
+            time.sleep(0.1)
             ims = cam.get_data()
         finally:
             cam.stop_live()
