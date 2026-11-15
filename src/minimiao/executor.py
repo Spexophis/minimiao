@@ -775,10 +775,6 @@ class CommandExecutor(QObject):
         pts = [tuple(float(v) for v in r) for r in rows
                if r is not None and all(isinstance(v, (int, float)) for v in r)]
         self.cgh.load_spots_picked(pts)
-        outside = self._spots_outside_field(pts)
-        if outside:
-            self.logg.warning(f"Picked spot(s) {outside} lie outside the usable spot field found by the "
-                              f"calibration (green outline); they may be dim, blurred or misplaced")
 
     def cgh_computation(self, mode):
         """Worker thread: compute holograms, then write them to SLM slots 1..N."""
@@ -1016,12 +1012,9 @@ class CommandExecutor(QObject):
                     # grid over the part of the hologram field the camera sees (the camera image can be
                     # much larger than the hologram field, so a camera-wide grid lands mostly outside it)
                     n_ref = settings["refine"]
-                    # the usable spot field can be smaller than the hologram field and the camera image:
-                    # refine within the region where coarse spots were found consistently (+15 %)
-                    holo_region = slm_cal.convex_hull(holo1[inl1])
-                    holo2, _ = slm_cal.holo_grid_in_region(M1, mp1.shape, holo_region, n_ref, phase_n=phase_n)
-                    if len(holo2) < 6:
-                        holo2, _ = slm_cal.holo_grid_in_camera(M1, mp1.shape, n_ref, phase_n=phase_n)
+                    holo2, _ = slm_cal.holo_grid_in_camera(M1, mp1.shape, n_ref, phase_n=phase_n)
+                    if len(holo2) < max(6, n_ref * n_ref // 2):   # camera image smaller than the field
+                        holo2, _ = slm_cal.camera_grid_to_holo(M1, mp1.shape, n_ref, phase_n=phase_n)
                     if len(holo2) >= 3:
                         holo2, cam2, snr2, mp2 = self._project_and_detect(holo2, wait_s, n_avg, exposure_s,
                                                                         "refine")
@@ -1051,8 +1044,7 @@ class CommandExecutor(QObject):
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                         "f_fresnel": self.cgh.hologram_lens_f(),
                         "lens_in_holograms": self.cgh.hologram_lens_f() is not None,
-                        "applied": ok_q, "rejected_because": why_q,
-                        "spot_region_cam": slm_cal.convex_hull(cam_all[inl]).tolist()}
+                        "applied": ok_q, "rejected_because": why_q}
                 data = slm_cal.save_calibration(base + ".json", M, cam_all, holo_all, res, meta, inliers=inl)
                 tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
                 if not ok_q:
@@ -1182,11 +1174,8 @@ class CommandExecutor(QObject):
                     elif len(pts):
                         singles[h["spots"][0]] = pts[0]
                 err_single = np.hypot(*(singles - picked).T)
-                # how the landed single spots relate to the picked positions (diagnosis of a miss);
-                # only spots inside the usable spot field count
-                in_field = np.ones(len(picked), bool)
-                in_field[self._spots_outside_field(picked.tolist())] = False
-                ok = np.isfinite(singles[:, 0]) & in_field
+                # how the landed single spots relate to the picked positions (diagnosis of a miss)
+                ok = np.isfinite(singles[:, 0])
                 relation = None
                 if ok.sum() >= 3:
                     try:
@@ -1231,17 +1220,11 @@ class CommandExecutor(QObject):
             fmt = lambda e: ("not detected" if not np.isfinite(e).any() else
                              f"rms {np.sqrt(np.nanmean(e ** 2)):.1f} px, max {np.nanmax(e):.1f} px"
                              + (f", {int(np.isnan(e).sum())} not detected" if np.isnan(e).any() else ""))
-            out = self._spots_outside_field(self.cgh.spots_xy or [])
-            per = "\n".join(f"  spot {i}: single {a:.1f} px, all-at-once {b:.1f} px"
-                             + ("  (outside usable field)" if i in out else "") for i, (a, b) in enumerate(zip(es, em)))
-            ins = np.array([i not in out for i in range(len(es))], bool)   # judge spots inside the field
-            es_in, em_in = es[ins], em[ins]
-            single_ok = ins.any() and np.isfinite(es_in).all() and np.nanmax(es_in) <= 3
-            multi_ok = ins.any() and np.isfinite(em_in).all() and np.nanmax(em_in) <= 3
-            if not ins.any():
-                verdict = "All picked spots are outside the usable spot field (green outline)."
-            elif single_ok and multi_ok:
-                verdict = "Spots inside the usable field land where picked." if out else "Spots land where picked."
+            per = "\n".join(f"  spot {i}: single {a:.1f} px, all-at-once {b:.1f} px" for i, (a, b) in enumerate(zip(es, em)))
+            single_ok = np.isfinite(es).all() and np.nanmax(es) <= 3
+            multi_ok = np.isfinite(em).all() and np.nanmax(em) <= 3
+            if single_ok and multi_ok:
+                verdict = "Spots land where picked."
             elif single_ok:
                 verdict = "Single spots land correctly but the all-at-once hologram does not: multi-spot hologram problem."
             else:
@@ -1267,14 +1250,10 @@ class CommandExecutor(QObject):
                                     + f", shifted ({dx:.0f}, {dy:.0f}) px: the calibration geometry itself is wrong.")
                 else:
                     verdict += f"\nMean shift of landed spots: ({dx:.0f}, {dy:.0f}) px."
-            if out:
-                verdict += (f"\nSpot(s) {out} are outside the usable spot field (green outline) and not judged; "
-                            f"misses there are expected.")
             if mism:
                 verdict += "\nSettings changed since calibration: " + "; ".join(mism)
-            self.hg_panel.set_calibration_status(f"Check Spots (inside field): single {fmt(es_in)}; all-at-once {fmt(em_in)}")
-            self._show_calib_outcome("Check Spots", f"{verdict}\n\nInside the usable field - single spots: {fmt(es_in)}"
-                                                    f"\nInside the usable field - all at once: {fmt(em_in)}\n"
+            self.hg_panel.set_calibration_status(f"Check Spots: single {fmt(es)}; all-at-once {fmt(em)}")
+            self._show_calib_outcome("Check Spots", f"{verdict}\n\nSingle spots: {fmt(es)}\nAll at once: {fmt(em)}\n"
                                                     f"{per}\n\nSaved: {os.path.basename(result['path'])}")
 
         self._after_task = finish
@@ -1316,7 +1295,6 @@ class CommandExecutor(QObject):
                 base = os.path.join(self.path, f"{stamp}_slm_affine_calibration" + ("" if ok_q else "_rejected"))
                 meta = {"camera_roi": roi, "settle_ms": settle_ms, "n_avg": n_avg,
                         "applied": ok_q, "rejected_because": why_q,
-                        "spot_region_cam": slm_cal.convex_hull(cam_pts[inl]).tolist(),
                         "snr": snr.tolist(),
                         "phase_n": [self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny],
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
@@ -1346,7 +1324,6 @@ class CommandExecutor(QObject):
             return
         data, cam_pts, max_proj, path = self._calib_result
         self.viewer.set_graph_image(max_proj)
-        self.viewer.set_spot_region(data.get("meta", {}).get("spot_region_cam"))
         ok = np.all(np.isfinite(cam_pts), axis=1)
         self.viewer.show_calibration_points(cam_pts[ok, 0], cam_pts[ok, 1])
         self._set_calib_status(data, os.path.basename(path))
@@ -1374,7 +1351,6 @@ class CommandExecutor(QObject):
         self.cgh.set_affine(M)
         self.calib_meta = data.get("meta", {})
         self.calib_file = file_name
-        self.viewer.set_spot_region(self.calib_meta.get("spot_region_cam"))
         self.logg.info(f"Calibration {how}: {file_name} (created {data.get('created', '?')})")
         self._set_calib_status(data, f"{os.path.basename(file_name)} ({how})")
         mism = self._calibration_mismatches()
@@ -1383,14 +1359,6 @@ class CommandExecutor(QObject):
         if mism:
             self.hg_panel.set_calibration_status(self.hg_panel.QLabel_Calib_Status.text()
                                                  + " | MISMATCH: " + "; ".join(mism))
-
-    def _spots_outside_field(self, pts):
-        """Indices of picked spots outside the calibration's usable spot field ([] if none / unknown)."""
-        region = (self.calib_meta or {}).get("spot_region_cam")
-        if not pts or not region or len(region) < 3:
-            return []
-        xy = np.array([[p[0], p[1]] for p in pts], float)
-        return [int(i) for i in np.flatnonzero(~slm_cal.in_polygon(xy, region))]
 
     def _calibration_mismatches(self):
         """Settings the calibration depends on that differ from the current ones (list of messages)."""

@@ -84,10 +84,6 @@ class LiveViewer(QWidget):
         self._spot_labels = []
         self.calib_spots_item = pg.ScatterPlotItem(size=10, pen=pg.mkPen((0, 220, 255), width=2), symbol="+")
         self.image_plot.addItem(self.calib_spots_item)
-        # usable spot field from the calibration (where calibration spots were found consistently)
-        self.spot_region_item = pg.PlotDataItem(pen=pg.mkPen((80, 220, 80), width=2, style=Qt.PenStyle.DashLine))
-        self.image_plot.addItem(self.spot_region_item)
-        self.spot_region = None
 
         self._setup_signal_connections()
 
@@ -335,15 +331,6 @@ class LiveViewer(QWidget):
     def show_calibration_points(self, xs, ys):
         """Overlay calibration detections (no index labels; picked spots stay visible)."""
         self.calib_spots_item.setData(list(xs), list(ys))
-
-    def set_spot_region(self, poly):
-        """Outline the usable spot field (camera px polygon) on the target image; None clears it."""
-        self.spot_region = None if poly is None or len(poly) < 3 else np.asarray(poly, float)
-        if self.spot_region is None:
-            self.spot_region_item.setData([], [])
-            return
-        closed = np.vstack([self.spot_region, self.spot_region[:1]])
-        self.spot_region_item.setData(closed[:, 0], closed[:, 1])
 
     def clear_calibration_points(self):
         self.calib_spots_item.setData([], [])
