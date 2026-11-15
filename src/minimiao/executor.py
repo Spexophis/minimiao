@@ -37,6 +37,9 @@ class CommandExecutor(QObject):
         self._recording = None  # Acquire-button recording in progress
         self._acq_timer = QTimer(self)
         self._acq_timer.timeout.connect(self._check_acquisition_done)
+        self._fps_timer = QTimer(self)  # measured camera frame rate -> FPS display, twice a second
+        self._fps_timer.timeout.connect(self._update_fps_display)
+        self._fps_timer.start(500)
         self._fire_stopped = threading.Event()
         self.trg = cmp.trg
         self.cgh = cmp.cgh
@@ -619,6 +622,10 @@ class CommandExecutor(QObject):
             self.start_acquisition(n_frames)
         else:
             self.stop_acquisition()
+
+    def _update_fps_display(self):
+        fps = getattr(self.devs.camera, "measured_fps", None) if self.devs.camera is not None else None
+        self.ctrl_panel.display_frame_rate(float(fps) if fps else 0.0)
 
     def _release_acquire_button(self):
         btn = self.ctrl_panel.QPushButton_acquire

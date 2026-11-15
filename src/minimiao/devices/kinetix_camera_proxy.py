@@ -17,6 +17,7 @@ them in _ProxyData for ImgLiveWorker polling, and fires on_update callbacks.
 import multiprocessing
 import queue
 import threading
+import time
 from collections import deque
 
 from minimiao import logger
@@ -59,7 +60,7 @@ def _camera_worker(cmd_queue, result_queue, frame_queue):
             return
         _last_fwd[0] = now
         try:
-            frame_queue.put_nowait(frame)
+            frame_queue.put_nowait((frame, cam.current_fps()))  # measured rate rides along with the preview
         except Exception:
             pass
 
@@ -258,15 +259,26 @@ class KinetixCameraProxy:
     def _frame_loop(self):
         while self._frame_running:
             try:
-                frame = self._frame_q.get(timeout=0.1)
+                item = self._frame_q.get(timeout=0.1)
             except queue.Empty:
                 continue
             except Exception:
                 break
+            if isinstance(item, tuple):
+                frame, fps = item
+                self._fps = (fps, time.monotonic())
+            else:
+                frame = item
             if self.data is not None:
                 self.data._add_frame(frame)
                 if self.data.callback is not None:
                     self.data.callback(frame)
+
+    @property
+    def measured_fps(self):
+        """Latest camera frame rate measured in the camera process (0.0 if no frames for > 1.5 s)."""
+        fps, t = getattr(self, "_fps", (0.0, 0.0))
+        return fps if time.monotonic() - t < 1.5 else 0.0
 
     # ------------------------------------------------------------------
     # Cached read-only properties (refreshed from _snap after each command)

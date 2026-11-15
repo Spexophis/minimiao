@@ -2,6 +2,9 @@
 # Licensed under the MIT License.
 
 
+import time
+from collections import deque
+
 from pyvcam import pvc
 from pyvcam.camera import Camera
 from pyvcam import constants as pvc_consts
@@ -93,6 +96,7 @@ class KinetixCamera:
         self.trigger_mode = "internal"
         self._exp_us = False        # exposure resolution in use: True = microseconds, False = milliseconds
         self._sequence = False      # current recording is a fixed-length sequence
+        self._fps_samples = deque()  # (monotonic time, SDK frame counter) over the last ~1 s
         self._initialize_sdk()
         if self.cam is not None:
             self.get_sn()
@@ -367,6 +371,7 @@ class KinetixCamera:
         """Start live acquisition and the polling thread."""
         self.data = run_threads.CameraDataList(max_length=self._settings.buffer_frame_count)
         self.acq_thread = run_threads.CameraAcquisitionThread(self)
+        self._fps_samples.clear()
         self._last_frame_count = -1
         try:
             self.cam.start_live(
@@ -414,6 +419,7 @@ class KinetixCamera:
         if frame_count == self._last_frame_count:
             return False  # no new frame since last poll
         self._last_frame_count = frame_count
+        self._note_frame(frame_count)
         data = self.data
         if data is None:
             return False  # was cleared by stop_live() while we were polling
@@ -424,6 +430,30 @@ class KinetixCamera:
         if self.data is not None:
             return self.data.get_last_element()
         return None
+
+    # ---- measured frame rate ----------------------------------------------------
+
+    FPS_WINDOW_S = 1.0
+
+    def _note_frame(self, frame_count):
+        """Record a received frame's SDK counter; called from the thread that reads frames."""
+        now = time.monotonic()
+        s = self._fps_samples
+        s.append((now, frame_count))
+        while len(s) > 2 and now - s[0][0] > self.FPS_WINDOW_S:
+            s.popleft()
+
+    def current_fps(self):
+        """Camera frame rate over the last ~1 s from the SDK frame counter (counts every frame
+        the camera took, including any that were dropped), or 0.0 if unknown."""
+        s = self._fps_samples
+        try:
+            (t0, c0), (t1, c1) = s[0], s[-1]
+        except IndexError:
+            return 0.0
+        if t1 - t0 <= 0 or c0 is None or c1 is None:
+            return 0.0
+        return max(0.0, (c1 - c0) / (t1 - t0))
 
     # ---- lossless single-stack recording ---------------------------------------
 
@@ -476,6 +506,7 @@ class KinetixCamera:
             return None
         if frame_dict is None or frame_dict.get('pixel_data') is None:
             return None
+        self._note_frame(frame_count)
         return frame_dict['pixel_data'], frame_count
 
     MAX_SEQUENCE_BYTES = 8 * 2 ** 30  # PVCAM holds a whole sequence in RAM
@@ -489,6 +520,7 @@ class KinetixCamera:
         """
         frame_bytes = max(1, self._settings.pixels_x * self._settings.pixels_y * 2)
         units = self._exposure_units()
+        self._fps_samples.clear()
         if n_frames:
             n_frames = int(n_frames)
             if n_frames * frame_bytes > self.MAX_SEQUENCE_BYTES:
