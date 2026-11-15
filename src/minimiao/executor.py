@@ -540,26 +540,17 @@ class CommandExecutor(QObject):
     #     except Exception as e:
     #         self.logg.error(f"Trigger Error: {e}")
 
-    def prepare_video(self, vd_mod):
-        # self.update_trigger_parameters()
+    def prepare_video(self):
         self.set_camera_roi()
         self.devs.camera.prepare_live()
-        # self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
-        #                                   exposure_time=self.devs.camera.t_exposure,
-        #                                   standby_time=self.devs.camera.t_readout,
-        #                                   frame_rate=self.devs.camera.fps)
-        # dtr, chs = self.trg.generate_digital_triggers()
-        # self.ctrl_panel.display_scmos_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
-    @pyqtSlot(bool, str)
-    def video(self, sw: bool, md: str):
+    @pyqtSlot(bool)
+    def video(self, sw: bool):
         if sw:
             try:
-                self.prepare_video(md)
+                self.prepare_video()
             except Exception as e:
                 self.logg.error(f"Error preparing imaging video: {e}")
-                # self.devs.trigger.stop_triggers()
                 return
             self.start_video()
         else:
@@ -570,7 +561,6 @@ class CommandExecutor(QObject):
             self.devs.camera.start_live()
             self.viewer.live_worker = run_threads.ImgLiveWorker(self.devs.camera.data, fps=10, parent=self.viewer)
             self.viewer.live_worker.img_ready.connect(self.viewer.on_camera_update_from_thread)
-            # self.devs.trigger.run_triggers()
             self.viewer.live_worker.start()
             self.logg.info("Live Video Started")
         except Exception as e:
@@ -583,11 +573,8 @@ class CommandExecutor(QObject):
             if getattr(self.viewer, "live_worker", None) is not None:
                 self.viewer.live_worker.stop()
                 self.viewer.live_worker = None
-            # self.devs.trigger.stop_triggers()
-            # time.sleep(0.04)
             self.devs.camera.stop_live()
             self.logg.info(r"Live Video Stopped")
-            # self.reset_stage_positions()
         except Exception as e:
             self.logg.error(f"Error stopping imaging video: {e}")
 
@@ -608,42 +595,32 @@ class CommandExecutor(QObject):
         if callback is not None:
             callback()
 
-    @pyqtSlot(bool, str, int)
-    def acquisition(self, sw: bool, acq_mod: str, acq_num: int):
+    @pyqtSlot(bool, int)
+    def acquisition(self, sw: bool, acq_num: int):
         if sw:
             fn = self.vw.get_file_dialog()
             tim = time.strftime("%Y%m%d%H%M%S")
             if fn is not None:
-                file_name = tim + "_" + acq_mod + "_" + fn
+                file_name = tim + "_" + "_" + fn
             else:
-                file_name = tim + "_" + acq_mod
+                file_name = tim
             try:
                 self.prepare_acquisition()
             except Exception as e:
                 self.logg.error(f"Error preparing widefield: {e}")
-                # self.devs.trigger.stop_triggers()
                 return
             self.start_acquisition(file_name, acq_num)
         else:
             self.stop_acquisition()
 
     def prepare_acquisition(self):
-        # self.update_trigger_parameters()
         self.set_camera_roi()
         self.devs.camera.prepare_live()
-        # self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
-        #                                   exposure_time=self.devs.camera.t_exposure,
-        #                                   standby_time=self.devs.camera.t_readout,
-        #                                   frame_rate=self.devs.camera.fps)
-        # dtr, chs = self.trg.generate_digital_triggers(self.lasers, self.cameras["imaging"])
-        # self.ctrl_panel.display_scmos_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=False, trg=False)
 
     def start_acquisition(self, labl: str, acq_num: int):
         try:
             self.devs.camera.start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
             self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
-            # self.devs.trigger.run_triggers()
         except Exception as e:
             self.stop_acquisition()
             self.logg.error(f"Error start acquisition: {e}")
@@ -651,10 +628,7 @@ class CommandExecutor(QObject):
 
     def stop_acquisition(self):
         try:
-            # self.devs.trigger.stop_triggers()
-            # time.sleep(0.04)
             self.devs.camera.stop_data_acquisition()
-            # self.reset_stage_positions()
         except Exception as e:
             self.logg.error(f"Error stop acquisition: {e}")
 
