@@ -187,3 +187,30 @@ def camera_grid_to_holo(M, cam_shape, n=5, margin=0.1, phase_n=(850, 850), zero_
             (np.round(holo[:, 1]) >= 1) & (np.round(holo[:, 1]) <= ny) &
             (np.hypot(holo[:, 0] - nx / 2, holo[:, 1] - ny / 2) > r0))
     return holo[keep], cam[keep]
+
+
+def find_peaks(diff, n, window=7, min_snr=5.0):
+    """
+    Up to n separate spots in a background-subtracted frame (brightest first).
+    Returns (points (k, 2) as camera (x=col, y=row), snr (k,)), k <= n; stops below min_snr.
+    """
+    d = np.clip(np.asarray(diff, dtype=np.float64), 0, None)
+    sm = _box_blur(d)
+    noise = np.std(d) + 1e-12
+    h, w = d.shape
+    yy, xx = np.mgrid[-window:window + 1, -window:window + 1]
+    pts, snrs = [], []
+    for _ in range(int(n)):
+        r, c = np.unravel_index(np.argmax(sm), sm.shape)
+        snr = sm[r, c] / noise
+        if snr < min_snr:
+            break
+        r0, r1, c0, c1 = max(r - window, 0), min(r + window + 1, h), max(c - window, 0), min(c + window + 1, w)
+        patch = d[r0:r1, c0:c1]
+        tot = patch.sum()
+        sub_y = yy[r0 - r + window:r1 - r + window, c0 - c + window:c1 - c + window]
+        sub_x = xx[r0 - r + window:r1 - r + window, c0 - c + window:c1 - c + window]
+        pts.append((c + (patch * sub_x).sum() / tot, r + (patch * sub_y).sum() / tot) if tot > 0 else (c, r))
+        snrs.append(snr)
+        sm[max(r - 2 * window, 0):r + 2 * window + 1, max(c - 2 * window, 0):c + 2 * window + 1] = 0  # suppress
+    return np.array(pts, dtype=float).reshape(-1, 2), np.array(snrs)

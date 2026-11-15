@@ -88,6 +88,7 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_calib_measure.connect(self.measure_calibration)
         self.hg_panel.Signal_calib_load.connect(self.load_calibration)
         self.hg_panel.Signal_calib_auto.connect(self.auto_calibration)
+        self.hg_panel.Signal_calib_check.connect(self.check_spots)
         # Acquisition blocks
         self.acq_panel.Signal_run_block.connect(self.run_acquisition_block)
         self.acq_panel.Signal_run_slot_loop.connect(self.run_slot_loop)
@@ -743,9 +744,14 @@ class CommandExecutor(QObject):
         self.viewer.clear_calibration_points()
         if file_name is not None:
             self.cgh.load_mask(file_name)
-            self.viewer.set_graph_image(self.cgh.cell_mask)
+            if self.cgh.cell_mask is not None:
+                self.viewer.set_graph_image(self.cgh.cell_mask)
         else:
-            self.cgh.cell_mask = self.devs.camera.data.get_last_element()
+            frame = self.devs.camera.get_last_image() if self.devs.camera is not None else None
+            if frame is None:
+                self.logg.error("No camera frame to use as target: start Video, or choose an image file")
+                return
+            self.cgh.cell_mask = frame
             self.viewer.set_graph_image(self.cgh.cell_mask)
 
     @pyqtSlot()
@@ -762,10 +768,9 @@ class CommandExecutor(QObject):
             self.logg.warning("Fresnel focal length is 0: holograms carry no lens and will not focus "
                               "at the sample through the relay; set the focal length in the SLM panel")
         if self.cgh.affine is not None:
-            roi = list(self.ctrl_panel.get_scmos_roi())
-            if self.calib_meta.get("camera_roi") not in (None, roi):
-                self.logg.warning(f"Camera ROI/binning {roi} differs from calibration "
-                                  f"{self.calib_meta.get('camera_roi')}; spot positions will be wrong")
+            for msg in self._calibration_mismatches():
+                self.logg.warning(f"Calibration mismatch: {msg}; spot positions will be wrong "
+                                  f"(restore the setting or run Auto Calibrate again)")
         rows = self.viewer.get_target_spots()  # picked spots, index = hologram "spot i"
         pts = [tuple(float(v) for v in r) for r in rows
                if r is not None and all(isinstance(v, (int, float)) for v in r)]
@@ -898,14 +903,16 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(title, interrupt=True)
         self.vw.dialog.dialog_closed.connect(self._calib_abort.set)
 
-    def _measure_slots(self, n_slots, wait_s, n_avg, exposure_s):
-        """Worker thread: display slots 1..n_slots in turn and record one averaged frame each."""
+    def _measure_slots(self, n_slots, wait_s, n_avg, exposure_s, slots=None):
+        """Worker thread: display slots 1..n_slots (or the given slot list) in turn and record one
+        averaged frame each."""
         frames = []
+        slots = list(slots) if slots is not None else [self.FIRST_HOLOGRAM_SLOT + k for k in range(n_slots)]
         try:
-            for k in range(n_slots):
+            for slot in slots:
                 if self._calib_abort.is_set():
                     raise RuntimeError("calibration aborted")
-                self.devs.slm.display_pattern(self.FIRST_HOLOGRAM_SLOT + k)
+                self.devs.slm.display_pattern(slot)
                 # only frames taken after settle + exposure (wait_s) from now show this slot
                 frames.append(self._grab_frame(n_avg, exposure_s, not_before=time.perf_counter() + wait_s))
         finally:
@@ -1077,6 +1084,110 @@ class CommandExecutor(QObject):
             self.set_laser(["473"], True, power)
         return power, laser_was_on
 
+    @pyqtSlot(dict)
+    def check_spots(self, settings: dict):
+        """
+        Verify targeting on the fluorescent layer with the current calibration and settings:
+        computes Hybrid holograms for the picked spots (slot 1 = all spots, slots 2.. = one spot
+        each), projects slot 0 (background) and each hologram, and measures where every spot lands.
+        Reports per-spot errors for single spots and for the all-at-once hologram.
+        """
+        if self.cgh.affine is None:
+            self._show_calib_outcome("Check Spots: no calibration", "Run Auto Calibrate (or Load Calib) first.")
+            return
+        if not self.viewer.get_target_spots():
+            self._show_calib_outcome("Check Spots: no spots", "Pick spots on the target image first.")
+            return
+        prep = self._calib_prepare()
+        if prep is None:
+            return
+        power, laser_was_on = prep
+        picked = np.array([[x, y] for x, y, _, _ in self.cgh.spots_xy], dtype=float)
+        exposure_s = max(float(getattr(self.devs.camera, "t_exposure", 20) or 20), 1.0) * 1e-3
+        wait_s = settings["settle_ms"] * 1e-3 + 2 * exposure_s
+        n_avg = settings["n_avg"]
+        mism = self._calibration_mismatches()
+        result = {}
+
+        def task():
+            try:
+                holograms = self.cgh.compute_holograms("Hybrid")
+                self._clear_hologram_slots_keep()
+                for slot, h in enumerate(holograms, start=self.FIRST_HOLOGRAM_SLOT):
+                    self.devs.slm.write_array(h["pattern"], slot)
+                    self.slot_patterns[slot] = (h["label"], h["pattern"])
+                slots = [self.CORRECTION_SLOT] + list(range(self.FIRST_HOLOGRAM_SLOT,
+                                                           self.FIRST_HOLOGRAM_SLOT + len(holograms)))
+                frames = self._measure_slots(0, wait_s, n_avg, exposure_s, slots=slots)
+                bg = frames[0]
+                singles = np.full_like(picked, np.nan)
+                multi_pts = np.zeros((0, 2))
+                for h, fr in zip(holograms, frames[1:]):
+                    pts, _ = slm_cal.find_peaks(fr - bg, len(h["spots"]))
+                    if h["label"] == "all":
+                        multi_pts = pts
+                    elif len(pts):
+                        singles[h["spots"][0]] = pts[0]
+                err_single = np.hypot(*(singles - picked).T)
+                err_multi = np.array([np.min(np.hypot(*(multi_pts - q).T)) if len(multi_pts) else np.nan
+                                      for q in picked])
+                stamp = time.strftime("%Y%m%d%H%M%S")
+                base = os.path.join(self.path, f"{stamp}_check_spots")
+                record = {"created": time.strftime("%Y-%m-%d %H:%M:%S"), "calibration_file": self.calib_file,
+                          "settings_mismatches": mism, "picked_cam": picked.tolist(),
+                          "single_landed_cam": singles.tolist(), "single_error_px": err_single.tolist(),
+                          "all_at_once_landed_cam": multi_pts.tolist(), "all_at_once_error_px": err_multi.tolist(),
+                          "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
+                          "f_fresnel_m": self.cgh.hologram_lens_f(), "camera_roi": list(self.ctrl_panel.get_scmos_roi())}
+                acq.write_json(base + ".json", record)
+                tf.imwrite(base + "_frames.tif", np.stack(frames).astype(np.float32))
+                result.update(singles=singles, multi=multi_pts, es=err_single, em=err_multi, path=base + ".json",
+                              img=np.clip(np.max(frames[1:] - bg, axis=0), 0, None))
+            except Exception as e:
+                result["error"] = str(e)
+                if not self._calib_abort.is_set():
+                    self.logg.error(f"Check Spots failed: {e}")
+
+        def finish():
+            if not laser_was_on:
+                self.set_laser(["473"], False, power)
+            if "es" not in result:
+                why = "aborted" if self._calib_abort.is_set() else f"failed: {result.get('error', 'see log')}"
+                self._show_calib_outcome("Check Spots: " + why.split(":")[0], why)
+                return
+            es, em = result["es"], result["em"]
+            self.viewer.set_graph_image(result["img"])
+            pts = np.vstack([result["singles"][np.isfinite(result["singles"][:, 0])], result["multi"]])
+            self.viewer.show_calibration_points(pts[:, 0], pts[:, 1])
+            fmt = lambda e: ("not detected" if not np.isfinite(e).any() else
+                             f"rms {np.sqrt(np.nanmean(e ** 2)):.1f} px, max {np.nanmax(e):.1f} px"
+                             + (f", {int(np.isnan(e).sum())} not detected" if np.isnan(e).any() else ""))
+            per = "\n".join(f"  spot {i}: single {a:.1f} px, all-at-once {b:.1f} px" for i, (a, b) in enumerate(zip(es, em)))
+            single_ok = np.isfinite(es).all() and np.nanmax(es) <= 3
+            multi_ok = np.isfinite(em).all() and np.nanmax(em) <= 3
+            if single_ok and multi_ok:
+                verdict = "Spots land where picked."
+            elif single_ok:
+                verdict = "Single spots land correctly but the all-at-once hologram does not: multi-spot hologram problem."
+            else:
+                verdict = ("Single spots miss: the calibration does not match this setup or this target image "
+                           "(check camera ROI / binning, SLM offset, focal length, and that the target image is a "
+                           "camera frame) - run Auto Calibrate again.")
+            if mism:
+                verdict += "\nSettings changed since calibration: " + "; ".join(mism)
+            self.hg_panel.set_calibration_status(f"Check Spots: single {fmt(es)}; all-at-once {fmt(em)}")
+            self._show_calib_outcome("Check Spots", f"{verdict}\n\nSingle spots: {fmt(es)}\nAll at once: {fmt(em)}\n"
+                                                    f"{per}\n\nSaved: {os.path.basename(result['path'])}")
+
+        self._after_task = finish
+        self._calib_dialog(r"Check Spots")
+        self.run_task(task=task)
+
+    def _clear_hologram_slots_keep(self):
+        """Forget hologram slot labels >= 1 without discarding self.cgh.holograms (just computed)."""
+        for slot in [k for k in self.slot_patterns if k >= self.FIRST_HOLOGRAM_SLOT]:
+            del self.slot_patterns[slot]
+
     @pyqtSlot(int, int)
     def measure_calibration(self, settle_ms: int, n_avg: int):
         """Step through the calibration slots, locate each spot on the camera, fit the affine."""
@@ -1163,10 +1274,29 @@ class CommandExecutor(QObject):
         self.calib_file = file_name
         self.logg.info(f"Calibration {how}: {file_name} (created {data.get('created', '?')})")
         self._set_calib_status(data, f"{os.path.basename(file_name)} ({how})")
+        mism = self._calibration_mismatches()
+        for msg in mism:
+            self.logg.warning(f"Calibration mismatch: {msg}")
+        if mism:
+            self.hg_panel.set_calibration_status(self.hg_panel.QLabel_Calib_Status.text()
+                                                 + " | MISMATCH: " + "; ".join(mism))
+
+    def _calibration_mismatches(self):
+        """Settings the calibration depends on that differ from the current ones (list of messages)."""
+        meta, out = self.calib_meta or {}, []
         roi = list(self.ctrl_panel.get_scmos_roi())
-        if self.calib_meta.get("camera_roi") not in (None, roi):
-            self.logg.warning(f"Calibration was measured with camera ROI/binning {self.calib_meta.get('camera_roi')}; "
-                              f"the current setting is {roi}")
+        if meta.get("camera_roi") not in (None, roi):
+            out.append(f"camera ROI/binning {roi} vs calibration {meta.get('camera_roi')}")
+        (ox, oy), _ = self.ctrl_panel.get_slm_parameters()
+        if meta.get("slm_offset") not in (None, [ox, oy]):
+            out.append(f"SLM offset ({ox}, {oy}) vs calibration {tuple(meta.get('slm_offset'))}")
+        f_now = self.ctrl_panel.get_slm_focal_mm() * 1e-3
+        f_cal = meta.get("f_fresnel")
+        if f_cal is not None and abs(float(f_cal) - f_now) > 1e-6:
+            out.append(f"Fresnel focal length {f_now * 1e3:g} mm vs calibration {float(f_cal) * 1e3:g} mm")
+        if meta and meta.get("lens_in_holograms") is False and f_now > 0:
+            out.append("calibration was measured with holograms WITHOUT the Fresnel lens")
+        return out
 
     def _load_latest_calibration(self):
         """At start-up: load the newest *_slm_affine_calibration.json from the data folders."""

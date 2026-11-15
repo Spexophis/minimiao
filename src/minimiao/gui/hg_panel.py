@@ -25,6 +25,7 @@ class HGPanel(QWidget):
     Signal_calib_measure = pyqtSignal(int, int)
     Signal_calib_load = pyqtSignal()
     Signal_calib_auto = pyqtSignal(dict)
+    Signal_calib_check = pyqtSignal(dict)
 
     def __init__(self, logg=None, parent=None):
         super().__init__(parent)
@@ -92,6 +93,7 @@ class HGPanel(QWidget):
         self.QPushButton_Calib_Load = cw.PushButtonWidget('Load Calib')
         self.QSpinBox_Calib_Refine = cw.SpinBoxWidget(0, 10, 1, 5)
         self.QPushButton_Calib_Auto = cw.PushButtonWidget('Auto Calibrate')
+        self.QPushButton_Calib_Check = cw.PushButtonWidget('Check Spots')
         self.QLabel_Calib_Status = cw.LabelWidget('Calibration: none (run Auto Calibrate or Load Calib)')
         self.QLabel_Calib_Status.setWordWrap(True)
 
@@ -111,7 +113,9 @@ class HGPanel(QWidget):
         calib_scroll_layout.addWidget(self.QSpinBox_Calib_Average, 5, 2, 1, 1)
         calib_scroll_layout.addWidget(cw.LabelWidget(str('Refine grid')), 6, 1, 1, 1)
         calib_scroll_layout.addWidget(self.QSpinBox_Calib_Refine, 6, 2, 1, 1)
-        calib_scroll_layout.addWidget(self.QLabel_Calib_Status, 7, 0, 1, 3)
+        calib_scroll_layout.addWidget(self.QPushButton_Calib_Check, 7, 0, 1, 1)
+        calib_scroll_layout.addWidget(cw.LabelWidget(str('measures where the picked spots land')), 7, 1, 1, 2)
+        calib_scroll_layout.addWidget(self.QLabel_Calib_Status, 8, 0, 1, 3)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(calib_scroll_area)
@@ -154,6 +158,8 @@ class HGPanel(QWidget):
         self.QPushButton_Calib_Load.clicked.connect(self.Signal_calib_load.emit)
         self.QPushButton_Calib_Auto.clicked.connect(
             lambda: self.Signal_calib_auto.emit(self.get_calibration_settings()))
+        self.QPushButton_Calib_Check.clicked.connect(
+            lambda: self.Signal_calib_check.emit(self.get_calibration_settings()))
 
     @pyqtSlot()
     def load_target(self):

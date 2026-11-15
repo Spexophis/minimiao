@@ -91,7 +91,17 @@ class CGH:
         else:
             self.logg.error("Invalid file type")
             return
-        self.cell_mask = np.asarray(img)
+        img = np.asarray(img)
+        if img.ndim == 3 and img.shape[-1] in (3, 4) and img.shape[0] > 4:
+            img = img[..., :3].mean(axis=-1)          # RGB(A) image -> grey
+        elif img.ndim == 3:
+            self.logg.info(f"Target {Path(fnd).name}: stack of {img.shape[0]} frames -> mean image")
+            img = img.mean(axis=0)                    # (frames, rows, cols) stack -> mean frame
+        elif img.ndim > 3:
+            img = img.reshape((-1,) + img.shape[-2:]).mean(axis=0)
+        self.logg.info(f"Target image {Path(fnd).name}: {img.shape[0]} x {img.shape[1]} px (rows x cols); "
+                       f"must be camera pixels with the calibration's ROI / binning")
+        self.cell_mask = img
 
     def load_spots_picked(self, spots_picked):
         self.spots_xy = spots_picked
