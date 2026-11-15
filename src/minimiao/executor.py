@@ -7,9 +7,8 @@ import threading
 import time
 
 import numpy as np
-import pandas as pd
 import tifffile as tf
-from PyQt6.QtCore import QObject, pyqtSlot, Qt, pyqtSignal, QTimer
+from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 
 from . import run_threads
 from .computations import slm_calibration as slm_cal
@@ -18,11 +17,8 @@ from .devices import trigger_box as tbx
 
 
 class CommandExecutor(QObject):
-    svd = pyqtSignal(str)
     sig_progress = pyqtSignal(str)
     sig_trigger_status = pyqtSignal(str)
-    sig_plt = pyqtSignal(list, list)
-    sig_auto_focus = pyqtSignal(float)
 
     def __init__(self, dev, cwd, cmp, path, logger=None):
         super().__init__()
@@ -41,13 +37,11 @@ class CommandExecutor(QObject):
         self._fps_timer.timeout.connect(self._update_fps_display)
         self._fps_timer.start(500)
         self._fire_stopped = threading.Event()
-        self.trg = cmp.trg
         self.cgh = cmp.cgh
         self.path = path
         self.logg = logger or self.setup_logging()
         self._set_signal_executions()
         self._initial_setup()
-        self.lasers = []
         self.task_worker = None
         self._after_task = None
         self.slot_patterns = {}  # SLM memory slot -> (label, uint8 pattern) written this session
@@ -78,7 +72,6 @@ class CommandExecutor(QObject):
         # Acquisition
         self.ctrl_panel.Signal_video.connect(self.video)
         self.ctrl_panel.Signal_data_acquire.connect(self.acquisition)
-        self.svd.connect(self.save_data)
         # Hologram
         self.hg_panel.Signal_load_target.connect(self.load_cgh_target)
         self.hg_panel.Signal_pick_spot.connect(self.pick_cgh_spots)
@@ -96,11 +89,7 @@ class CommandExecutor(QObject):
         self.sig_progress.connect(self._show_progress)
 
     def _initial_setup(self):
-        try:
-            self.laser_lists = list(self.devs.laser.lasers.keys())
-            self.logg.info("Finish setting up controllers")
-        except Exception as e:
-            self.logg.error(f"Initial setup Error: {e}")
+        self.logg.info("Finish setting up controllers")
         try:
             if self.devs.camera is not None:
                 options = self.devs.camera.get_readout_options() or []
@@ -236,10 +225,9 @@ class CommandExecutor(QObject):
         try:
             bs = acq.BlockSettings(**settings)
             acq.build_sequence(bs)  # validates timing / TriggerBox clock before touching hardware
-            exposure = self.ctrl_panel.get_scmos_exposure()
-            if bs.camera_trigger == "external" and exposure >= 1000.0 / bs.frame_rate_hz:
-                raise ValueError(f"exposure {exposure:g} ms must be shorter than the frame period "
-                                 f"{1000.0 / bs.frame_rate_hz:.3f} ms")
+            errors, _ = acq.camera_timing_issues(bs, self.ctrl_panel.get_scmos_exposure())
+            if errors:
+                raise ValueError("; ".join(errors))
         except Exception as e:
             self.logg.error(f"Invalid acquisition settings: {e}")
             return
@@ -263,9 +251,7 @@ class CommandExecutor(QObject):
             except Exception as e:
                 self.logg.error(f"{title} failed: {e}")
 
-        def finish():
-            self.runner = None
-        self._after_task = finish
+        self._after_task = lambda: setattr(self, "runner", None)
         self.vw.get_dialog(title, interrupt=True)
         self.vw.dialog.dialog_closed.connect(runner.abort.set)
         self.run_task(task=task)
@@ -438,97 +424,6 @@ class CommandExecutor(QObject):
         else:
             self.logg.info(f"SLM displaying slot {slot} (not written in this session)")
 
-    # def reset_stage_positions(self):
-    #     pos_x, pos_y, pos_z = self.ctrl_panel.get_stage_positions()
-    #     self.set_stage_position_x(pos_x[0], port="software")
-    #     self.set_stage_position_y(pos_y[0], port="software")
-    #     self.set_stage_position_z(pos_z[0], port="software")
-    #     self.set_stage_position_x(pos_x[1], port="analog")
-    #     self.set_stage_position_y(pos_y[1], port="analog")
-    #     self.set_stage_position_z(pos_z[1], port="analog")
-    #     self.ctrl_panel.display_stage_position_x(self.devs.stage.read_position(0))
-    #     self.ctrl_panel.display_stage_position_y(self.devs.stage.read_position(1))
-    #     self.ctrl_panel.display_stage_position_z(self.devs.stage.read_position(2))
-    #
-    # @pyqtSlot(str, float, float, float)
-    # def set_stage_positions_usb(self, axis: str, value_x: float, value_y: float, value_z: float):
-    #     if axis == "x":
-    #         self.set_stage_position_x(value_x, port="software")
-    #     if axis == "y":
-    #         self.set_stage_position_y(value_y, port="software")
-    #     if axis == "z":
-    #         self.set_stage_position_z(value_z, port="software")
-    #
-    # @pyqtSlot(str, float, float, float)
-    # def set_stage_positions(self, axis: str, value_x: float, value_y: float, value_z: float):
-    #     if axis == "x":
-    #         self.set_stage_position_x(value_x, port="analog")
-    #     if axis == "y":
-    #         self.set_stage_position_y(value_y, port="analog")
-    #     if axis == "z":
-    #         self.set_stage_position_z(value_z, port="analog")
-    #
-    # def set_stage_position_x(self, pos_x, port="analog"):
-    #     try:
-    #         if port == "software":
-    #             self.devs.stage.move_position(0, pos_x)
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_x())
-    #         else:
-    #             self.devs.trigger.set_stage_position([pos_x / 10.], [0])
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_x())
-    #     except Exception as e:
-    #         self.logg.error(f" stage Error: {e}")
-    #
-    # def _update_stage_display_x(self):
-    #     try:
-    #         position = self.devs.stage.read_position(0)
-    #         self.ctrl_panel.display_stage_position_x(position)
-    #     except Exception as e:
-    #         self.logg.error(f" stage Read Error: {e}")
-    #
-    # def set_stage_position_y(self, pos_y, port="analog"):
-    #     try:
-    #         if port == "software":
-    #             self.devs.stage.move_position(1, pos_y)
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_y())
-    #         else:
-    #             self.devs.trigger.set_stage_position([pos_y / 10.], [1])
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_y())
-    #     except Exception as e:
-    #         self.logg.error(f" stage Error: {e}")
-    #
-    # def _update_stage_display_y(self):
-    #     try:
-    #         position = self.devs.stage.read_position(1)
-    #         self.ctrl_panel.display_stage_position_y(position)
-    #     except Exception as e:
-    #         self.logg.error(f" stage Read Error: {e}")
-    #
-    # def set_stage_position_z(self, pos_z, port="analog"):
-    #     try:
-    #         if port == "software":
-    #             self.devs.stage.move_position(2, pos_z)
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_z())
-    #         else:
-    #             self.devs.trigger.set_stage_position([pos_z / 10.], [2])
-    #             QTimer.singleShot(100, lambda: self._update_stage_display_z())
-    #     except Exception as e:
-    #         self.logg.error(f" stage Error: {e}")
-    #
-    # def _update_stage_display_z(self):
-    #     try:
-    #         position = self.devs.stage.read_position(2)
-    #         self.ctrl_panel.display_stage_position_z(position)
-    #     except Exception as e:
-    #         self.logg.error(f" stage Read Error: {e}")
-    #
-    # def update_stage_scanning(self):
-    #     axis_lengths, step_sizes = self.ctrl_panel.get_stage_scan_parameters()
-    #     pos_x, pos_y, pos_z = self.ctrl_panel.get_stage_positions()
-    #     positions = [pos_x[1], pos_y[1], pos_z[1]]
-    #     return_time, line_time = self.ctrl_panel.get_stage_scan_time()
-    #     self.trg.update_stage_scan_parameters(axis_lengths, step_sizes, positions, return_time, line_time)
-
     @pyqtSlot(list, bool, float)
     def set_laser(self, laser: list, sw: bool, pw: float):
         if sw:
@@ -541,28 +436,6 @@ class CommandExecutor(QObject):
                 self.devs.laser.set_modulation_mode(laser, [pw])
             except Exception as e:
                 self.logg.error(f"Cobolt Laser Error: {e}")
-
-    # @pyqtSlot(int)
-    # def update_trigger_sample_rate(self, sr: int):
-    #     self.trg.update_sampling_rate(sr * 1000)
-    #     self.devs.trigger.sample_rate = sr * 1000
-    #
-    # @pyqtSlot()
-    # def reset_trigger_channels(self):
-    #     self.devs.trigger.stop_triggers()
-    #
-    # def update_digital_triggers(self):
-    #     digital_starts, digital_ends = self.ctrl_panel.get_digital_parameters()
-    #     self.trg.update_digital_parameters(digital_starts, digital_ends)
-    #
-    # def update_trigger_parameters(self):
-    #     """Ensure that the camera acquisition is fully set up before executing this function."""
-    #     try:
-    #         self.update_digital_triggers()
-    #         self.update_stage_scanning()
-    #         self.logg.info(f"Trigger Updated")
-    #     except Exception as e:
-    #         self.logg.error(f"Trigger Error: {e}")
 
     def prepare_video(self):
         self.set_camera_roi()
@@ -733,10 +606,6 @@ class CommandExecutor(QObject):
         self.logg.info(f"Acquisition saved: {rec['path']} ({summary.get('n_frames')} frames"
                        f"{', measured %.1f fps' % summary['measured_fps'] if summary.get('measured_fps') else ''}"
                        f", {summary.get('n_dropped', 0)} dropped)")
-
-    @pyqtSlot(str)
-    def save_data(self, fd: str):
-        pass
 
     @pyqtSlot()
     def load_cgh_target(self):
@@ -944,7 +813,7 @@ class CommandExecutor(QObject):
         """Worker thread: write, measure, detect. Retries once with 2x averaging if too few spots are found."""
         self._write_point_holograms(holo_pts, tag)
         holo_pts = self.calib_holo_pts  # rounded positions actually projected
-        for attempt, avg in enumerate((n_avg, 2 * n_avg)):
+        for avg in (n_avg, 2 * n_avg):
             frames = self._measure_slots(len(holo_pts), wait_s, avg, exposure_s)
             cam_pts, snr, max_proj = slm_cal.detect_spots(frames)
             found = np.isfinite(cam_pts[:, 0]).mean()
@@ -987,7 +856,7 @@ class CommandExecutor(QObject):
                     time.sleep(0.1)
                 # 1. coarse
                 holo1 = slm_cal.make_grid(*phase_n, settings["grid"], settings["span"])
-                holo1, cam1, snr1, mp1 = self._project_and_detect(holo1, wait_s, n_avg, exposure_s, "coarse")
+                holo1, cam1, _, mp1 = self._project_and_detect(holo1, wait_s, n_avg, exposure_s, "coarse")
                 try:
                     n1 = slm_cal.check_point_set(cam1)
                 except ValueError as e:
@@ -1016,7 +885,7 @@ class CommandExecutor(QObject):
                     if len(holo2) < max(6, n_ref * n_ref // 2):   # camera image smaller than the field
                         holo2, _ = slm_cal.camera_grid_to_holo(M1, mp1.shape, n_ref, phase_n=phase_n)
                     if len(holo2) >= 3:
-                        holo2, cam2, snr2, mp2 = self._project_and_detect(holo2, wait_s, n_avg, exposure_s,
+                        holo2, cam2, _, mp2 = self._project_and_detect(holo2, wait_s, n_avg, exposure_s,
                                                                         "refine")
                         cam2_exp = slm_cal.holo_to_cam(M1, holo2)  # coarse-model prediction
                         ok = np.isfinite(cam2[:, 0])
@@ -1035,7 +904,7 @@ class CommandExecutor(QObject):
                 # 3. final fit
                 holo_all, cam_all = np.vstack(holo_all), np.vstack(cam_all)
                 M, res, inl = slm_cal.fit_affine_robust(cam_all, holo_all)
-                ok_q, rms_q, why_q = slm_cal.calibration_quality(res, inl)
+                ok_q, _, why_q = slm_cal.calibration_quality(res, inl)
                 stamp = time.strftime("%Y%m%d%H%M%S")
                 base = os.path.join(self.path, f"{stamp}_slm_affine_calibration" + ("" if ok_q else "_rejected"))
                 meta = {"camera_roi": roi, "settle_ms": settings["settle_ms"], "n_avg": n_avg,
@@ -1290,7 +1159,7 @@ class CommandExecutor(QObject):
                 if n_bad:
                     self.logg.warning(f"Calibration: {n_bad} spot(s) not detected (SNR {np.round(snr, 1).tolist()})")
                 M, res, inl = slm_cal.fit_affine_robust(cam_pts, holo_pts)
-                ok_q, rms_q, why_q = slm_cal.calibration_quality(res, inl)
+                ok_q, _, why_q = slm_cal.calibration_quality(res, inl)
                 stamp = time.strftime("%Y%m%d%H%M%S")
                 base = os.path.join(self.path, f"{stamp}_slm_affine_calibration" + ("" if ok_q else "_rejected"))
                 meta = {"camera_roi": roi, "settle_ms": settle_ms, "n_avg": n_avg,
@@ -1419,24 +1288,3 @@ class CommandExecutor(QObject):
         file_name = self.vw.get_file_dialog()
         if file_name is not None:
             self.cgh.save_cgh(os.path.join(self.path, file_name))
-
-    # def prepare_task(self, single=True):
-    #     self.update_trigger_parameters()
-    #     self.set_camera_roi()
-    #     self.devs.camera.t_exposure = slm_on
-    #     self.devs.camera.prepare_live()
-    #     self.trg.update_camera_parameters(initial_time=self.devs.camera.t_clean,
-    #                                       exposure_time=self.devs.camera.t_exposure,
-    #                                       standby_time=self.devs.camera.t_readout,
-    #                                       frame_rate=self.devs.camera.fps)
-        # dtr, chs = self.trg.generate_digital_triggers()
-        # self.devs.trigger.write_triggers(digital_sequences=dtr, digital_channels=chs, finite=single, trg=False)
-
-    # def finish_task(self):
-    #     try:
-    #         self.devs.trigger.stop_triggers()
-    #         time.sleep(0.04)
-    #         self.devs.camera.stop_snap()
-    #         self.logg.info("Focus Finding Finish")
-    #     except Exception as e:
-    #         self.logg.error(f"Error Stopping Focus Finding: {e}")

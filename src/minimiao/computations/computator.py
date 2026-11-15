@@ -6,9 +6,9 @@
 from minimiao import logger
 
 try:
-    from . import trigger_generator, pattern_generator
+    from . import pattern_generator
 except ImportError:
-    from minimiao.computations import trigger_generator, pattern_generator
+    from minimiao.computations import pattern_generator
 
 
 class ComputationManager:
@@ -16,7 +16,6 @@ class ComputationManager:
 
         self.logg = logg or logger.setup_logging()
         self.data_folder = path
-        self.trg = trigger_generator.TriggerSequence(logg=self.logg)
         self.cgh = pattern_generator.CGH(logg=self.logg)
 
 

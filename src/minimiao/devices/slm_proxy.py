@@ -18,19 +18,6 @@ def _slm_worker(cmd_queue, result_queue, serial_number):
     try:
         from minimiao.devices.hamamatsu_slm import HamamatsuSLM
 
-        class _ForwardingHandler:
-            """Forward log records to the main process via result_queue."""
-            import logging as _logging
-
-            def __init__(self, q):
-                self._q = q
-
-            def emit(self, record):
-                self._q.put(('log', record.levelname.lower(), record.getMessage()))
-
-        import logging
-        _handler = _ForwardingHandler(result_queue)
-
         class _Logger:
             def __init__(self, q):
                 self._q = q

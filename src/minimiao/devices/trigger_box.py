@@ -341,14 +341,6 @@ def gclk4_prescaler(sysclk_hz: float, pwm_freqs: list[float]) -> Optional[int]:
     return p if p <= min(hi, 1024) else None
 
 
-def suggest_sysclk(pulse_freqs: list[int], max_hz: int = SAFE_SYSCLK_HZ) -> Optional[int]:
-    """Highest multiple of LCM(pulse_freqs) <= max_hz (phase-locked pulses)."""
-    l = 1
-    for fq in pulse_freqs:
-        l = l * fq // math.gcd(l, fq)
-    return (max_hz // l) * l if l <= max_hz else None
-
-
 def choose_sysclk(pulse_freqs: list[int], min_width_us: float = 0.0,
                   max_hz: int = SAFE_SYSCLK_HZ, widths_us: Optional[list] = None) -> Optional[int]:
     """

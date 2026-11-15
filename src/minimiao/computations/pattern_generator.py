@@ -69,7 +69,6 @@ class CGH:
         self.holograms = []
         self.holograms_lens = {"lens_in_holograms": False, "f_fresnel_m": None}
         self.affine = None        # 2x3 camera -> hologram-plane matrix (slm_calibration); required for picked spots
-        self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
 
     def load_correction_pattern(self, file):
         correct_pattern = Image.open(file)
@@ -108,7 +107,7 @@ class CGH:
 
     def build_target_from_spots(self, spots_sample):
         target_amp = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.float32)
-        for (xx, yy, zz, ii) in spots_sample:
+        for (xx, yy, _, ii) in spots_sample:
             target_amp[self.holo_sys.phase_ny - round(yy), self.holo_sys.phase_nx - round(xx)] = ii
         return target_amp
 
@@ -195,9 +194,6 @@ class CGH:
 
     CGH_MODES = ("Sequential", "Simultaneous", "Hybrid")
 
-    def compute_cgh(self, trg=True):
-        self.phase_slm = self.compute_cgh_multiplane(self.spots_xy, trg=trg)
-
     def compute_holograms(self, mode="Simultaneous", trg=True):
         """
         Build the hologram list for the selected mode from self.spots_xy.
@@ -264,15 +260,6 @@ class CGH:
             self.add_trigger_pattern(pattern)
         return pattern
 
-    def compute_cgh_plane(self, trg=True):
-        spots_sample = []
-        for (x0, y0, z0, I0) in self.spots_xy:
-            xy = self._map_spot(x0, y0)
-            if xy is not None:
-                spots_sample.append((*xy, z0, I0))
-        target_amp = self.build_target_from_spots(spots_sample)
-        self.phase_slm = self._finalize(self.gerchberg_saxton(target_amp), trg=trg)
-
     def compute_single_spot(self, spot, z_bin_um=1.0, trg=True):
         """
         Exact hologram for one spot: the inverse FFT of a single point is a
@@ -329,7 +316,7 @@ class CGH:
 
     def slm_center(self):
         """Hologram centre in SLM pixel coordinates (SLM centre + offset; same convention as
-        add_arrays and generate_fresnel_lens_phase)."""
+        add_arrays)."""
         hs = self.holo_sys
         H, W = hs.correction_pattern.shape[:2]
         cx = (W - hs.phase_nx) // 2 + hs.slm_offset_x + hs.phase_nx / 2 - 0.5
@@ -403,7 +390,7 @@ class CGH:
         """
         Exact (non-paraxial) defocus phase for an axial offset delta_z from the
         nominal focal plane (referenced to f_fresnel), on the same SLM-plane
-        grid as generate_fresnel_lens_phase.
+        grid as the hologram region (phase_nx x phase_ny).
         """
         x = (np.arange(self.holo_sys.phase_nx) - self.holo_sys.phase_nx / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
         y = (np.arange(self.holo_sys.phase_ny) - self.holo_sys.phase_ny / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
@@ -415,79 +402,6 @@ class CGH:
         rho2 = X ** 2 + Y ** 2
         phi = k * delta_z * (np.sqrt(np.clip(1.0 - rho2 / f ** 2, 0.0, None)) - 1.0)
         return np.mod(phi, 2.0 * np.pi)
-
-    def generate_fresnel_lens_phase(self, f_m=None):
-        """
-        Generate a Fresnel lens phase pattern
-
-        Returns
-        -------
-        phase : 2D np.ndarray
-            Phase map in radians, wrapped to [0, 2π)
-        """
-
-        x = (np.arange(self.holo_sys.phase_nx) - self.holo_sys.phase_nx / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
-        y = (np.arange(self.holo_sys.phase_ny) - self.holo_sys.phase_ny / 2 + 0.5) * self.holo_sys.slm_pixel_pitch
-        X, Y = np.meshgrid(x, y)
-        k = 2.0 * np.pi / self.holo_sys.wavelength
-        f = self.holo_sys.f_fresnel if f_m is None else f_m
-        phi = -k * (X ** 2 + Y ** 2) / (2.0 * f)
-        phase = np.mod(phi, 2.0 * np.pi)
-        return phase
-
-    def gerchberg_saxton(self, target, weighted_gs=True, initial_phase=None):
-        """
-        Gerchberg-Saxton phase retrieval algorithm
-        Parameters:
-        -----------
-        target : ndarray
-            Target intensity pattern
-        weighted_gs : bool
-            Whether to use weighted GS algorithm
-        initial_phase : ndarray, optional
-            Initial phase guess
-        Returns:
-        --------
-        field_slm : ndarray
-            Complex field at SLM plane
-        """
-        size = target.shape
-        source = np.ones(size, dtype=complex)
-        sqrt_target = np.sqrt(target)
-        target_mask = target != 0
-
-        if initial_phase is not None:
-            phase_slm = initial_phase
-        else:
-            np.random.seed(1)
-            phase_slm = np.random.uniform(-np.pi, np.pi, size)
-
-        if weighted_gs:
-            weights = np.ones(size, dtype=float)
-
-        for k in range(self.itn):
-
-            u = source * np.exp(1j * phase_slm)
-            v = np.fft.fftshift(np.fft.fft2(u))
-
-            amplitude = np.abs(v)
-            phase = np.angle(v)
-
-            I = amplitude ** 2
-            signal = self.normalize(I)
-
-            if weighted_gs:
-
-                weights[target_mask] *= np.sqrt(target[target_mask] / np.maximum(signal[target_mask], 1e-10))
-                v = weights * sqrt_target * np.exp(1j * phase)
-            else:
-                v = sqrt_target * np.exp(1j * phase)
-
-            u = np.fft.ifft2(np.fft.ifftshift(v))
-            phase_slm = np.angle(u)
-
-            self.logg.info(self.eval_performances(signal, target))
-        return phase_slm
 
     def save_cgh(self, fnd):
         """Save every hologram as <fnd>_slotNN_8bit.bmp plus a <fnd>_slots.json slot map."""

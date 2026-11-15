@@ -176,11 +176,6 @@ class _ProxyData:
         with self._lock:
             return np.array(self._frames[-1]) if self._frames else None
 
-    def get_elements(self):
-        import numpy as np
-        with self._lock:
-            return np.array(list(self._frames)) if self._frames else None
-
 
 # ---------------------------------------------------------------------------
 # KinetixCameraProxy — lives in the main process

@@ -4,7 +4,7 @@
 
 
 from PyQt6.QtCore import pyqtSignal, pyqtSlot, Qt
-from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSplitter, QSpinBox, QDoubleSpinBox
+from PyQt6.QtWidgets import QWidget, QHBoxLayout, QVBoxLayout, QSplitter
 
 try:
     from . import custom_widgets as cw
@@ -13,25 +13,19 @@ except:
 
 
 class ControlPanel(QWidget):
-    Signal_stage_move_usb = pyqtSignal(str, float, float, float)
-    Signal_stage_move = pyqtSignal(str, float, float, float)
     Signal_slm_correction = pyqtSignal()
     Signal_slm_load = pyqtSignal()
-    Signal_slm_set = pyqtSignal()
     Signal_slm_base = pyqtSignal(bool, bool)  # lens on, cross on -> rewrite slot 0
     Signal_slm_display = pyqtSignal(int)
     Signal_set_laser = pyqtSignal(list, bool, float)
     Signal_trigger_reset = pyqtSignal()
     Signal_trigger_fire = pyqtSignal(list)
     N_TTL = 8
-    TTL_FIELDS = ("start", "pulse", "interval", "n")
     Signal_video = pyqtSignal(bool)
     Signal_data_acquire = pyqtSignal(bool, int)
-    Signal_save_file = pyqtSignal(str)
 
     def __init__(self, logg=None, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
-        self.config = {"ConWidget Path": "", "Digital Timing Presets": ""}
         self.logg = logg
         self._setup_ui()
         self._set_signal_connections()
@@ -219,13 +213,6 @@ class ControlPanel(QWidget):
     def display_frame_rate(self, fps: float):
         """Measured camera frame rate (whole numbers from 100 fps, one decimal below)."""
         self.QLCDNumber_scmos_frame_rate.display(round(fps) if fps >= 100 else round(fps, 1))
-
-    def display_scmos_timings(self, exposure_time=None, kinetic_time=None):
-        if exposure_time is not None:
-            self.QDoubleSpinBox_scmos_t_exposure.setValue(exposure_time)
-        if kinetic_time is not None:
-            fps = 1.0 / kinetic_time
-            self.QLCDNumber_scmos_frame_rate.display(fps)
 
     @pyqtSlot()
     def load_slm_correction(self):

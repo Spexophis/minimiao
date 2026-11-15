@@ -70,7 +70,6 @@ class LiveViewer(QWidget):
 
         self._target_img = None
         self._picking_enabled = False
-        self._picking_n = None
         self.target_points = []
 
         self.image_plot.scene().sigMouseClicked.connect(self._on_target_mouse_clicked)

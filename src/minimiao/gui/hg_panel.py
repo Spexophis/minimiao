@@ -1,12 +1,11 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-import json
 
 import numpy as np
 import pyqtgraph as pg
-from PyQt6.QtCore import Qt, QEvent, pyqtSlot, pyqtSignal
-from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout, QSpinBox, QDoubleSpinBox
+from PyQt6.QtCore import Qt, pyqtSlot, pyqtSignal
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QSplitter, QHBoxLayout
 
 from minimiao import logger
 
@@ -29,7 +28,6 @@ class HGPanel(QWidget):
 
     def __init__(self, logg=None, parent=None):
         super().__init__(parent)
-        self.config = {"HGWidget Path": ""}
         self.logg = logg or logger.setup_logging()
         self._setup_ui()
         self._set_signal_connections()
@@ -190,25 +188,6 @@ class HGPanel(QWidget):
             self.pattern_img_item.setLevels(levels)
         self.pattern_plot.update()
 
-    def save_spinbox_values(self):
-        values = {}
-        for name in dir(self):
-            obj = getattr(self, name)
-            if isinstance(obj, (QSpinBox, QDoubleSpinBox)):
-                values[name] = obj.value()
-        with open(self.config["ConWidget Path"], 'w') as f:
-            json.dump(values, f, indent=4)
-
-    def load_spinbox_values(self):
-        try:
-            with open(self.config["ConWidget Path"], 'r') as f:
-                values = json.load(f)
-            for name, value in values.items():
-                widget = getattr(self, name, None)
-                if widget is not None:
-                    widget.setValue(value)
-        except FileNotFoundError:
-            pass
 
 
 if __name__ == '__main__':

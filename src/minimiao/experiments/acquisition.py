@@ -28,7 +28,7 @@ import os
 import subprocess
 import threading
 import time
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from typing import Callable, Optional
 
 import numpy as np
@@ -62,15 +62,8 @@ class BlockSettings:
     name: str = ""
 
     def validate(self):
+        """Block-level checks; the pulse train itself is validated by trigger_box.PulseTrain."""
         errs = []
-        if self.n_pulses < 1:
-            errs.append("n_pulses must be >= 1")
-        if not 0 < self.pulse_width_ms < self.pulse_period_ms:
-            errs.append("need 0 < pulse width < pulse period")
-        f = 1000.0 / self.pulse_period_ms
-        if abs(f - round(f)) > 1e-6:
-            errs.append(f"pulse period {self.pulse_period_ms} ms gives {f:.3f} Hz; "
-                        f"TriggerBox needs an integer frequency (period = 1000/N ms)")
         if self.pre_delay_s < 0 or self.post_delay_s < 0:
             errs.append("delays must be >= 0")
         if self.laser_power_mw < 0:
@@ -138,6 +131,23 @@ def build_sequence(bs: BlockSettings):
     seq.add(*channels)
     timing["sysclk_hz"] = sysclk
     return seq, timing
+
+
+def camera_timing_issues(bs: BlockSettings, exposure_ms: float, readout_ms: float = 0.0):
+    """
+    (errors, warnings) for the camera with this block in TriggerBox (external) camera mode:
+    exposure must be shorter than the frame period; a readout time that long risks missed triggers.
+    Internal mode has no constraint here.
+    """
+    errors, warnings = [], []
+    if bs.camera_trigger == "external":
+        period_ms = 1000.0 / bs.frame_rate_hz
+        if exposure_ms >= period_ms:
+            errors.append(f"exposure {exposure_ms:g} ms must be shorter than the frame period {period_ms:.3f} ms")
+        if readout_ms and readout_ms >= period_ms:
+            warnings.append(f"camera readout time {readout_ms:.3f} ms >= frame period {period_ms:.3f} ms; "
+                            f"triggers may be missed (smaller ROI / faster readout port)")
+    return errors, warnings
 
 
 def sequence_frames(bs: BlockSettings, timing: dict, exposure_ms: float, readout_ms: float = 0.0) -> int:
@@ -242,36 +252,14 @@ class AcquisitionRunner:
         cam, slm, laser, tb = self.devs.camera, self.devs.slm, self.devs.laser, self.devs.trg
         exposure_ms = float(self.camera_info.get("exposure_ms") or getattr(cam, "t_exposure", 10))
         readout_ms = float(self.camera_info.get("readout_time_ms") or 0.0)
-        early_warnings = []
-        if bs.camera_trigger == "external":
-            period_ms = 1000.0 / bs.frame_rate_hz
-            if exposure_ms >= period_ms:
-                raise ValueError(f"Exposure {exposure_ms:g} ms >= frame period {period_ms:.3f} ms")
-            if readout_ms >= period_ms:
-                early_warnings.append(f"camera readout time {readout_ms:.3f} ms >= frame period {period_ms:.3f} ms; "
-                                      f"triggers may be missed (smaller ROI / faster readout port)")
+        errors, early_warnings = camera_timing_issues(bs, exposure_ms, readout_ms)
+        if errors:
+            raise ValueError("; ".join(errors))
         n_est = sequence_frames(bs, timing, exposure_ms, readout_ms)
         frame_bytes = 2 * int(self.camera_info.get("pixels_x") or 2400) * int(self.camera_info.get("pixels_y") or 2400)
         bigtiff = n_est * frame_bytes > BIGTIFF_THRESHOLD_BYTES
         tif_path, json_path = stem + ".tif", stem + ".json"
-        meta = {
-            "schema": SCHEMA, "status": "running", "error": None,
-            "created": datetime.datetime.now().isoformat(timespec="milliseconds"),
-            "software": {"package": "minimiao", "git_commit": _git_commit()},
-            "files": {"stack": os.path.basename(tif_path), "bigtiff": bigtiff},
-            "block": asdict(bs), "loop": loop,
-            "slm": {"slot": bs.slot, "settle_ms": bs.slm_settle_ms, **self.slot_info(bs.slot)},
-            "laser": {"name": bs.laser, "mode": "digital modulation (on while TTL high)",
-                      "power_mw": bs.laser_power_mw},
-            "trigger_box": {"sysclk_hz": seq.sysclk_hz, "commands": seq.commands(),
-                            "laser_channel": bs.laser_channel,
-                            "camera_channel": bs.camera_channel if bs.camera_trigger == "external" else None},
-            "camera": dict(self.camera_info, frame_rate_hz_requested=(
-                bs.frame_rate_hz if bs.camera_trigger == "external" else None), frames_sequence=n_est,
-                frames_sequence_rule=("one per camera-clock edge" if bs.camera_trigger == "external"
-                                      else "block duration / max(exposure, readout); may exceed the block")),
-            "timing": dict(timing), "frames": {}, "context": self.context, "warnings": list(early_warnings),
-        }
+        meta = self._block_metadata(bs, seq, timing, loop, n_est, bigtiff, tif_path, early_warnings)
         recording = False
         t = {}
         try:
@@ -313,12 +301,8 @@ class AcquisitionRunner:
         finally:
             if recording:
                 # complete block: wait for the rest of the fixed-length sequence; abort/error: stop now
-                wait_s = 0.0
-                if meta["status"] == "complete":
-                    period_s = (1.0 / bs.frame_rate_hz if bs.camera_trigger == "external"
-                                else max(exposure_ms, readout_ms, 1e-3) / 1000.0)
-                    remaining = n_est * period_s - (time.perf_counter() - t["camera_start"])
-                    wait_s = max(0.5, 2.0 * remaining + 1.0)
+                wait_s = (self._sequence_wait_s(bs, n_est, exposure_ms, readout_ms, t["camera_start"])
+                          if meta["status"] == "complete" else 0.0)
                 t["camera_stop"] = time.perf_counter()
                 try:
                     summary = cam.stop_recording(wait_s=wait_s) or {}
@@ -333,6 +317,36 @@ class AcquisitionRunner:
         if meta["status"] == "error":
             raise RuntimeError(meta["error"])
         return meta
+
+    def _block_metadata(self, bs, seq, timing, loop, n_frames, bigtiff, tif_path, warnings):
+        """Metadata written next to a block's TIFF (status / frames / timing are filled in while running)."""
+        external = bs.camera_trigger == "external"
+        return {
+            "schema": SCHEMA, "status": "running", "error": None,
+            "created": datetime.datetime.now().isoformat(timespec="milliseconds"),
+            "software": {"package": "minimiao", "git_commit": _git_commit()},
+            "files": {"stack": os.path.basename(tif_path), "bigtiff": bigtiff},
+            "block": asdict(bs), "loop": loop,
+            "slm": {"slot": bs.slot, "settle_ms": bs.slm_settle_ms, **self.slot_info(bs.slot)},
+            "laser": {"name": bs.laser, "mode": "digital modulation (on while TTL high)",
+                      "power_mw": bs.laser_power_mw},
+            "trigger_box": {"sysclk_hz": seq.sysclk_hz, "commands": seq.commands(),
+                            "laser_channel": bs.laser_channel,
+                            "camera_channel": bs.camera_channel if external else None},
+            "camera": dict(self.camera_info, frame_rate_hz_requested=bs.frame_rate_hz if external else None,
+                           frames_sequence=n_frames,
+                           frames_sequence_rule=("one per camera-clock edge" if external
+                                                 else "block duration / max(exposure, readout); may exceed the block")),
+            "timing": dict(timing), "frames": {}, "context": self.context, "warnings": list(warnings),
+        }
+
+    @staticmethod
+    def _sequence_wait_s(bs, n_frames, exposure_ms, readout_ms, t_camera_start):
+        """How long to wait for the rest of a block's fixed-length camera sequence (generous)."""
+        period_s = (1.0 / bs.frame_rate_hz if bs.camera_trigger == "external"
+                    else max(exposure_ms, readout_ms, 1e-3) / 1000.0)
+        remaining = n_frames * period_s - (time.perf_counter() - t_camera_start)
+        return max(0.5, 2.0 * remaining + 1.0)
 
     def _add_frames(self, meta, summary, t, bs, timing, exposure_ms):
         t_run = t.get("run")
@@ -403,18 +417,20 @@ class AcquisitionRunner:
             write_json(loop_json, summary)
         return summary
 
+    @staticmethod
+    def _vary(base: BlockSettings, key, values, name):
+        """Blocks equal to `base` except for `key`; name(i, block) gives each block's file stem."""
+        blocks = [BlockSettings(**{**asdict(base), key: v}) for v in values]
+        return [(bs, name(i, bs)) for i, bs in enumerate(blocks)]
+
     def run_slot_loop(self, base: BlockSettings, slots, folder, interval_s=2.0):
-        blocks = []
-        for i, s in enumerate(slots):
-            bs = BlockSettings(**{**asdict(base), "slot": int(s)})
-            blocks.append((bs, f"block_{i:03d}_slot{int(s):02d}"))
+        blocks = self._vary(base, "slot", [int(s) for s in slots],
+                            lambda i, bs: f"block_{i:03d}_slot{bs.slot:02d}")
         return self._run_loop("slot_loop", blocks, folder, interval_s, "slot")
 
     def run_power_loop(self, base: BlockSettings, powers, folder, interval_s=2.0):
-        blocks = []
-        for i, p in enumerate(powers):
-            bs = BlockSettings(**{**asdict(base), "laser_power_mw": float(p)})
-            blocks.append((bs, f"block_{i:03d}_slot{base.slot:02d}_{float(p):.2f}mW"))
+        blocks = self._vary(base, "laser_power_mw", [float(p) for p in powers],
+                            lambda i, bs: f"block_{i:03d}_slot{bs.slot:02d}_{bs.laser_power_mw:.2f}mW")
         return self._run_loop("power_loop", blocks, folder, interval_s, "laser_power_mw")
 
 
