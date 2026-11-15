@@ -76,7 +76,6 @@ class CommandExecutor(QObject):
         self.hg_panel.Signal_pick_spot.connect(self.pick_cgh_spots)
         self.hg_panel.Signal_compute_cgh.connect(self.compute_cgh_pattern)
         self.hg_panel.Signal_save_pattern.connect(self.save_cgh_pattern)
-        self.hg_panel.Signal_display_slot.connect(self.display_slm_slot)
         self.hg_panel.Signal_calib_generate.connect(self.generate_calibration_holograms)
         self.hg_panel.Signal_calib_measure.connect(self.measure_calibration)
         self.hg_panel.Signal_calib_load.connect(self.load_calibration)
@@ -384,7 +383,7 @@ class CommandExecutor(QObject):
         self.ctrl_panel.display_lens_aperture(ap["diameter_px"] if ap else 0, ap["diameter_mm"] if ap else 0)
         self.slot_patterns[self.CORRECTION_SLOT] = (label, pattern)
         self.hg_panel.set_pattern_image(pattern)
-        self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.CORRECTION_SLOT)
+        self.ctrl_panel.QSpinBox_SLM_Slot.setValue(self.CORRECTION_SLOT)
         self.logg.info(f"SLM slot 0: {label}, offset ({ox}, {oy})")
         # holograms already in slots 1..N were built with the lens state at their computation
         if any(k >= self.FIRST_HOLOGRAM_SLOT for k in self.slot_patterns):
@@ -693,7 +692,7 @@ class CommandExecutor(QObject):
         entry = self.slot_patterns.get(self.FIRST_HOLOGRAM_SLOT)
         if self.cgh.holograms and entry is not None:
             self.hg_panel.set_pattern_image(entry[1])
-            self.hg_panel.QSpinBox_SLM_Display_Slot.setValue(self.FIRST_HOLOGRAM_SLOT)
+            self.ctrl_panel.QSpinBox_SLM_Slot.setValue(self.FIRST_HOLOGRAM_SLOT)
 
     def _clear_hologram_slots(self):
         """Forget hologram slots >= 1 so stale patterns are not mistaken for the current set."""
@@ -816,7 +815,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error reading CGH parameters: {e}")
             return
         if getattr(self.devs.camera, "data", None) is None:
-            self.video(True, self.ctrl_panel.QComboBox_live_modes.currentText())
+            self.video(True)
             self.ctrl_panel.QPushButton_video.setChecked(True)
         if not laser_was_on:
             self.set_laser(["473"], True, power)
@@ -918,7 +917,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Error reading CGH parameters: {e}")
             return None
         if getattr(self.devs.camera, "data", None) is None:
-            self.video(True, self.ctrl_panel.QComboBox_live_modes.currentText())
+            self.video(True)
             self.ctrl_panel.QPushButton_video.setChecked(True)
         if not laser_was_on:
             self.set_laser(["473"], True, power)
