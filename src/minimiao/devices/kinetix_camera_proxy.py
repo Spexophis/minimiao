@@ -60,7 +60,10 @@ def _camera_worker(cmd_queue, result_queue, frame_queue):
             return
         _last_fwd[0] = now
         try:
-            frame_queue.put_nowait((frame, cam.current_fps()))  # measured rate rides along with the preview
+            # measured rate and the time the frame was read off the camera ride along with the preview;
+            # perf_counter is system-wide (QueryPerformanceCounter / CLOCK_MONOTONIC), so the GUI process
+            # can compare it with its own perf_counter (e.g. "frame taken after the SLM switched")
+            frame_queue.put_nowait((frame, cam.current_fps(), _time.perf_counter()))
         except Exception:
             pass
 
@@ -149,13 +152,24 @@ class _ProxyData:
         self.callback = None
         self._frames = deque(maxlen=max_length)
         self._lock = threading.Lock()
+        self.count = 0  # preview frames received so far (lets callers wait for a fresh frame)
+        self.t_read = None  # perf_counter time the newest frame was read off the camera (camera process)
 
     def on_update(self, callback):
         self.callback = callback
 
-    def _add_frame(self, frame):
+    def _add_frame(self, frame, t_read=None):
         with self._lock:
             self._frames.append(frame)
+            self.count += 1
+            self.t_read = t_read
+
+    def get_last_with_count(self):
+        """(copy of the newest preview frame, its running count, perf_counter time it was read off
+        the camera or None)."""
+        import numpy as np
+        with self._lock:
+            return (np.array(self._frames[-1]) if self._frames else None), self.count, self.t_read
 
     def get_last_element(self):
         import numpy as np
@@ -264,13 +278,15 @@ class KinetixCameraProxy:
                 continue
             except Exception:
                 break
+            t_read = None
             if isinstance(item, tuple):
-                frame, fps = item
+                frame, fps = item[0], item[1]
+                t_read = item[2] if len(item) > 2 else None
                 self._fps = (fps, time.monotonic())
             else:
                 frame = item
             if self.data is not None:
-                self.data._add_frame(frame)
+                self.data._add_frame(frame, t_read)
                 if self.data.callback is not None:
                     self.data.callback(frame)
 

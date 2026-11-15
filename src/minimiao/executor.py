@@ -54,6 +54,7 @@ class CommandExecutor(QObject):
         self.calib_holo_pts = None  # hologram-plane points currently in slots 1..K
         self.calib_meta = {}  # metadata of the active affine calibration
         self._calib_result = None
+        self._calib_abort = threading.Event()  # Esc in a calibration dialog
 
     @staticmethod
     def setup_logging():
@@ -832,7 +833,37 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(r"Calibration Holograms")
         self.run_task(task=task)
 
-    def _grab_frame(self, n_avg: int, exposure_s: float):
+    def _grab_frame(self, n_avg: int, exposure_s: float, not_before: float = None, timeout_s: float = 3.0):
+        """
+        Average n_avg distinct camera frames that were read off the camera at or after `not_before`
+        (perf_counter time; e.g. SLM switch + settle + exposure). Preview frames reach the GUI
+        process late (throttled to ~20/s plus transfer), so neither "newest frame" nor "arrived
+        after the wait" guarantees a frame taken after the SLM switched; the read time does.
+        """
+        data = getattr(self.devs.camera, "data", None)
+        if data is not None and hasattr(data, "get_last_with_count"):
+            _, last, _ = data.get_last_with_count()
+            frames = []
+            deadline = max(time.perf_counter(), not_before or 0) + timeout_s + n_avg * max(exposure_s, 0.05)
+            while len(frames) < n_avg:
+                if self._calib_abort.is_set():
+                    raise RuntimeError("calibration aborted")
+                f, c, t_read = data.get_last_with_count()
+                if f is not None and c > last and (not_before is None or t_read is None or t_read >= not_before):
+                    frames.append(np.asarray(f, dtype=np.float64))
+                    last = c
+                elif f is not None and c > last:
+                    last = c  # new frame, but taken before the SLM settled: skip it
+                elif time.monotonic() > deadline:
+                    break
+                else:
+                    time.sleep(0.002)
+            if not frames:
+                raise RuntimeError("No new camera frames; is live video running?")
+            return np.mean(frames, axis=0)
+        # camera without a frame counter: wait, then newest frame, spaced by the exposure
+        if not_before is not None:
+            time.sleep(max(0.0, not_before - time.perf_counter()))
         frames = []
         for _ in range(n_avg):
             f = self.devs.camera.get_last_image()
@@ -843,14 +874,22 @@ class CommandExecutor(QObject):
             raise RuntimeError("No camera frames; is live video running?")
         return np.mean(frames, axis=0)
 
+    def _calib_dialog(self, title):
+        """Calibration progress dialog; Esc aborts (checked between SLM slots / frames)."""
+        self._calib_abort.clear()
+        self.vw.get_dialog(title, interrupt=True)
+        self.vw.dialog.dialog_closed.connect(self._calib_abort.set)
+
     def _measure_slots(self, n_slots, wait_s, n_avg, exposure_s):
         """Worker thread: display slots 1..n_slots in turn and record one averaged frame each."""
         frames = []
         try:
             for k in range(n_slots):
+                if self._calib_abort.is_set():
+                    raise RuntimeError("calibration aborted")
                 self.devs.slm.display_pattern(self.FIRST_HOLOGRAM_SLOT + k)
-                time.sleep(wait_s)
-                frames.append(self._grab_frame(n_avg, exposure_s))
+                # only frames taken after settle + exposure (wait_s) from now show this slot
+                frames.append(self._grab_frame(n_avg, exposure_s, not_before=time.perf_counter() + wait_s))
         finally:
             self.devs.slm.display_pattern(self.CORRECTION_SLOT)
         return np.stack(frames)
@@ -992,7 +1031,7 @@ class CommandExecutor(QObject):
                                    "rotation/mirror/shear, so keep 'Use Calib' on for accurate targeting")
 
         self._after_task = finish
-        self.vw.get_dialog(r"Auto Calibration")
+        self._calib_dialog(r"Auto Calibration")
         self.run_task(task=task)
 
     def _calib_prepare(self):
@@ -1068,7 +1107,14 @@ class CommandExecutor(QObject):
                 converged = False
                 for it in range(1, max_iter + 1):
                     M = slm_cal.simple_to_affine(cur["magnification"], cur["center_x"], cur["center_y"], phase_n)
-                    holo, cam_target = slm_cal.camera_grid_to_holo(M, shape, n_grid, phase_n=phase_n)
+                    # first iteration aims at the central part of the image if enough targets fit there:
+                    # with rough start values errors grow with distance from the centre, so edge targets
+                    # could land off-camera; later iterations cover the field (margin 10 %)
+                    for margin in ((0.3, 0.2, 0.1) if it == 1 else (0.1,)):
+                        holo, cam_target = slm_cal.camera_grid_to_holo(M, shape, n_grid, margin=margin,
+                                                                       phase_n=phase_n)
+                        if len(holo) >= max(4, n_grid * n_grid // 2):
+                            break
                     if len(holo) < 3:
                         raise RuntimeError(
                             f"Iteration {it}: with magnification {cur['magnification']:.5f} and center "
@@ -1081,8 +1127,9 @@ class CommandExecutor(QObject):
                     target = slm_cal.holo_to_cam(M, holo_r)
                     ok = np.isfinite(landed[:, 0])
                     if ok.sum() < 3:
-                        raise RuntimeError(f"Iteration {it}: only {int(ok.sum())} spots detected; "
-                                           f"increase laser power / averaging or check focus")
+                        raise RuntimeError(f"Iteration {it}: only {int(ok.sum())} of {len(holo)} spots detected. "
+                                           f"Either the start Magnification/Center are far off (spots land outside "
+                                           f"the camera image) or the signal is weak (laser power, focus, Avg frames)")
                     err = np.linalg.norm(landed[ok] - target[ok], axis=1)
                     rec = {"iteration": it, "params_used": dict(cur), "n_spots": int(len(holo)),
                            "n_detected": int(ok.sum()), "rms_error_px": float(np.sqrt(np.mean(err ** 2))),
@@ -1129,7 +1176,11 @@ class CommandExecutor(QObject):
                 else:
                     self.logg.info(f"Mag/center measurements saved: {base}.json")
             except Exception as e:
-                self.logg.error(f"Mag/center calibration failed: {e}")
+                result["error"] = str(e)
+                if self._calib_abort.is_set():
+                    self.logg.info("Mag/center calibration aborted; parameters unchanged")
+                else:
+                    self.logg.error(f"Mag/center calibration failed: {e}")
 
         def finish():
             if not laser_was_on:
@@ -1138,7 +1189,8 @@ class CommandExecutor(QObject):
             if p is None:
                 check = result.get("check")
                 why = ("optics have " + ", ".join(check["problems"]) + "; use affine calibration"
-                       if check and not check["simple_model_ok"] else "failed (see log)")
+                       if check and not check["simple_model_ok"]
+                       else "aborted" if self._calib_abort.is_set() else "failed (see log)")
                 self.hg_panel.set_calibration_status(f"Mag/center: not changed, {why}")
                 return
             self.hg_panel.set_simple_mapping(p["magnification"], p["center_x"], p["center_y"])
@@ -1155,7 +1207,7 @@ class CommandExecutor(QObject):
                 self.viewer.show_calibration_points(result["landed"][ok, 0], result["landed"][ok, 1])
 
         self._after_task = finish
-        self.vw.get_dialog(r"Auto Magnification / Center")
+        self._calib_dialog(r"Auto Magnification / Center")
         self.run_task(task=task)
 
     @pyqtSlot(int, int)
@@ -1205,7 +1257,7 @@ class CommandExecutor(QObject):
                 self.logg.error(f"Calibration measurement failed: {e}")
 
         self._after_task = self._show_calibration_result
-        self.vw.get_dialog(r"Calibration Measurement")
+        self._calib_dialog(r"Calibration Measurement")
         self.run_task(task=task)
 
     def _show_calibration_result(self):

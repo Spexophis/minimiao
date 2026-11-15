@@ -166,7 +166,7 @@ def load_calibration(path):
     return M, data
 
 
-def camera_grid_to_holo(M, cam_shape, n=5, margin=0.1, phase_n=(850, 850), zero_order_radius=0.06):
+def camera_grid_to_holo(M, cam_shape, n=5, margin=0.1, phase_n=(850, 850), zero_order_radius=0.025):
     """
     Refinement grid: n x n points evenly covering the camera frame (minus a
     `margin` fraction on each side), mapped to hologram-plane coordinates
