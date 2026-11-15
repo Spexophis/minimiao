@@ -339,28 +339,31 @@ class KinetixCamera:
         """
         Poll the SDK for the next available frame and push it into self.data.
         Skips duplicate frames using the SDK frame counter.
-        Called from CameraAcquisitionThread.run() under the thread lock.
+        Called repeatedly from CameraAcquisitionThread.run().
+        Returns True if a new frame was added, False otherwise.
         """
         if self.data is None:
-            return
+            return False
         try:
             # timeout_ms=50: don't block the thread longer than one poll period
             frame_dict, fps, frame_count = self.cam.poll_frame(
                 timeout_ms=50, copyData=True
             )
         except Exception:
-            return
+            return False
         if frame_dict is None:
-            return
+            return False
         pixel_data = frame_dict.get('pixel_data')
         if pixel_data is None:
-            return
+            return False
         if frame_count == self._last_frame_count:
-            return  # no new frame since last poll
+            return False  # no new frame since last poll
         self._last_frame_count = frame_count
-        if self.data is None:
-            return  # was cleared by stop_live() while we were polling
-        self.data.add_element([pixel_data], [frame_count, frame_count])
+        data = self.data
+        if data is None:
+            return False  # was cleared by stop_live() while we were polling
+        data.add_element([pixel_data], [frame_count, frame_count])
+        return True
 
     def get_last_image(self):
         if self.data is not None:

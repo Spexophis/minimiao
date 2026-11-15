@@ -15,7 +15,7 @@ from PyQt6.QtCore import QThread, pyqtSignal, pyqtSlot
 
 class CameraAcquisitionThread(threading.Thread):
 
-    def __init__(self, cam, interval=0.05):
+    def __init__(self, cam, interval=0.005):
         super().__init__(daemon=True)
         self.cam = cam
         self._running = False
@@ -24,15 +24,18 @@ class CameraAcquisitionThread(threading.Thread):
         self.interval = interval
 
     def run(self):
+        """Drain every frame the SDK has buffered; only pause briefly when no new frame
+        arrived (cam.get_images() returns False). Waiting a fixed interval per frame
+        capped readout at ~20 fps and let the SDK ring buffer overwrite unread frames."""
         self._running = True
         while self._running:
+            got = self.cam.get_images()
+            if got:
+                continue
             with self.condition:
-                self.condition.wait(timeout=self.interval)
-
                 if not self._running:
                     break
-
-                self.cam.get_images()
+                self.condition.wait(timeout=self.interval)
 
     def stop(self, timeout=5.0):
         with self.condition:
@@ -220,12 +223,24 @@ class CameraDataList:
         if self.save_to_disk and self._save_queue is not None:
             self._save_queue.join()
 
+    def flush(self):
+        """Queue the current, not yet full stack for saving (no-op if empty)."""
+        if not self.save_to_disk:
+            return
+        with self._lock:
+            imgs, ids = self.data_list, list(self.ind_list)
+            self.data_list, self.ind_list = [], []
+        if imgs:
+            stack = np.stack([np.array(img, copy=True) for img in imgs], axis=0)
+            self._save_queue.put((self._stack_save_count, ids, stack))
+            self._stack_save_count += 1
+
     def close(self):
         """
-        Finish saving queued full stacks cleanly.
-        Note: an unfinished partial stack is not saved here.
+        Save the remaining partial stack, then finish writing all queued stacks.
         """
         if self.save_to_disk and self._save_thread is not None:
+            self.flush()
             self._save_queue.join()
             self._stop_saver.set()
             self._save_thread.join(timeout=5.0)

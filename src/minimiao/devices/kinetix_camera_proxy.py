@@ -49,7 +49,15 @@ def _camera_worker(cmd_queue, result_queue, frame_queue):
         result_queue.put(('error', str(e), {}))
         return
 
+    import time as _time
+    _last_fwd = [0.0]
+
     def _fwd(frame):
+        # display only: at most ~20 frames/s cross to the GUI process (saving happens here)
+        now = _time.monotonic()
+        if now - _last_fwd[0] < 0.05:
+            return
+        _last_fwd[0] = now
         try:
             frame_queue.put_nowait(frame)
         except Exception:
