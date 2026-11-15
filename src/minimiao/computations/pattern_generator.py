@@ -17,13 +17,9 @@ from minimiao import logger
 class HoloSystem:
     wavelength: float = 473e-9  # laser wavelength
 
-    _magnification: float = 1.0
-
     _f_fresnel: float = 320e-3
     slm_pixel_pitch: float = 12.5e-6
 
-    image_center_x: int = 600
-    image_center_y: int = 395
     slm_nx: int = 1024  # number of pixels in x
     slm_ny: int = 1272  # number of pixels in y
     slm_offset_x: int = 0
@@ -43,14 +39,6 @@ class HoloSystem:
 
     def __post_init__(self):
         self._correction_pattern = np.zeros((self.slm_ny, self.slm_nx), dtype=np.uint8)
-
-    @property
-    def magnification(self) -> float:
-        return self._magnification
-
-    @magnification.setter
-    def magnification(self, value: float):
-        self._magnification = value
 
     @property
     def f_fresnel(self) -> float:
@@ -80,19 +68,16 @@ class CGH:
         self.phase_slm = None
         self.holograms = []
         self.holograms_lens = {"lens_in_holograms": False, "f_fresnel_m": None}
-        self.affine = None        # 2x3 camera -> hologram-plane matrix (slm_calibration)
-        self.use_affine = False
+        self.affine = None        # 2x3 camera -> hologram-plane matrix (slm_calibration); required for picked spots
         self.phase_total = np.zeros((self.holo_sys.phase_ny, self.holo_sys.phase_nx), dtype=np.uint8)
 
     def load_correction_pattern(self, file):
         correct_pattern = Image.open(file)
         self.holo_sys.correction_pattern = np.array(correct_pattern, dtype=np.uint8)
 
-    def update_parameters(self, itn, mag, fl, cnt, offset):
+    def update_parameters(self, itn, fl, offset):
         self.itn = itn
-        self.holo_sys.magnification = mag
         self.holo_sys.f_fresnel = fl
-        self.holo_sys.image_center_x, self.holo_sys.image_center_y = cnt
         self.holo_sys.slm_offset_x, self.holo_sys.slm_offset_y = offset
 
     def load_mask(self, fnd):
@@ -242,13 +227,11 @@ class CGH:
         self.affine = None if M is None else np.asarray(M, dtype=float).reshape(2, 3)
 
     def _map_spot(self, x0, y0):
-        """Camera pixel -> hologram-plane pixel, or None if outside the field.
-        Uses the affine calibration when enabled, else magnification + center."""
-        if self.use_affine and self.affine is not None:
-            x1, y1 = self.affine @ np.array([x0, y0, 1.0])
-        else:
-            x1 = (x0 - self.holo_sys.image_center_x) * self.holo_sys.magnification + self.holo_sys.phase_nx / 2
-            y1 = (y0 - self.holo_sys.image_center_y) * self.holo_sys.magnification + self.holo_sys.phase_ny / 2
+        """Camera pixel -> hologram-plane pixel through the camera-SLM affine calibration,
+        or None if outside the hologram field."""
+        if self.affine is None:
+            raise ValueError("No camera-SLM calibration loaded: run Auto Calibrate or Load Calib")
+        x1, y1 = self.affine @ np.array([x0, y0, 1.0])
         return self._in_field(x1, y1)
 
     def _in_field(self, x1, y1):
