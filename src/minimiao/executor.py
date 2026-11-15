@@ -996,15 +996,25 @@ class CommandExecutor(QObject):
                         f"(now {settings['span']:g}) or enlarge the ROI; otherwise check focus on the layer, "
                         f"Fresnel focal length, laser power and Avg frames") from None
                 detected = {"coarse": [n1, len(holo1)]}
-                M1, res1 = slm_cal.fit_affine(cam1, holo1)
-                self.logg.info(f"Auto calibration coarse: rms {np.sqrt(np.nanmean(res1 ** 2)):.2f} px, "
-                               f"{slm_cal.describe(M1)}")
+                # robust: a few wrong detections must not drag the fit (they did: rms 3605 px)
+                M1, res1, inl1 = slm_cal.fit_affine_robust(cam1, holo1)
+                try:
+                    slm_cal.check_point_set(np.where(inl1[:, None], cam1, np.nan))
+                except ValueError as e:
+                    raise RuntimeError(f"coarse pass: detections are not consistent with one geometry ({e}); "
+                                       f"check focus on the layer, stray light and laser power") from None
+                self.logg.info(f"Auto calibration coarse: {int(inl1.sum())} consistent of {n1} detected, rms "
+                               f"{np.sqrt(np.mean(res1[inl1] ** 2)):.2f} px, {slm_cal.describe(M1)}")
                 holo_all, cam_all, mp = [holo1], [cam1], mp1
                 validation = None
                 # 2. refine over the camera FOV
                 if settings["refine"] >= 2:
-                    holo2, _ = slm_cal.camera_grid_to_holo(M1, mp1.shape, settings["refine"],
-                                                           phase_n=phase_n)
+                    # grid over the part of the hologram field the camera sees (the camera image can be
+                    # much larger than the hologram field, so a camera-wide grid lands mostly outside it)
+                    n_ref = settings["refine"]
+                    holo2, _ = slm_cal.holo_grid_in_camera(M1, mp1.shape, n_ref, phase_n=phase_n)
+                    if len(holo2) < max(6, n_ref * n_ref // 2):   # camera image smaller than the field
+                        holo2, _ = slm_cal.camera_grid_to_holo(M1, mp1.shape, n_ref, phase_n=phase_n)
                     if len(holo2) >= 3:
                         holo2, cam2, snr2, mp2 = self._project_and_detect(holo2, wait_s, n_avg, exposure_s,
                                                                         "refine")
@@ -1012,7 +1022,9 @@ class CommandExecutor(QObject):
                         ok = np.isfinite(cam2[:, 0])
                         detected["refine"] = [int(ok.sum()), len(holo2)]
                         err = np.linalg.norm(cam2[ok] - cam2_exp[ok], axis=1)
-                        validation = {"n": int(ok.sum()), "rms_cam_px": float(np.sqrt(np.mean(err ** 2))),
+                        good = err < 5.0
+                        validation = {"n": int(ok.sum()), "n_consistent": int(good.sum()),
+                                      "rms_cam_px": float(np.sqrt(np.mean(err[good] ** 2))) if good.any() else None,
                                       "max_cam_px": float(err.max())} if ok.any() else None
                         self.logg.info(f"Auto calibration validation (coarse model on refine spots): {validation}")
                         holo_all.append(holo2)
@@ -1022,24 +1034,28 @@ class CommandExecutor(QObject):
                         self.logg.warning("Refine grid: too few points inside the hologram field; skipped")
                 # 3. final fit
                 holo_all, cam_all = np.vstack(holo_all), np.vstack(cam_all)
-                M, res = slm_cal.fit_affine(cam_all, holo_all)
+                M, res, inl = slm_cal.fit_affine_robust(cam_all, holo_all)
+                ok_q, rms_q, why_q = slm_cal.calibration_quality(res, inl)
                 stamp = time.strftime("%Y%m%d%H%M%S")
-                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration")
+                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration" + ("" if ok_q else "_rejected"))
                 meta = {"camera_roi": roi, "settle_ms": settings["settle_ms"], "n_avg": n_avg,
                         "auto": True, "settings": settings, "validation": validation,
                         "phase_n": list(phase_n), "detected": detected,
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                         "f_fresnel": self.cgh.hologram_lens_f(),
-                        "lens_in_holograms": self.cgh.hologram_lens_f() is not None}
-                data = slm_cal.save_calibration(base + ".json", M, cam_all, holo_all, res, meta)
+                        "lens_in_holograms": self.cgh.hologram_lens_f() is not None,
+                        "applied": ok_q, "rejected_because": why_q}
+                data = slm_cal.save_calibration(base + ".json", M, cam_all, holo_all, res, meta, inliers=inl)
                 tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
+                if not ok_q:
+                    raise RuntimeError("calibration rejected: " + "; ".join(why_q)
+                                       + f". Saved for inspection: {os.path.basename(base)}.json")
                 self.cgh.set_affine(M)
                 self.calib_meta = meta
                 self.calib_file = base + ".json"
                 self._calib_result = (data, cam_all, mp, base + ".json")
-                self.logg.info(f"Auto calibration saved: {base}.json; final rms {data['rms_cam_px']:.2f} px")
-                if np.nanmax(res) > 3.0:
-                    self.logg.warning(f"Auto calibration: max residual {np.nanmax(res):.1f} cam px")
+                self.logg.info(f"Auto calibration saved: {base}.json; rms {data['rms_cam_px']:.2f} px over "
+                               f"{data['n_inliers']} consistent spots; outliers {data['outliers']}")
             except Exception as e:
                 error[0] = str(e)
                 if not self._calib_abort.is_set():
@@ -1066,6 +1082,8 @@ class CommandExecutor(QObject):
                     f"{os.path.basename(path)}\nfit error rms {data['rms_cam_px']:.2f} camera px"
                     + (f", independent check rms {val['rms_cam_px']:.2f} px" if val.get("rms_cam_px") is not None else "")
                     + "\nspots detected: " + ", ".join(f"{k} {a}/{b}" for k, (a, b) in det.items())
+                    + f"; used {data.get('n_inliers')} consistent"
+                    + (f", ignored {len(data['outliers'])} inconsistent detection(s)" if data.get("outliers") else "")
                     + f"\nrotation {sm['rotation_deg']:.1f} deg, scale {sm['scale_x']:.4f} / {sm['scale_y']:.4f}"
                     + (", mirrored" if sm["mirrored"] else "") + f", shear {sm['shear']:.3f}" + warn)
             else:
@@ -1271,26 +1289,28 @@ class CommandExecutor(QObject):
                 n_bad = int(np.sum(~np.isfinite(cam_pts[:, 0])))
                 if n_bad:
                     self.logg.warning(f"Calibration: {n_bad} spot(s) not detected (SNR {np.round(snr, 1).tolist()})")
-                M, res = slm_cal.fit_affine(cam_pts, holo_pts)
+                M, res, inl = slm_cal.fit_affine_robust(cam_pts, holo_pts)
+                ok_q, rms_q, why_q = slm_cal.calibration_quality(res, inl)
                 stamp = time.strftime("%Y%m%d%H%M%S")
-                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration")
+                base = os.path.join(self.path, f"{stamp}_slm_affine_calibration" + ("" if ok_q else "_rejected"))
                 meta = {"camera_roi": roi, "settle_ms": settle_ms, "n_avg": n_avg,
+                        "applied": ok_q, "rejected_because": why_q,
                         "snr": snr.tolist(),
                         "phase_n": [self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny],
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                         "f_fresnel": self.cgh.hologram_lens_f(),
                         "lens_in_holograms": self.cgh.hologram_lens_f() is not None}
-                data = slm_cal.save_calibration(base + ".json", M, cam_pts, holo_pts, res, meta)
+                data = slm_cal.save_calibration(base + ".json", M, cam_pts, holo_pts, res, meta, inliers=inl)
                 tf.imwrite(base + "_maxproj.tif", max_proj.astype(np.float32))
+                if not ok_q:
+                    raise RuntimeError("calibration rejected: " + "; ".join(why_q)
+                                       + f". Saved for inspection: {os.path.basename(base)}.json")
                 self.cgh.set_affine(M)
                 self.calib_meta = meta
                 self.calib_file = base + ".json"
                 self._calib_result = (data, cam_pts, max_proj, base + ".json")
-                self.logg.info(f"Calibration saved: {base}.json; rms {data['rms_cam_px']:.2f} cam px; "
-                               f"{data['summary']}")
-                if np.nanmax(res) > 3.0:
-                    self.logg.warning(f"Calibration: max residual {np.nanmax(res):.1f} cam px; "
-                                      f"check per-point residuals in the JSON")
+                self.logg.info(f"Calibration saved: {base}.json; rms {data['rms_cam_px']:.2f} cam px over "
+                               f"{data['n_inliers']} consistent spots; outliers {data['outliers']}; {data['summary']}")
             except Exception as e:
                 self.logg.error(f"Calibration measurement failed: {e}")
 

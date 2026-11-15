@@ -140,13 +140,108 @@ def describe(M):
             "mirrored": bool(np.linalg.det(M[:, :2]) < 0), "shear": float(shear)}
 
 
-def save_calibration(path, M, cam_pts, holo_pts, residuals, meta=None):
+def fit_affine_robust(cam_pts, holo_pts, thresh_px=5.0, n_trials=3000, seed=0):
+    """
+    Affine fit that ignores wrong detections (RANSAC): affines through every (or n_trials random)
+    triple of detected points are scored by how many points they predict within thresh_px camera
+    px; the largest consistent set is refitted by least squares (twice, re-selecting inliers).
+    Returns (M, residuals_cam_px (NaN = not detected), inlier mask).
+    """
+    from itertools import combinations
+    cam = np.asarray(cam_pts, float)
+    holo = np.asarray(holo_pts, float)
+    valid = np.all(np.isfinite(cam), axis=1)
+    idx = np.flatnonzero(valid)
+    if len(idx) < 3:
+        raise ValueError(f"Need >= 3 detected spots for an affine fit, got {len(idx)}")
+
+    def residuals(M):
+        r = np.full(len(cam), np.nan)
+        r[valid] = np.linalg.norm(holo_to_cam(M, holo[valid]) - cam[valid], axis=1)
+        return r
+
+    def solve(sel):
+        X = np.column_stack([cam[sel], np.ones(len(sel))])
+        sol, *_ = np.linalg.lstsq(X, holo[sel], rcond=None)
+        M = sol.T
+        return M if abs(np.linalg.det(M[:, :2])) > 1e-9 else None
+
+    rng = np.random.default_rng(seed)
+    n_comb = len(idx) * (len(idx) - 1) * (len(idx) - 2) // 6
+    triples = (combinations(idx, 3) if n_comb <= n_trials
+               else (rng.choice(idx, 3, replace=False) for _ in range(n_trials)))
+    best, best_n = None, -1
+    for t in triples:
+        M = solve(np.asarray(t))
+        if M is None:
+            continue
+        with np.errstate(invalid="ignore"):
+            n_in = int(np.sum(residuals(M) < thresh_px))
+        if n_in > best_n:
+            best, best_n = M, n_in
+    if best is None:
+        raise ValueError("Degenerate affine fit (points collinear?)")
+    inl = valid & (residuals(best) < thresh_px)
+    for _ in range(2):
+        M = solve(np.flatnonzero(inl)) if inl.sum() >= 3 else best
+        if M is None:
+            break
+        new = valid & (residuals(M) < thresh_px)
+        if (new == inl).all():
+            break
+        inl = new
+    M = solve(np.flatnonzero(inl)) if inl.sum() >= 3 else best
+    return M, residuals(M), inl
+
+
+def calibration_quality(residuals, inliers, min_inliers=8, min_fraction=0.6, max_rms_px=3.0):
+    """(ok, rms over inliers, list of reasons a calibration should not be used)."""
+    det = np.isfinite(np.asarray(residuals, float))
+    inl = np.asarray(inliers, bool)
+    n_in, n_det = int(inl.sum()), int(det.sum())
+    rms = float(np.sqrt(np.mean(np.asarray(residuals)[inl] ** 2))) if n_in else float("nan")
+    why = []
+    if n_in < min_inliers:
+        why.append(f"only {n_in} consistent spots (need >= {min_inliers})")
+    if n_det and n_in / n_det < min_fraction:
+        why.append(f"only {n_in} of {n_det} detected spots are consistent (need >= {min_fraction:.0%})")
+    if not np.isfinite(rms) or rms > max_rms_px:
+        why.append(f"fit error {rms:.2f} px (need <= {max_rms_px:g} px)")
+    return not why, rms, why
+
+
+def holo_grid_in_camera(M, cam_shape, n=5, phase_n=(850, 850), span=0.9, margin=0.05, zero_order_radius=0.025):
+    """
+    Refinement grid in hologram space: n x n points over `span` of the hologram field, kept if
+    the model M puts them inside the camera image (minus `margin`) and away from the zero order.
+    Covers the part of the hologram field the camera actually sees, whichever is larger.
+    Returns (holo_pts (K, 2), cam_pts_expected (K, 2)).
+    """
+    nx, ny = phase_n
+    h, w = cam_shape
+    holo = make_grid(nx, ny, n, span)
+    cam = holo_to_cam(M, holo)
+    r0 = zero_order_radius * min(nx, ny)
+    keep = ((cam[:, 0] >= margin * w) & (cam[:, 0] <= (1 - margin) * (w - 1)) &
+            (cam[:, 1] >= margin * h) & (cam[:, 1] <= (1 - margin) * (h - 1)) &
+            (np.hypot(holo[:, 0] - nx / 2, holo[:, 1] - ny / 2) > r0))
+    return holo[keep], cam[keep]
+
+
+def save_calibration(path, M, cam_pts, holo_pts, residuals, meta=None, inliers=None):
+    residuals = np.asarray(residuals, float)
+    if inliers is None:
+        inliers = np.isfinite(residuals)
+    inliers = np.asarray(inliers, bool)
+    rms = float(np.sqrt(np.mean(residuals[inliers] ** 2))) if inliers.any() else float("nan")
     data = {
         "created": time.strftime("%Y-%m-%d %H:%M:%S"),
         "model": "holo = A @ cam + b; M = [A | b]; cam = (x=col, y=row) px; holo = CGH target px",
         "M": M.tolist(),
         "summary": describe(M),
-        "rms_cam_px": float(np.sqrt(np.nanmean(residuals ** 2))),
+        "rms_cam_px": rms,
+        "n_inliers": int(inliers.sum()),
+        "outliers": [int(i) for i in np.flatnonzero(np.isfinite(residuals) & ~inliers)],
         "cam_pts": [[None if not np.isfinite(v) else float(v) for v in p] for p in cam_pts],
         "holo_pts": np.asarray(holo_pts, float).tolist(),
         "residuals_cam_px": [None if not np.isfinite(r) else float(r) for r in residuals],
