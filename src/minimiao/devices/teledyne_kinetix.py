@@ -443,6 +443,11 @@ class KinetixCamera:
         while len(s) > 2 and now - s[0][0] > self.FPS_WINDOW_S:
             s.popleft()
 
+    @staticmethod
+    def clock():
+        """This (camera) process's perf_counter: the clock preview-frame read times are stamped with."""
+        return time.perf_counter()
+
     def current_fps(self):
         """Camera frame rate over the last ~1 s from the SDK frame counter (counts every frame
         the camera took, including any that were dropped), or 0.0 if unknown."""

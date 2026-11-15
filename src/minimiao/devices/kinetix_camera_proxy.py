@@ -361,6 +361,10 @@ class KinetixCameraProxy:
     def get_readout_options(self):
         return self._call('get_readout_options')
 
+    def clock(self):
+        """Camera-process perf_counter now (same clock as preview frames' read times)."""
+        return self._call('clock')
+
     def recording_progress(self):
         return self._call('recording_progress')
 

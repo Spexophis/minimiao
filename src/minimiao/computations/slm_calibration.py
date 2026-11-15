@@ -214,3 +214,21 @@ def find_peaks(diff, n, window=7, min_snr=5.0):
         snrs.append(snr)
         sm[max(r - 2 * window, 0):r + 2 * window + 1, max(c - 2 * window, 0):c + 2 * window + 1] = 0  # suppress
     return np.array(pts, dtype=float).reshape(-1, 2), np.array(snrs)
+
+
+def check_point_set(cam_pts, n_min=6, min_spread=0.15):
+    """
+    Raise ValueError unless at least n_min points are detected and they are not nearly
+    collinear (smallest / largest singular value of the centred points >= min_spread).
+    Three points always fit an affine exactly, so a fit from too few or badly spread points
+    can report a tiny error and still be wrong. Returns the number of detected points.
+    """
+    pts = np.asarray(cam_pts, float)
+    ok = np.all(np.isfinite(pts), axis=1)
+    k = int(ok.sum())
+    if k < n_min:
+        raise ValueError(f"only {k} of {len(pts)} calibration spots detected (need >= {n_min})")
+    sv = np.linalg.svd(pts[ok] - pts[ok].mean(axis=0), compute_uv=False)
+    if sv[0] <= 0 or sv[-1] / sv[0] < min_spread:
+        raise ValueError(f"the {k} detected spots lie almost on a line; they must cover the field in 2D")
+    return k

@@ -844,7 +844,8 @@ class CommandExecutor(QObject):
         self.vw.get_dialog(r"Calibration Holograms")
         self.run_task(task=task)
 
-    def _grab_frame(self, n_avg: int, exposure_s: float, not_before: float = None, timeout_s: float = 3.0):
+    def _grab_frame(self, n_avg: int, exposure_s: float, not_before: float = None, timeout_s: float = 3.0,
+                    wait_hint: float = 0.0):
         """
         Average n_avg distinct camera frames that were read off the camera at or after `not_before`
         (perf_counter time; e.g. SLM switch + settle + exposure). Preview frames reach the GUI
@@ -855,7 +856,8 @@ class CommandExecutor(QObject):
         if data is not None and hasattr(data, "get_last_with_count"):
             _, last, _ = data.get_last_with_count()
             frames = []
-            deadline = max(time.perf_counter(), not_before or 0) + timeout_s + n_avg * max(exposure_s, 0.05)
+            # deadline on this process's clock (not_before may be on the camera process's clock)
+            deadline = time.perf_counter() + wait_hint + timeout_s + n_avg * max(exposure_s, 0.05)
             while len(frames) < n_avg:
                 if self._calib_abort.is_set():
                     raise RuntimeError("calibration aborted")
@@ -914,7 +916,11 @@ class CommandExecutor(QObject):
                     raise RuntimeError("calibration aborted")
                 self.devs.slm.display_pattern(slot)
                 # only frames taken after settle + exposure (wait_s) from now show this slot
-                frames.append(self._grab_frame(n_avg, exposure_s, not_before=time.perf_counter() + wait_s))
+                # read the camera process's own clock right after the switch, so "frame taken after
+                # settle" compares times on one clock (no cross-process clock assumption)
+                cam = self.devs.camera
+                t_ref = cam.clock() if hasattr(cam, "clock") else time.perf_counter()
+                frames.append(self._grab_frame(n_avg, exposure_s, not_before=t_ref + wait_s, wait_hint=wait_s))
         finally:
             self.devs.slm.display_pattern(self.CORRECTION_SLOT)
         return np.stack(frames)
@@ -982,6 +988,14 @@ class CommandExecutor(QObject):
                 # 1. coarse
                 holo1 = slm_cal.make_grid(*phase_n, settings["grid"], settings["span"])
                 holo1, cam1, snr1, mp1 = self._project_and_detect(holo1, wait_s, n_avg, exposure_s, "coarse")
+                try:
+                    n1 = slm_cal.check_point_set(cam1)
+                except ValueError as e:
+                    raise RuntimeError(
+                        f"coarse pass: {e}. Many grid spots may fall outside the camera image: reduce Span "
+                        f"(now {settings['span']:g}) or enlarge the ROI; otherwise check focus on the layer, "
+                        f"Fresnel focal length, laser power and Avg frames") from None
+                detected = {"coarse": [n1, len(holo1)]}
                 M1, res1 = slm_cal.fit_affine(cam1, holo1)
                 self.logg.info(f"Auto calibration coarse: rms {np.sqrt(np.nanmean(res1 ** 2)):.2f} px, "
                                f"{slm_cal.describe(M1)}")
@@ -996,6 +1010,7 @@ class CommandExecutor(QObject):
                                                                         "refine")
                         cam2_exp = slm_cal.holo_to_cam(M1, holo2)  # coarse-model prediction
                         ok = np.isfinite(cam2[:, 0])
+                        detected["refine"] = [int(ok.sum()), len(holo2)]
                         err = np.linalg.norm(cam2[ok] - cam2_exp[ok], axis=1)
                         validation = {"n": int(ok.sum()), "rms_cam_px": float(np.sqrt(np.mean(err ** 2))),
                                       "max_cam_px": float(err.max())} if ok.any() else None
@@ -1012,7 +1027,7 @@ class CommandExecutor(QObject):
                 base = os.path.join(self.path, f"{stamp}_slm_affine_calibration")
                 meta = {"camera_roi": roi, "settle_ms": settings["settle_ms"], "n_avg": n_avg,
                         "auto": True, "settings": settings, "validation": validation,
-                        "phase_n": list(phase_n),
+                        "phase_n": list(phase_n), "detected": detected,
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                         "f_fresnel": self.cgh.hologram_lens_f(),
                         "lens_in_holograms": self.cgh.hologram_lens_f() is not None}
@@ -1040,12 +1055,19 @@ class CommandExecutor(QObject):
                 data, _, _, path = self._calib_result
                 sm = data["summary"]
                 val = data["meta"].get("validation") or {}
+                det = data["meta"].get("detected", {})
+                warn = ""
+                if val.get("rms_cam_px") is not None and val["rms_cam_px"] > 3:
+                    warn = ("\n\nWARNING: the coarse model predicts the refine spots poorly "
+                            f"(rms {val['rms_cam_px']:.1f} px): detections may be wrong (stray light, wrong focus, "
+                            "frames from the previous slot). Run Check Spots before using it.")
                 self._show_calib_outcome(
                     "Auto Calibrate: calibration applied",
                     f"{os.path.basename(path)}\nfit error rms {data['rms_cam_px']:.2f} camera px"
                     + (f", independent check rms {val['rms_cam_px']:.2f} px" if val.get("rms_cam_px") is not None else "")
+                    + "\nspots detected: " + ", ".join(f"{k} {a}/{b}" for k, (a, b) in det.items())
                     + f"\nrotation {sm['rotation_deg']:.1f} deg, scale {sm['scale_x']:.4f} / {sm['scale_y']:.4f}"
-                    + (", mirrored" if sm["mirrored"] else "") + f", shear {sm['shear']:.3f}")
+                    + (", mirrored" if sm["mirrored"] else "") + f", shear {sm['shear']:.3f}" + warn)
             else:
                 why = "aborted" if self._calib_abort.is_set() else f"failed: {error[0] or 'see log'}"
                 self.hg_panel.set_calibration_status(f"Calibration: {why}; previous calibration kept"
@@ -1119,7 +1141,12 @@ class CommandExecutor(QObject):
                 slots = [self.CORRECTION_SLOT] + list(range(self.FIRST_HOLOGRAM_SLOT,
                                                            self.FIRST_HOLOGRAM_SLOT + len(holograms)))
                 frames = self._measure_slots(0, wait_s, n_avg, exposure_s, slots=slots)
-                bg = frames[0]
+                # background: median of slot 0 and the single-spot frames. Each spot is in only one of
+                # them, while anything common to all holograms (e.g. light from the trigger stripe,
+                # weakened zero order) is in most of them and cancels; a slot-0 frame alone keeps it.
+                single_frames = [fr for h, fr in zip(holograms, frames[1:]) if h["label"] != "all"]
+                bg = (np.median(np.stack([frames[0]] + single_frames), axis=0) if len(single_frames) >= 2
+                      else frames[0])
                 singles = np.full_like(picked, np.nan)
                 multi_pts = np.zeros((0, 2))
                 for h, fr in zip(holograms, frames[1:]):
@@ -1129,6 +1156,17 @@ class CommandExecutor(QObject):
                     elif len(pts):
                         singles[h["spots"][0]] = pts[0]
                 err_single = np.hypot(*(singles - picked).T)
+                # how the landed single spots relate to the picked positions (diagnosis of a miss)
+                ok = np.isfinite(singles[:, 0])
+                relation = None
+                if ok.sum() >= 3:
+                    try:
+                        Md, _ = slm_cal.fit_affine(picked[ok], singles[ok])
+                        relation = dict(slm_cal.describe(Md), mean_shift_px=(singles[ok] - picked[ok]).mean(0).tolist())
+                    except ValueError:
+                        relation = None
+                elif ok.any():
+                    relation = {"mean_shift_px": (singles[ok] - picked[ok]).mean(0).tolist()}
                 err_multi = np.array([np.min(np.hypot(*(multi_pts - q).T)) if len(multi_pts) else np.nan
                                       for q in picked])
                 stamp = time.strftime("%Y%m%d%H%M%S")
@@ -1137,11 +1175,13 @@ class CommandExecutor(QObject):
                           "settings_mismatches": mism, "picked_cam": picked.tolist(),
                           "single_landed_cam": singles.tolist(), "single_error_px": err_single.tolist(),
                           "all_at_once_landed_cam": multi_pts.tolist(), "all_at_once_error_px": err_multi.tolist(),
+                          "landed_vs_picked": relation,
                           "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
                           "f_fresnel_m": self.cgh.hologram_lens_f(), "camera_roi": list(self.ctrl_panel.get_scmos_roi())}
                 acq.write_json(base + ".json", record)
                 tf.imwrite(base + "_frames.tif", np.stack(frames).astype(np.float32))
                 result.update(singles=singles, multi=multi_pts, es=err_single, em=err_multi, path=base + ".json",
+                              relation=relation,
                               img=np.clip(np.max(frames[1:] - bg, axis=0), 0, None))
             except Exception as e:
                 result["error"] = str(e)
@@ -1173,6 +1213,25 @@ class CommandExecutor(QObject):
                 verdict = ("Single spots miss: the calibration does not match this setup or this target image "
                            "(check camera ROI / binning, SLM offset, focal length, and that the target image is a "
                            "camera frame) - run Auto Calibrate again.")
+            rel = result.get("relation")
+            if rel and not single_ok:
+                dx, dy = rel["mean_shift_px"]
+                if "rotation_deg" in rel:
+                    rot = rel["rotation_deg"]
+                    rot_off = min(abs(rot), abs(abs(rot) - 360))
+                    same_geom = rot_off < 2 and abs(rel["scale_x"] - 1) < 0.03 and abs(rel["scale_y"] - 1) < 0.03 \
+                        and not rel["mirrored"]
+                    if same_geom:
+                        verdict += (f"\nLanded spots are the picked pattern shifted by ({dx:.0f}, {dy:.0f}) px: "
+                                    f"something moved or changed since calibration (sample/focus, SLM offset, lens, "
+                                    f"camera ROI).")
+                    else:
+                        verdict += (f"\nLanded spots = picked pattern rotated {rot:.1f} deg, scaled "
+                                    f"{rel['scale_x']:.3f} / {rel['scale_y']:.3f}"
+                                    + (", MIRRORED" if rel["mirrored"] else "")
+                                    + f", shifted ({dx:.0f}, {dy:.0f}) px: the calibration geometry itself is wrong.")
+                else:
+                    verdict += f"\nMean shift of landed spots: ({dx:.0f}, {dy:.0f}) px."
             if mism:
                 verdict += "\nSettings changed since calibration: " + "; ".join(mism)
             self.hg_panel.set_calibration_status(f"Check Spots: single {fmt(es)}; all-at-once {fmt(em)}")
