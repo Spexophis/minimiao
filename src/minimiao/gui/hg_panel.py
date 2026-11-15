@@ -60,7 +60,6 @@ class HGPanel(QWidget):
         self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
         self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
         self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 32)
-        # 5 decimals: a 0.0005 magnification error already moves edge spots by ~2 camera px
         self.QDoubleSpinBox_CGH_Magnification = cw.DoubleSpinBoxWidget(-50, 50, 0.001, 5, 0.332)
         self.QDoubleSpinBox_CGH_CenterX = cw.DoubleSpinBoxWidget(-4096, 8192, 1, 1, 1201)
         self.QDoubleSpinBox_CGH_CenterY = cw.DoubleSpinBoxWidget(-4096, 8192, 1, 1, 1208)
