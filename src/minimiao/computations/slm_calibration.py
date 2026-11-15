@@ -327,3 +327,79 @@ def check_point_set(cam_pts, n_min=6, min_spread=0.15):
     if sv[0] <= 0 or sv[-1] / sv[0] < min_spread:
         raise ValueError(f"the {k} detected spots lie almost on a line; they must cover the field in 2D")
     return k
+
+
+# ---- usable spot field --------------------------------------------------------
+
+def convex_hull(pts):
+    """Convex hull (counter-clockwise vertices) of 2D points (monotone chain); NaN rows ignored."""
+    p = np.asarray(pts, float)
+    p = p[np.all(np.isfinite(p), axis=1)]
+    p = np.unique(p, axis=0)
+    if len(p) < 3:
+        return p
+    p = p[np.lexsort((p[:, 1], p[:, 0]))]
+
+    def cross(o, a, b):
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for q in p:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], q) <= 0:
+            lower.pop()
+        lower.append(q)
+    for q in p[::-1]:
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], q) <= 0:
+            upper.pop()
+        upper.append(q)
+    return np.array(lower[:-1] + upper[:-1])
+
+
+def expand_polygon(poly, factor):
+    """Scale a polygon about its vertex centroid."""
+    poly = np.asarray(poly, float)
+    c = poly.mean(axis=0)
+    return c + (poly - c) * factor
+
+
+def in_polygon(pts, poly):
+    """Boolean mask: points inside the polygon (ray casting). Fewer than 3 vertices: all True."""
+    pts = np.atleast_2d(np.asarray(pts, float))
+    poly = np.asarray(poly, float)
+    if len(poly) < 3:
+        return np.ones(len(pts), bool)
+    x, y = pts[:, 0], pts[:, 1]
+    inside = np.zeros(len(pts), bool)
+    j = len(poly) - 1
+    for i in range(len(poly)):
+        xi, yi = poly[i]
+        xj, yj = poly[j]
+        with np.errstate(divide="ignore", invalid="ignore"):
+            cross = ((yi > y) != (yj > y)) & (x < (xj - xi) * (y - yi) / (yj - yi) + xi)
+        inside ^= cross
+        j = i
+    return inside
+
+
+def holo_grid_in_region(M, cam_shape, holo_region, n=5, phase_n=(850, 850), expand=1.15, margin=0.05,
+                        zero_order_radius=0.025):
+    """
+    Refinement grid limited to the usable spot field: n x n points over the bounding box of the
+    region where spots were found (hologram px, convex hull, expanded by `expand`), kept if inside
+    that expanded region, inside the camera image (minus `margin`) and away from the zero order.
+    """
+    nx, ny = phase_n
+    h, w = cam_shape
+    poly = expand_polygon(holo_region, expand)
+    (x0, y0), (x1, y1) = poly.min(axis=0), poly.max(axis=0)
+    xx, yy = np.meshgrid(np.linspace(x0, x1, n), np.linspace(y0, y1, n))
+    holo = np.column_stack([xx.ravel(), yy.ravel()])
+    cam = holo_to_cam(M, holo)
+    r0 = zero_order_radius * min(nx, ny)
+    keep = (in_polygon(holo, poly) &
+            (np.round(holo[:, 0]) >= 1) & (np.round(holo[:, 0]) <= nx) &
+            (np.round(holo[:, 1]) >= 1) & (np.round(holo[:, 1]) <= ny) &
+            (cam[:, 0] >= margin * w) & (cam[:, 0] <= (1 - margin) * (w - 1)) &
+            (cam[:, 1] >= margin * h) & (cam[:, 1] <= (1 - margin) * (h - 1)) &
+            (np.hypot(holo[:, 0] - nx / 2, holo[:, 1] - ny / 2) > r0))
+    return holo[keep], cam[keep]
