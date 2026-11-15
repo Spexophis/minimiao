@@ -36,11 +36,11 @@ class HGPanel(QWidget):
         layout = QVBoxLayout(self)
         splitter = QSplitter(Qt.Orientation.Vertical)
 
-        control_widget = self._create_cgh_panel()
-        splitter.addWidget(control_widget)
-
         calib_widget = self._create_calibration_panel()
         splitter.addWidget(calib_widget)
+
+        control_widget = self._create_cgh_panel()
+        splitter.addWidget(control_widget)
 
         plot_widget = QWidget()
         plot_layout = self._create_plot_widgets()
@@ -50,47 +50,19 @@ class HGPanel(QWidget):
         layout.addWidget(splitter)
         self.setLayout(layout)
 
-    def _create_cgh_panel(self):
-        group = cw.GroupWidget()
-        cgh_scroll_area, cgh_scroll_layout = cw.create_scroll_area("G")
-
-        self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
-        self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
-        self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 32)
-        self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
-        self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
-        self.QComboBox_CGH_Mode = cw.ComboBoxWidget(list_items=["Sequential", "Simultaneous", "Hybrid"])
-        self.QComboBox_CGH_Mode.setCurrentText("Simultaneous")
-
-        cgh_scroll_layout.addWidget(cw.LabelWidget(str('CGH Computation')), 0, 0, 1, 1)
-        cgh_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Load, 2, 0, 1, 1)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Pick, 3, 0, 1, 1)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
-        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
-        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Iterations')), 2, 1, 1, 1)
-        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_Iteration, 2, 2, 1, 1)
-        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Mode')), 3, 1, 1, 1)
-        cgh_scroll_layout.addWidget(self.QComboBox_CGH_Mode, 3, 2, 1, 1)
-
-        group_layout = QHBoxLayout(group)
-        group_layout.addWidget(cgh_scroll_area)
-        group.setLayout(group_layout)
-        return group
-
     def _create_calibration_panel(self):
         group = cw.GroupWidget()
         calib_scroll_area, calib_scroll_layout = cw.create_scroll_area("G")
 
+        self.QPushButton_Calib_Auto = cw.PushButtonWidget('Auto Calibrate')
+        self.QPushButton_Calib_Load = cw.PushButtonWidget('Load Calib')
+        self.QPushButton_Calib_Generate = cw.PushButtonWidget('Calib Holograms')
+        self.QPushButton_Calib_Measure = cw.PushButtonWidget('Calib Measure')
         self.QSpinBox_Calib_Grid = cw.SpinBoxWidget(2, 10, 1, 4)
         self.QDoubleSpinBox_Calib_Span = cw.DoubleSpinBoxWidget(0.05, 0.95, 0.05, 2, 0.5)
         self.QSpinBox_Calib_Settle = cw.SpinBoxWidget(0, 5000, 10, 300)
         self.QSpinBox_Calib_Average = cw.SpinBoxWidget(1, 20, 1, 3)
-        self.QPushButton_Calib_Generate = cw.PushButtonWidget('Calib Holograms')
-        self.QPushButton_Calib_Measure = cw.PushButtonWidget('Calib Measure')
-        self.QPushButton_Calib_Load = cw.PushButtonWidget('Load Calib')
         self.QSpinBox_Calib_Refine = cw.SpinBoxWidget(0, 10, 1, 5)
-        self.QPushButton_Calib_Auto = cw.PushButtonWidget('Auto Calibrate')
         self.QPushButton_Calib_Check = cw.PushButtonWidget('Check Spots')
         self.QLabel_Calib_Status = cw.LabelWidget('Calibration: none (run Auto Calibrate or Load Calib)')
         self.QLabel_Calib_Status.setWordWrap(True)
@@ -117,6 +89,34 @@ class HGPanel(QWidget):
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(calib_scroll_area)
+        group.setLayout(group_layout)
+        return group
+
+    def _create_cgh_panel(self):
+        group = cw.GroupWidget()
+        cgh_scroll_area, cgh_scroll_layout = cw.create_scroll_area("G")
+
+        self.QPushButton_CGH_Load = cw.PushButtonWidget('Load Target')
+        self.QPushButton_CGH_Pick = cw.PushButtonWidget('Pick Spots')
+        self.QSpinBox_CGH_Iteration = cw.SpinBoxWidget(0, 1024, 1, 32)
+        self.QPushButton_CGH_Compute = cw.PushButtonWidget('Compute CGH')
+        self.QPushButton_CGH_Save = cw.PushButtonWidget('Save CGH')
+        self.QComboBox_CGH_Mode = cw.ComboBoxWidget(list_items=["Sequential", "Simultaneous", "Hybrid"])
+        self.QComboBox_CGH_Mode.setCurrentText("Simultaneous")
+
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('CGH Computation')), 0, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 3)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Load, 2, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Pick, 3, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Compute, 4, 0, 1, 1)
+        cgh_scroll_layout.addWidget(self.QPushButton_CGH_Save, 5, 0, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Iterations')), 2, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QSpinBox_CGH_Iteration, 2, 2, 1, 1)
+        cgh_scroll_layout.addWidget(cw.LabelWidget(str('Mode')), 3, 1, 1, 1)
+        cgh_scroll_layout.addWidget(self.QComboBox_CGH_Mode, 3, 2, 1, 1)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(cgh_scroll_area)
         group.setLayout(group_layout)
         return group
 
