@@ -697,8 +697,8 @@ class TableWidget(QtWidgets.QTableWidget):
 
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key.Key_Delete:
-            selected = self.selectedItems()
-            if selected:
-                self.removeRow(selected[0].row())
+            rows = sorted({item.row() for item in self.selectedItems()}, reverse=True)
+            for row in rows:
+                self.removeRow(row)
         else:
             super().keyPressEvent(event)

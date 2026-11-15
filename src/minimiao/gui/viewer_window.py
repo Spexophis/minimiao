@@ -52,8 +52,9 @@ class FramePool(QObject):
 class LiveViewer(QWidget):
     """
     Top: live camera display (vispy, GPU; contrast min/max, fit, auto, cursor readout).
-    Bottom: target image for spot picking / calibration results (pyqtgraph). Picked spots
-    are drawn as numbered markers; the index matches the hologram labels ("spot i").
+    Bottom: target image for spot picking / calibration results (pyqtgraph) with the picked
+    spots table beside it. The table is the record of picked spots (X, Y in camera px, Z in um,
+    intensity); markers are drawn from it and numbered like the rows / hologram labels ("spot i").
     """
     SPOT_DEFAULT_Z_UM = 0.0
     SPOT_DEFAULT_INTENSITY = 1.0
@@ -96,8 +97,12 @@ class LiveViewer(QWidget):
         live_widget.setLayout(self._create_live_widgets())
         splitter.addWidget(live_widget)
 
-        image_widget = self._create_image_widgets()
-        splitter.addWidget(image_widget)
+        target_split = QSplitter(Qt.Orientation.Horizontal)
+        target_split.addWidget(self._create_image_widgets())
+        target_split.addWidget(self._create_spot_table())
+        target_split.setStretchFactor(0, 3)
+        target_split.setStretchFactor(1, 1)
+        splitter.addWidget(target_split)
 
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 2)
@@ -159,7 +164,22 @@ class LiveViewer(QWidget):
 
         return image_widget
 
+    def _create_spot_table(self):
+        layout_table = QVBoxLayout()
+        self.spot_table = cw.TableWidget(headers=['X', 'Y', 'Z (um)', 'Intensity'], n_rows=0)
+        self.spot_table.setMaximumHeight(16777215)  # fill the height beside the target image
+        self.spot_table.setMinimumWidth(260)
+        self.spot_table.setSelectionMode(self.spot_table.SelectionMode.ExtendedSelection)
+        self._table_updating = False
+        layout_table.addWidget(cw.LabelWidget("Picked Spots (Delete removes selected rows)"))
+        layout_table.addWidget(self.spot_table, stretch=1)
+        table_widget = QWidget()
+        table_widget.setLayout(layout_table)
+        return table_widget
+
     def _setup_signal_connections(self):
+        self.spot_table.itemChanged.connect(self._on_spot_table_changed)
+        self.spot_table.model().rowsRemoved.connect(self._on_spot_table_changed)
         self.QSlider_black.valueChanged.connect(self.on_black_change)
         self.QSlider_white.valueChanged.connect(self.on_white_change)
         self.QPushButton_fit_view.clicked.connect(self.fit_view)
@@ -248,8 +268,10 @@ class LiveViewer(QWidget):
         self.logg.info("Start picking...")
         self._picking_enabled = True
 
-        self.target_points = []
-        self._update_target_spots_overlay()
+        self._table_updating = True
+        self.spot_table.setRowCount(0)
+        self._table_updating = False
+        self._sync_from_table()
 
         self.image_plot.setFocus()
         self.image_plot.setCursor(Qt.CursorShape.CrossCursor)
@@ -270,9 +292,41 @@ class LiveViewer(QWidget):
         self._update_pick_status(cancelled=True)
 
     def get_target_spots(self):
-        """Picked spots as [x, y, z_um, intensity] rows (camera pixels), index = hologram spot index."""
-        return [[float(u), float(v), self.SPOT_DEFAULT_Z_UM, self.SPOT_DEFAULT_INTENSITY]
-                for (u, v) in self.target_points]
+        """Picked spots from the table as [x, y, z_um, intensity] (camera px); rows with a missing or
+        invalid X / Y are skipped, Z / intensity default to 0 / 1. Index = hologram spot index."""
+        spots = []
+        for r in range(self.spot_table.rowCount()):
+            x, y, z, a = (self.spot_table.get_cell(r, c) for c in range(4))
+            if not all(isinstance(v, (int, float)) for v in (x, y)):
+                continue
+            z = float(z) if isinstance(z, (int, float)) else self.SPOT_DEFAULT_Z_UM
+            a = float(a) if isinstance(a, (int, float)) else self.SPOT_DEFAULT_INTENSITY
+            spots.append([float(x), float(y), z, a])
+        return spots
+
+    def _sync_from_table(self):
+        """Rebuild markers / numbering from the table (after picks, edits or deleted rows)."""
+        self.target_points = [(x, y) for x, y, _, _ in self.get_target_spots()]
+        self.spot_table.setVerticalHeaderLabels([str(i) for i in range(self.spot_table.rowCount())])
+        self._update_target_spots_overlay()
+        self._update_pick_status()
+
+    def _on_spot_table_changed(self, *args):
+        if not self._table_updating:
+            self._sync_from_table()
+
+    def _add_spot_row(self, u, v):
+        self._table_updating = True
+        self.spot_table.add_row([int(u), int(v), self.SPOT_DEFAULT_Z_UM, self.SPOT_DEFAULT_INTENSITY])
+        self._table_updating = False
+        self._sync_from_table()
+
+    def _remove_last_spot_row(self):
+        if self.spot_table.rowCount():
+            self._table_updating = True
+            self.spot_table.removeRow(self.spot_table.rowCount() - 1)
+            self._table_updating = False
+            self._sync_from_table()
 
     def show_calibration_points(self, xs, ys):
         """Overlay calibration detections (no index labels; picked spots stay visible)."""
@@ -318,9 +372,7 @@ class LiveViewer(QWidget):
 
         u = int(np.clip(np.floor(x), 0, w - 1))
         v = int(np.clip(np.floor(y), 0, h - 1))
-        self.target_points.append((u, v))
-        self._update_target_spots_overlay()
-        self._update_pick_status()
+        self._add_spot_row(u, v)
 
     def _update_target_spots_overlay(self):
         for t in self._spot_labels:
@@ -348,9 +400,7 @@ class LiveViewer(QWidget):
                     return True
 
                 if key == Qt.Key.Key_Backspace:
-                    if self.target_points:
-                        self.target_points.pop()
-                        self._update_target_spots_overlay()
+                    self._remove_last_spot_row()
                     return True
 
                 if key == Qt.Key.Key_Escape:
