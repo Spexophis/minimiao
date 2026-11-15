@@ -204,6 +204,7 @@ class CommandExecutor(QObject):
                     "f_reference_m": hs.f_fresnel, "holograms_lens": self.cgh.holograms_lens,
                     "slot0": {"lens_enabled": hs.lens_enabled, "cross_enabled": hs.cross_enabled,
                               "f_fresnel_m": hs.f_fresnel if hs.lens_enabled else None},
+                    "hologram_composition": "correction + focal-array hologram + Fresnel lens (f_fresnel_m)",
                     "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
                     "correction_value": hs.correction_value, "mode_last_computed": self.hg_panel.get_cgh_mode(),
                     "spots_xy_um_z": [list(map(float, sp)) for sp in (self.cgh.spots_xy or [])]},
@@ -390,8 +391,7 @@ class CommandExecutor(QObject):
             self.ctrl_panel.set_slm_base_buttons(*applied)
             return
         hs.lens_enabled, hs.cross_enabled = lens, cross
-        if lens:
-            hs.f_fresnel = f_mm * 1e-3
+        hs.f_fresnel = max(f_mm, 0.0) * 1e-3  # same focal length as the holograms
         self.ctrl_panel.set_slm_base_buttons(lens, cross)
         parts = ["correction"]
         if lens:
@@ -408,10 +408,11 @@ class CommandExecutor(QObject):
         # holograms already in slots 1..N were built with the lens state at their computation
         if any(k >= self.FIRST_HOLOGRAM_SLOT for k in self.slot_patterns):
             built = self.cgh.holograms_lens
-            now = {"lens_in_holograms": bool(lens), "f_fresnel_m": hs.f_fresnel if lens else None}
-            if built != now:
-                self.logg.warning(f"Holograms in slots >= 1 were computed with {built}; the lens is now {now}. "
-                                  f"Recompute holograms (and recalibrate) so they match.")
+            now = {"lens_in_holograms": self.cgh.hologram_lens_f() is not None,
+                   "f_fresnel_m": self.cgh.hologram_lens_f()}
+            if self.cgh.holograms and built != now:
+                self.logg.warning(f"Holograms in slots >= 1 were computed with {built}; the focal length is now "
+                                  f"{now}. Recompute holograms (and recalibrate) so they match.")
 
     @pyqtSlot(int)
     def display_slm_slot(self, slot: int):
@@ -753,7 +754,11 @@ class CommandExecutor(QObject):
         o, idx = self.ctrl_panel.get_slm_parameters()
         f_mm = self.ctrl_panel.get_slm_focal_mm()
         # holograms carry no lens; f is only the reference distance for z-offset spots
-        self.cgh.update_parameters(n, m, f_mm * 1e-3 if f_mm > 0 else self.cgh.holo_sys.f_fresnel, c, o)
+        # holograms always include the Fresnel lens with this focal length (0 = no lens)
+        self.cgh.update_parameters(n, m, max(f_mm, 0.0) * 1e-3, c, o)
+        if f_mm <= 0:
+            self.logg.warning("Fresnel focal length is 0: holograms carry no lens and will not focus "
+                              "at the sample through the relay; set the focal length in the SLM panel")
         if self.cgh.use_affine and self.cgh.affine is not None:
             self.logg.info("Using affine calibration; Magnification / Center-X / Center-Y are ignored")
             roi = list(self.ctrl_panel.get_scmos_roi())
@@ -1006,8 +1011,8 @@ class CommandExecutor(QObject):
                         "auto": True, "settings": settings, "validation": validation,
                         "equivalent_simple": simple, "phase_n": list(phase_n),
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
-                        "f_fresnel": self.cgh.holo_sys.f_fresnel,
-                        "lens_in_holograms": bool(self.cgh.holo_sys.lens_enabled)}
+                        "f_fresnel": self.cgh.hologram_lens_f(),
+                        "lens_in_holograms": self.cgh.hologram_lens_f() is not None}
                 data = slm_cal.save_calibration(base + ".json", M, cam_all, holo_all, res, meta)
                 tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
                 self.cgh.set_affine(M)
@@ -1127,9 +1132,17 @@ class CommandExecutor(QObject):
                     target = slm_cal.holo_to_cam(M, holo_r)
                     ok = np.isfinite(landed[:, 0])
                     if ok.sum() < 3:
-                        raise RuntimeError(f"Iteration {it}: only {int(ok.sum())} of {len(holo)} spots detected. "
-                                           f"Either the start Magnification/Center are far off (spots land outside "
-                                           f"the camera image) or the signal is weak (laser power, focus, Avg frames)")
+                        diag = os.path.join(self.path, time.strftime("%Y%m%d%H%M%S") + "_mag_center_failed_maxproj.tif")
+                        try:
+                            tf.imwrite(diag, mp_it.astype(np.float32))
+                        except Exception:
+                            diag = "(not saved)"
+                        raise RuntimeError(
+                            f"Iteration {it}: only {int(ok.sum())} of {len(holo)} spots detected (best spot SNR "
+                            f"{np.max(snr):.1f}, detection needs 5). Check: spots in focus on the layer (Fresnel "
+                            f"focal length {self.cgh.holo_sys.f_fresnel * 1e3:g} mm), laser power / Avg frames, and "
+                            f"whether rough Magnification/Center put the spots off-camera. Background-subtracted "
+                            f"image of all spots: {diag}")
                     err = np.linalg.norm(landed[ok] - target[ok], axis=1)
                     rec = {"iteration": it, "params_used": dict(cur), "n_spots": int(len(holo)),
                            "n_detected": int(ok.sum()), "rms_error_px": float(np.sqrt(np.mean(err ** 2))),
@@ -1162,8 +1175,8 @@ class CommandExecutor(QObject):
                           "verified": converged, "iterations": iterations, "model_check": check,
                           "camera_roi": roi, "camera_frame_shape": list(shape), "settings": settings,
                           "slm_offset": [hs.slm_offset_x, hs.slm_offset_y],
-                          "lens_in_holograms": bool(hs.lens_enabled),
-                          "f_fresnel_m": hs.f_fresnel if hs.lens_enabled else None}
+                          "lens_in_holograms": self.cgh.hologram_lens_f() is not None,
+                          "f_fresnel_m": self.cgh.hologram_lens_f()}
                 acq.write_json(base + ".json", record)
                 if mp is not None:
                     tf.imwrite(base + "_maxproj.tif", mp.astype(np.float32))
@@ -1241,8 +1254,8 @@ class CommandExecutor(QObject):
                         "snr": snr.tolist(),
                         "phase_n": [self.cgh.holo_sys.phase_nx, self.cgh.holo_sys.phase_ny],
                         "slm_offset": [self.cgh.holo_sys.slm_offset_x, self.cgh.holo_sys.slm_offset_y],
-                        "f_fresnel": self.cgh.holo_sys.f_fresnel,
-                        "lens_in_holograms": bool(self.cgh.holo_sys.lens_enabled)}
+                        "f_fresnel": self.cgh.hologram_lens_f(),
+                        "lens_in_holograms": self.cgh.hologram_lens_f() is not None}
                 data = slm_cal.save_calibration(base + ".json", M, cam_pts, holo_pts, res, meta)
                 tf.imwrite(base + "_maxproj.tif", max_proj.astype(np.float32))
                 self.cgh.set_affine(M)

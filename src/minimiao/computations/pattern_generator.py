@@ -35,8 +35,9 @@ class HoloSystem:
 
     trigger_value: int = 128
 
-    # SLM base settings (slot 0): Fresnel lens (f_fresnel) and 2x2 0/pi cross.
-    # Holograms include the lens when lens_enabled; the cross is slot 0 only.
+    # Holograms always include the Fresnel lens of focal length f_fresnel (f_fresnel <= 0: no lens);
+    # the objective - tube lens - relay - SLM path needs it to focus the spots at the sample.
+    # lens_enabled / cross_enabled: what slot 0 (base pattern) shows; the cross is slot 0 only.
     lens_enabled: bool = False
     cross_enabled: bool = False
 
@@ -231,8 +232,8 @@ class CGH:
                     continue
                 holograms.append({"label": f"spot {i}", "spots": [i], "pattern": pattern})
         self.holograms = holograms
-        self.holograms_lens = {"lens_in_holograms": bool(self.holo_sys.lens_enabled),
-                               "f_fresnel_m": self.holo_sys.f_fresnel if self.holo_sys.lens_enabled else None}
+        f = self.hologram_lens_f()
+        self.holograms_lens = {"lens_in_holograms": f is not None, "f_fresnel_m": f}
         self.phase_slm = holograms[0]["pattern"] if holograms else None
         return holograms
 
@@ -256,10 +257,15 @@ class CGH:
             return x1, y1
         return None
 
+    def hologram_lens_f(self):
+        """Fresnel focal length (m) included in every hologram, or None if f_fresnel <= 0."""
+        f = self.holo_sys.f_fresnel
+        return float(f) if f and f > 0 else None
+
     def _finalize(self, phase_spots, trg=True):
-        """Hologram for an SLM slot: correction + Fresnel lens (if lens_enabled) + multifocal
-        hologram phase, then the trigger patch. No cross (that is slot 0 only)."""
-        f = self.holo_sys.f_fresnel if self.holo_sys.lens_enabled else None
+        """Hologram for an SLM slot: correction + multifocal hologram phase + Fresnel lens
+        (f_fresnel), then the trigger patch. No cross (that is slot 0 only)."""
+        f = self.hologram_lens_f()
         pattern, _ = self.compose_slm_pattern(phase_region=phase_spots, lens_f_m=f, cross=False)
         if trg:
             self.add_trigger_pattern(pattern)
@@ -411,6 +417,8 @@ class CGH:
         X, Y = np.meshgrid(x, y)
         k = 2.0 * np.pi / self.holo_sys.wavelength
         f = self.holo_sys.f_fresnel
+        if not f or f <= 0:
+            raise ValueError("Spots with a z offset need a Fresnel focal length > 0 (SLM panel)")
         rho2 = X ** 2 + Y ** 2
         phi = k * delta_z * (np.sqrt(np.clip(1.0 - rho2 / f ** 2, 0.0, None)) - 1.0)
         return np.mod(phi, 2.0 * np.pi)
