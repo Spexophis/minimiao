@@ -124,19 +124,34 @@ def build_sequence(bs: BlockSettings):
 
     sysclk = tbx.choose_sysclk(freqs, min_width_us=min(widths), widths_us=widths)
     if sysclk is None:
-        raise ValueError(f"No TriggerBox system clock fits pulse frequencies {freqs} Hz "
-                         f"(spread too wide for the shared prescaler, or pulses too short)")
+        hint = ""
+        if bs.camera_trigger == "external":
+            # highest feasible clock ignoring widths, and the shortest pulse it allows (2 ticks)
+            f_max = tbx.choose_sysclk(freqs)
+            if f_max:
+                hint = (f" The highest TriggerBox clock for these frequencies is {f_max} Hz, so every pulse must be "
+                        f">= {2e6 / f_max:.0f} us (2 ticks); the camera trigger ({bs.camera_trigger_width_us} us) "
+                        f"must fit that and be shorter than the frame period ({1e6 / bs.frame_rate_hz:.0f} us).")
+        raise ValueError(f"No TriggerBox system clock fits pulse frequencies {freqs} Hz with widths {widths} us "
+                         f"(spread too wide for the shared prescaler, or a pulse shorter than 2 ticks).{hint}")
     seq = tbx.Sequence(sysclk_hz=sysclk, external_trigger=False)
     seq.add(*channels)
     timing["sysclk_hz"] = sysclk
     return seq, timing
 
 
-def estimate_frames(bs: BlockSettings, exposure_ms: float) -> int:
-    seq_s = (build_sequence(bs)[1]["sequence_stop_ms"]) / 1000.0
+def sequence_frames(bs: BlockSettings, timing: dict, exposure_ms: float, readout_ms: float = 0.0) -> int:
+    """
+    Frames for the block's fixed-length camera sequence.
+    external: exactly one frame per TriggerBox camera-clock edge.
+    internal: block duration / max(exposure, readout). The camera cannot run faster than
+              that, so the sequence always covers the whole block (it may run a little longer).
+    """
     if bs.camera_trigger == "external":
-        return build_sequence(bs)[1]["frames_expected"]
-    return int((seq_s + bs.post_delay_s + 0.5) * 1000.0 / max(exposure_ms, 1.0) * 1.2) + 10
+        return int(timing["frames_expected"])
+    total_ms = max(timing["sequence_stop_ms"], timing["last_pulse_end_ms"] + bs.post_delay_s * 1000.0) + 50.0
+    period_ms = max(float(exposure_ms), float(readout_ms or 0.0), 1e-3)
+    return int(math.ceil(total_ms / period_ms)) + 1
 
 
 def _git_commit():
@@ -194,9 +209,10 @@ class AcquisitionRunner:
         if self.abort.is_set():
             raise AcquisitionAborted("aborted by user")
 
-    def prepare_camera(self, trigger):
-        """Apply ROI/exposure/trigger mode once before one or many blocks."""
-        self.devs.camera.prepare_recording(trigger)
+    def prepare_camera(self, trigger, readout=(1, 0, 1)):
+        """Apply ROI / exposure / readout (port, speed, gain) / trigger mode once before one or many blocks."""
+        port, speed, gain = readout
+        self.devs.camera.prepare_recording(trigger, port, speed, gain)
         self.camera_info = self.devs.camera.get_recording_info() or {}
 
     def _wait_sequence(self, expected_ms):
@@ -225,9 +241,16 @@ class AcquisitionRunner:
         seq.validate()
         cam, slm, laser, tb = self.devs.camera, self.devs.slm, self.devs.laser, self.devs.trg
         exposure_ms = float(self.camera_info.get("exposure_ms") or getattr(cam, "t_exposure", 10))
-        if bs.camera_trigger == "external" and exposure_ms >= 1000.0 / bs.frame_rate_hz:
-            raise ValueError(f"Exposure {exposure_ms} ms >= frame period {1000.0 / bs.frame_rate_hz:.2f} ms")
-        n_est = estimate_frames(bs, exposure_ms)
+        readout_ms = float(self.camera_info.get("readout_time_ms") or 0.0)
+        early_warnings = []
+        if bs.camera_trigger == "external":
+            period_ms = 1000.0 / bs.frame_rate_hz
+            if exposure_ms >= period_ms:
+                raise ValueError(f"Exposure {exposure_ms:g} ms >= frame period {period_ms:.3f} ms")
+            if readout_ms >= period_ms:
+                early_warnings.append(f"camera readout time {readout_ms:.3f} ms >= frame period {period_ms:.3f} ms; "
+                                      f"triggers may be missed (smaller ROI / faster readout port)")
+        n_est = sequence_frames(bs, timing, exposure_ms, readout_ms)
         frame_bytes = 2 * int(self.camera_info.get("pixels_x") or 2400) * int(self.camera_info.get("pixels_y") or 2400)
         bigtiff = n_est * frame_bytes > BIGTIFF_THRESHOLD_BYTES
         tif_path, json_path = stem + ".tif", stem + ".json"
@@ -244,8 +267,10 @@ class AcquisitionRunner:
                             "laser_channel": bs.laser_channel,
                             "camera_channel": bs.camera_channel if bs.camera_trigger == "external" else None},
             "camera": dict(self.camera_info, frame_rate_hz_requested=(
-                bs.frame_rate_hz if bs.camera_trigger == "external" else None), frames_estimated=n_est),
-            "timing": dict(timing), "frames": {}, "context": self.context, "warnings": [],
+                bs.frame_rate_hz if bs.camera_trigger == "external" else None), frames_sequence=n_est,
+                frames_sequence_rule=("one per camera-clock edge" if bs.camera_trigger == "external"
+                                      else "block duration / max(exposure, readout); may exceed the block")),
+            "timing": dict(timing), "frames": {}, "context": self.context, "warnings": list(early_warnings),
         }
         recording = False
         t = {}
@@ -260,7 +285,7 @@ class AcquisitionRunner:
             self._sleep(bs.slm_settle_ms / 1000.0 - (time.perf_counter() - t_slm))
 
             t["camera_start"] = time.perf_counter()
-            cam.start_recording(tif_path, bigtiff=bigtiff)
+            cam.start_recording(tif_path, n_frames=n_est, bigtiff=bigtiff)
             recording = True
             if self.preview is not None and getattr(cam, "data", None) is not None:
                 cam.data.on_update(self.preview)
@@ -287,9 +312,16 @@ class AcquisitionRunner:
                 pass
         finally:
             if recording:
+                # complete block: wait for the rest of the fixed-length sequence; abort/error: stop now
+                wait_s = 0.0
+                if meta["status"] == "complete":
+                    period_s = (1.0 / bs.frame_rate_hz if bs.camera_trigger == "external"
+                                else max(exposure_ms, readout_ms, 1e-3) / 1000.0)
+                    remaining = n_est * period_s - (time.perf_counter() - t["camera_start"])
+                    wait_s = max(0.5, 2.0 * remaining + 1.0)
                 t["camera_stop"] = time.perf_counter()
                 try:
-                    summary = cam.stop_recording() or {}
+                    summary = cam.stop_recording(wait_s=wait_s) or {}
                 except Exception as e:
                     summary = {}
                     meta["warnings"].append(f"camera stop failed: {e}")
@@ -314,6 +346,9 @@ class AcquisitionRunner:
         meta["camera"].update({k: v for k, v in summary.items() if k != "path"})
         if summary.get("error"):
             meta["warnings"].append(f"recorder: {summary['error']}")
+        if summary.get("complete") is False and meta["status"] == "complete":
+            meta["warnings"].append(f"sequence incomplete: {summary.get('n_frames')} of "
+                                    f"{summary.get('n_frames_requested')} frames received")
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
         if bs.camera_trigger == "external":

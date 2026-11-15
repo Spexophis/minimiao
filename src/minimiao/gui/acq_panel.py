@@ -46,6 +46,7 @@ class AcqPanel(QWidget):
         self.QComboBox_cam_trigger = cw.ComboBoxWidget(list(self.CAMERA_TRIGGERS))
         self.QSpinBox_fps = cw.SpinBoxWidget(1, 5000, 1, 100)
         self.QSpinBox_cam_ch = cw.SpinBoxWidget(1, 5, 1, 2)
+        self.QSpinBox_cam_width = cw.SpinBoxWidget(1, 1000000, 50, 1000)
         self.QLineEdit_name = cw.LineEditWidget()
         self.QPushButton_run_block = cw.PushButtonWidget("Run Block")
 
@@ -56,17 +57,20 @@ class AcqPanel(QWidget):
                 ("Pre delay / s", self.QDoubleSpinBox_pre, "Post delay / s", self.QDoubleSpinBox_post),
                 ("SLM settle / ms", self.QSpinBox_settle, "Name", self.QLineEdit_name),
                 ("Camera trigger", self.QComboBox_cam_trigger, "Camera TB channel", self.QSpinBox_cam_ch),
-                ("Frame rate / Hz", self.QSpinBox_fps, None, self.QPushButton_run_block)]
+                ("Frame rate / Hz", self.QSpinBox_fps, "Cam trigger / us", self.QSpinBox_cam_width),
+                (None, None, None, self.QPushButton_run_block)]
         for r, (l1, w1, l2, w2) in enumerate(rows):
-            g.addWidget(cw.LabelWidget(l1), r, 0)
+            if l1 is not None:
+                g.addWidget(cw.LabelWidget(l1), r, 0)
             if w1 is not None:
                 g.addWidget(w1, r, 1)
             if l2 is not None:
                 g.addWidget(cw.LabelWidget(l2), r, 2)
             if w2 is not None:
                 g.addWidget(w2, r, 3)
-        g.addWidget(cw.LabelWidget("Exposure / ROI / binning: camera settings in the Ctrl Panel. "
-                                   "Frame rate applies to TriggerBox camera trigger only. Esc aborts."),
+        g.addWidget(cw.LabelWidget("Exposure / ROI / binning / readout: camera settings in the Ctrl Panel. "
+                                   "Frame rate and Cam trigger width apply to TriggerBox camera trigger only. "
+                                   "Esc aborts."),
                     len(rows), 0, 1, 4)
         hl = QHBoxLayout(group)
         hl.addWidget(area)
@@ -127,5 +131,6 @@ class AcqPanel(QWidget):
             "camera_trigger": self.CAMERA_TRIGGERS[self.QComboBox_cam_trigger.currentText()],
             "frame_rate_hz": self.QSpinBox_fps.value(),
             "camera_channel": self.QSpinBox_cam_ch.value(),
+            "camera_trigger_width_us": self.QSpinBox_cam_width.value(),
             "name": self.QLineEdit_name.text().strip(),
         }

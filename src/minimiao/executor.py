@@ -34,6 +34,9 @@ class CommandExecutor(QObject):
         self.acq_panel = self.vw.acq_panel
         self.runner = None
         self._fire_thread = None
+        self._recording = None  # Acquire-button recording in progress
+        self._acq_timer = QTimer(self)
+        self._acq_timer.timeout.connect(self._check_acquisition_done)
         self._fire_stopped = threading.Event()
         self.trg = cmp.trg
         self.cgh = cmp.cgh
@@ -94,6 +97,13 @@ class CommandExecutor(QObject):
             self.logg.info("Finish setting up controllers")
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
+        try:
+            if self.devs.camera is not None:
+                options = self.devs.camera.get_readout_options() or []
+                self.ctrl_panel.set_readout_options(options)
+                self.logg.info(f"Camera readout modes: {len(options)} found")
+        except Exception as e:
+            self.logg.error(f"Could not read camera readout modes (default port 1 / speed 0 / gain 1 kept): {e}")
 
     def set_camera_roi(self):
         try:
@@ -123,6 +133,8 @@ class CommandExecutor(QObject):
         if getattr(self, "task_worker", None) is not None and self.task_worker.isRunning():
             self.logg.error("A task is running (it may be using the TriggerBox); fire refused")
             return
+        if self._recording is not None:
+            self.logg.info("Firing during an Acquire recording")
         try:
             seq, summary = tbx.sequence_from_outputs(outputs)
         except Exception as e:
@@ -205,6 +217,9 @@ class CommandExecutor(QObject):
         if self._trigger_firing():
             self.logg.error("TriggerBox is busy firing; wait or press Stop / Reset")
             return
+        if self._recording is not None:
+            self.logg.error("Acquire is recording; release it first")
+            return
         missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
         if missing:
             self.logg.error(f"Acquisition needs: {', '.join(missing)} (not connected)")
@@ -213,9 +228,9 @@ class CommandExecutor(QObject):
             bs = acq.BlockSettings(**settings)
             acq.build_sequence(bs)  # validates timing / TriggerBox clock before touching hardware
             exposure = self.ctrl_panel.get_scmos_exposure()
-            if bs.camera_trigger == "external" and round(exposure) >= 1000.0 / bs.frame_rate_hz:
-                raise ValueError(f"exposure {round(exposure)} ms must be shorter than the frame period "
-                                 f"{1000.0 / bs.frame_rate_hz:.2f} ms (exposure is whole ms)")
+            if bs.camera_trigger == "external" and exposure >= 1000.0 / bs.frame_rate_hz:
+                raise ValueError(f"exposure {exposure:g} ms must be shorter than the frame period "
+                                 f"{1000.0 / bs.frame_rate_hz:.3f} ms")
         except Exception as e:
             self.logg.error(f"Invalid acquisition settings: {e}")
             return
@@ -224,6 +239,7 @@ class CommandExecutor(QObject):
             self.stop_video()
             self.ctrl_panel.QPushButton_video.setChecked(False)
         self.set_camera_roi()
+        readout = self.ctrl_panel.get_scmos_readout()
         runner = acq.AcquisitionRunner(self.devs, self.logg, slot_info=self._slot_info,
                                        context=self._acq_context(), progress=self.sig_progress.emit,
                                        preview=self.viewer.on_camera_update_from_thread)
@@ -231,7 +247,7 @@ class CommandExecutor(QObject):
 
         def task():
             try:
-                runner.prepare_camera(bs.camera_trigger)
+                runner.prepare_camera(bs.camera_trigger, readout)
                 job(runner, bs)
             except acq.AcquisitionAborted:
                 self.logg.info(f"{title} aborted; partial data and metadata saved")
@@ -541,7 +557,8 @@ class CommandExecutor(QObject):
 
     def prepare_video(self):
         self.set_camera_roi()
-        self.devs.camera.prepare_live()
+        port, speed, gain = self.ctrl_panel.get_scmos_readout()
+        self.devs.camera.prepare_live(port, speed, gain)
 
     @pyqtSlot(bool)
     def video(self, sw: bool):
@@ -595,41 +612,114 @@ class CommandExecutor(QObject):
             callback()
 
     @pyqtSlot(bool, int)
-    def acquisition(self, sw: bool, acq_num: int):
+    def acquisition(self, sw: bool, n_frames: int):
+        """Acquire button: record into one TIFF (+ JSON). n_frames > 0: exactly n frames
+        (camera sequence mode, stops by itself); 0: continuous until the button is released."""
         if sw:
-            fn = self.vw.get_file_dialog()
-            tim = time.strftime("%Y%m%d%H%M%S")
-            if fn is not None:
-                file_name = tim + "_" + "_" + fn
-            else:
-                file_name = tim
-            try:
-                self.prepare_acquisition()
-            except Exception as e:
-                self.logg.error(f"Error preparing widefield: {e}")
-                return
-            self.start_acquisition(file_name, acq_num)
+            self.start_acquisition(n_frames)
         else:
             self.stop_acquisition()
 
-    def prepare_acquisition(self):
-        self.set_camera_roi()
-        self.devs.camera.prepare_live()
+    def _release_acquire_button(self):
+        btn = self.ctrl_panel.QPushButton_acquire
+        btn.blockSignals(True)
+        btn.setChecked(False)
+        btn.blockSignals(False)
 
-    def start_acquisition(self, labl: str, acq_num: int):
-        try:
-            self.devs.camera.start_data_acquisition(n=acq_num, fd=self.path, fn=labl)
-            self.devs.camera.data.on_update(self.viewer.on_camera_update_from_thread)
-        except Exception as e:
-            self.stop_acquisition()
-            self.logg.error(f"Error start acquisition: {e}")
+    def start_acquisition(self, n_frames: int):
+        cam = self.devs.camera
+        if cam is None:
+            self.logg.error("No camera connected")
+            self._release_acquire_button()
             return
+        if self._recording is not None:
+            return
+        if (getattr(self, "task_worker", None) is not None and self.task_worker.isRunning()) or self._trigger_firing():
+            self.logg.error("Another task is using the camera / TriggerBox; acquisition refused")
+            self._release_acquire_button()
+            return
+        fn = self.vw.get_file_dialog()
+        stamp = time.strftime("%Y%m%d%H%M%S")
+        name = f"{stamp}_{fn}" if fn else stamp
+        name = os.path.splitext(name)[0]
+        if getattr(self.viewer, "live_worker", None) is not None:
+            self.logg.info("Stopping live video for the acquisition")
+            self.stop_video()
+            self.ctrl_panel.QPushButton_video.setChecked(False)
+        port, speed, gain = self.ctrl_panel.get_scmos_readout()
+        try:
+            self.set_camera_roi()
+            cam.prepare_recording("internal", port, speed, gain)
+            info = cam.get_recording_info() or {}
+            frame_bytes = 2 * int(info.get("pixels_x") or 2400) * int(info.get("pixels_y") or 2400)
+            # continuous recordings have no known length: BigTIFF so they can exceed 4 GB
+            bigtiff = (not n_frames) or n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES
+            path = os.path.join(self.path, name + ".tif")
+            t0 = time.perf_counter()
+            cam.start_recording(path, n_frames=n_frames or None, bigtiff=bigtiff)
+            if getattr(cam, "data", None) is not None:
+                cam.data.on_update(self.viewer.on_camera_update_from_thread)
+        except Exception as e:
+            self.logg.error(f"Error starting acquisition: {e}")
+            self._release_acquire_button()
+            return
+        self._recording = {"path": path, "n_frames": n_frames, "t0": t0, "info": info, "bigtiff": bigtiff,
+                           "readout": {"port": port, "speed": speed, "gain": gain},
+                           "created": time.strftime("%Y-%m-%d %H:%M:%S")}
+        if n_frames:
+            self._acq_timer.start(200)
+        self.logg.info(f"Acquisition started: {path} "
+                       f"({f'{n_frames} frames' if n_frames else 'until Acquire is released'})")
+
+    def _check_acquisition_done(self):
+        if self._recording is None:
+            self._acq_timer.stop()
+            return
+        try:
+            prog = self.devs.camera.recording_progress()
+        except Exception as e:
+            self.logg.error(f"Acquisition progress: {e}")
+            return
+        if prog.get("done"):
+            self.stop_acquisition()
 
     def stop_acquisition(self):
+        self._acq_timer.stop()
+        rec, self._recording = self._recording, None
+        self._release_acquire_button()
+        if rec is None:
+            return
         try:
-            self.devs.camera.stop_data_acquisition()
+            summary = self.devs.camera.stop_recording() or {}
         except Exception as e:
-            self.logg.error(f"Error stop acquisition: {e}")
+            self.logg.error(f"Error stopping acquisition: {e}")
+            summary = {"error": str(e)}
+        ts = summary.pop("timestamps_perf_s", []) or []
+        nrs = summary.pop("frame_nrs", []) or []
+        meta = {"schema": "minimiao.acquisition/1", "created": rec["created"],
+                "software": {"package": "minimiao", "git_commit": acq._git_commit()},
+                "files": {"stack": os.path.basename(rec["path"]), "bigtiff": rec["bigtiff"]},
+                "frames_requested": rec["n_frames"] or None,
+                "camera": dict(rec["info"], readout=rec["readout"],
+                               **{k: v for k, v in summary.items() if k != "path"}),
+                "frames": {"frame_nrs": nrs, "retrieved_s_from_start": [x - rec["t0"] for x in ts],
+                           "note": "host time each frame was read from the SDK buffer, relative to start"},
+                "context": self._acq_context(), "warnings": []}
+        if summary.get("n_dropped"):
+            meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
+        if summary.get("complete") is False:
+            meta["warnings"].append(f"{summary.get('n_frames')} of {summary.get('n_frames_requested')} frames "
+                                    f"(stopped early)")
+        if summary.get("error"):
+            meta["warnings"].append(f"recorder: {summary['error']}")
+        json_path = os.path.splitext(rec["path"])[0] + ".json"
+        try:
+            acq.write_json(json_path, meta)
+        except Exception as e:
+            self.logg.error(f"Error writing acquisition metadata: {e}")
+        self.logg.info(f"Acquisition saved: {rec['path']} ({summary.get('n_frames')} frames"
+                       f"{', measured %.1f fps' % summary['measured_fps'] if summary.get('measured_fps') else ''}"
+                       f", {summary.get('n_dropped', 0)} dropped)")
 
     @pyqtSlot(str)
     def save_data(self, fd: str):
@@ -905,6 +995,9 @@ class CommandExecutor(QObject):
             return None
         if self.devs.slm is None or self.devs.camera is None:
             self.logg.error("Calibration needs both the SLM and the camera")
+            return None
+        if self._recording is not None:
+            self.logg.error("Acquire is recording; release it first")
             return None
         power = self.ctrl_panel.QDoubleSpinBox_laserpower_473.value()
         laser_was_on = self.ctrl_panel.QPushButton_laser_473.isChecked()

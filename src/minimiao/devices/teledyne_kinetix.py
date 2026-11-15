@@ -55,7 +55,7 @@ class KinetixCamera:
             self.temp_setpoint = -10.0       # target, °C (Kinetix22 nominal: -10 °C air)
 
             # --- Exposure ---
-            self.t_exposure = 10             # ms  (cam.exp_time unit)
+            self.t_exposure = 10.0           # ms (applied with 1 us resolution when the camera supports it)
 
             # --- ROI (in unbinned sensor pixels, 0-indexed) ---
             self.s1 = 0                      # serial (x) start
@@ -91,6 +91,8 @@ class KinetixCamera:
         self.acq_thread = None
         self.recorder = None
         self.trigger_mode = "internal"
+        self._exp_us = False        # exposure resolution in use: True = microseconds, False = milliseconds
+        self._sequence = False      # current recording is a fixed-length sequence
         self._initialize_sdk()
         if self.cam is not None:
             self.get_sn()
@@ -266,16 +268,69 @@ class KinetixCamera:
             except Exception as e:
                 self.logg.error(f"Error setting expose-out mode: {e}")
 
-    def set_exposure_time(self, t_ms=None):
-        """Set exposure time in milliseconds (integer ms; None = use settings value)."""
-        if t_ms is not None:
-            self._settings.t_exposure = t_ms
-        self._settings.t_exposure = max(1, int(round(self._settings.t_exposure)))
+    def _set_exposure_resolution(self):
+        """Use 1 us exposure resolution if the camera accepts it, else 1 ms."""
+        us = getattr(pvc_consts, "EXP_RES_ONE_MICROSEC", 1)
         try:
-            self.cam.exp_time = self._settings.t_exposure
-            self.logg.info(f"Exposure time: {self._settings.t_exposure} ms")
+            self.cam.exp_res = us
+            self._exp_us = True
+        except Exception as e:
+            if self._exp_us or not hasattr(self, "_exp_res_warned"):
+                self.logg.warning(f"Microsecond exposure resolution not available ({e}); using 1 ms steps")
+                self._exp_res_warned = True
+            self._exp_us = False
+
+    def _exposure_units(self):
+        """Exposure in the camera's current resolution units (what exp_time / start_* expect)."""
+        ms = float(self._settings.t_exposure)
+        return max(1, int(round(ms * 1000))) if self._exp_us else max(1, int(round(ms)))
+
+    def set_exposure_time(self, t_ms=None):
+        """Set exposure time in ms (float; None = use settings value). Applied with 1 us
+        resolution when supported, otherwise rounded to whole ms; the applied value is
+        stored back in settings."""
+        if t_ms is not None:
+            self._settings.t_exposure = float(t_ms)
+        self._set_exposure_resolution()
+        units = self._exposure_units()
+        self._settings.t_exposure = units / 1000.0 if self._exp_us else float(units)
+        try:
+            self.cam.exp_time = units
+            self.logg.info(f"Exposure time: {self._settings.t_exposure:g} ms "
+                           f"({'1 us' if self._exp_us else '1 ms'} resolution)")
         except Exception as e:
             self.logg.error(f"Error setting exposure time: {e}")
+
+    def get_readout_options(self):
+        """
+        Readout modes reported by the camera: list of dicts
+        {port, port_name, speed, pixel_time_ns, bit_depth, gain, gain_name}
+        (one entry per port/speed with its first gain). Empty list if unavailable.
+        """
+        options = []
+        try:
+            table = self.cam.port_speed_gain_table
+        except Exception as e:
+            self.logg.warning(f"Readout table not available: {e}")
+            return options
+        try:
+            for port_name, port in table.items():
+                port_value = port.get("port_value")
+                for skey, speed in port.items():
+                    if not isinstance(speed, dict) or "speed_index" not in speed:
+                        continue
+                    gains = [(gname, g.get("gain_index")) for gname, g in speed.items()
+                             if isinstance(g, dict) and "gain_index" in g]
+                    gname, gidx = gains[0] if gains else (None, 1)
+                    options.append({"port": int(port_value), "port_name": str(port_name),
+                                    "speed": int(speed["speed_index"]),
+                                    "pixel_time_ns": speed.get("pixel_time"),
+                                    "bit_depth": speed.get("bit_depth"),
+                                    "gain": int(gidx) if gidx is not None else 1,
+                                    "gain_name": gname})
+        except Exception as e:
+            self.logg.warning(f"Could not parse readout table: {e}")
+        return options
 
     def set_clear_mode(self, mode=pvc_consts.CLEAR_PRE_SEQUENCE):
         try:
@@ -315,7 +370,7 @@ class KinetixCamera:
         self._last_frame_count = -1
         try:
             self.cam.start_live(
-                exp_time=self._settings.t_exposure,
+                exp_time=self._exposure_units(),
                 buffer_frame_count=self._settings.buffer_frame_count,
             )
             self.acq_thread.start()
@@ -370,60 +425,6 @@ class KinetixCamera:
             return self.data.get_last_element()
         return None
 
-    def prepare_data_acquisition(self, port=0, speed=0, gain=1,
-                                 exp_mode=pvc_consts.STROBED_MODE,
-                                 expose_out=pvc_consts.EXPOSE_OUT_ALL_ROWS):
-        """Configure camera for triggered data acquisition."""
-        self.set_readout_port(port)
-        self.set_speed(speed)
-        self.set_gain(gain)
-        self.set_roi()
-        self.set_trigger_mode(exp_mode, expose_out)
-        self.set_exposure_time()
-        self.get_acquisition_timings()
-
-    def start_data_acquisition(self, n, fd, fn):
-        """
-        Start triggered acquisition saving n frames per TIFF stack.
-
-        n  : number of frames per saved stack
-        fd : save directory path
-        fn : file name prefix
-        """
-        self.data = run_threads.CameraDataList(
-            max_length=n, save_to_disk=True, save_dir=fd, file_prefix=fn
-        )
-        self.acq_thread = run_threads.CameraAcquisitionThread(self)
-        self._last_frame_count = -1
-        try:
-            self.cam.start_live(
-                exp_time=self._settings.t_exposure,
-                buffer_frame_count=self._settings.buffer_frame_count,
-            )
-            self.acq_thread.start()
-            self.logg.info("Kinetix data acquisition started")
-        except Exception as e:
-            self.logg.error(f"Error starting data acquisition: {e}")
-
-    def stop_data_acquisition(self):
-        """Abort hardware first, then drain the TIFF-writer queue."""
-        try:
-            self.cam.finish()
-            self.logg.info("Kinetix data acquisition stopped")
-        except Exception as e:
-            self.logg.error(f"Error stopping data acquisition: {e}")
-        if self.acq_thread is not None:
-            self.acq_thread.stop()
-            self.acq_thread = None
-        if self.data is not None:
-            self.data.close()   # flush + join the background TIFF-writer thread
-            self.data = None
-
-    def get_data(self):
-        if self.data is not None:
-            return self.data.get_elements()
-        return None
-
     # ---- lossless single-stack recording ---------------------------------------
 
     TRIGGER_MODES = {"internal": pvc_consts.EXT_TRIG_INTERNAL,
@@ -448,7 +449,8 @@ class KinetixCamera:
 
     def get_recording_info(self):
         """Settings actually applied, for metadata."""
-        info = {"exposure_ms": self._settings.t_exposure, "trigger_mode": self.trigger_mode,
+        info = {"exposure_ms": self._settings.t_exposure, "exposure_resolution": "1 us" if self._exp_us else "1 ms",
+                "trigger_mode": self.trigger_mode,
                 "s1": self._settings.s1, "p1": self._settings.p1,
                 "pixels_x": self._settings.pixels_x, "pixels_y": self._settings.pixels_y,
                 "s_bin": self._settings.s_bin, "p_bin": self._settings.p_bin,
@@ -476,26 +478,64 @@ class KinetixCamera:
             return None
         return frame_dict['pixel_data'], frame_count
 
-    def start_recording(self, path, buffer_mb=512, bigtiff=False, preview=None):
-        """Start acquisition and stream every frame into one TIFF at `path`."""
-        frame_bytes = max(1, self._settings.pixels_x * self._settings.pixels_y * 2)
-        self._settings.buffer_frame_count = int(min(1024, max(16, buffer_mb * 2 ** 20 // frame_bytes)))
-        self.recorder = run_threads.StackRecorder(self._poll_one, path, bigtiff=bigtiff, preview=preview)
-        self.cam.start_live(exp_time=self._settings.t_exposure,
-                            buffer_frame_count=self._settings.buffer_frame_count)
-        self.recorder.start()
-        self.logg.info(f"Recording to {path} (buffer {self._settings.buffer_frame_count} frames)")
+    MAX_SEQUENCE_BYTES = 8 * 2 ** 30  # PVCAM holds a whole sequence in RAM
 
-    def stop_recording(self):
-        """Drain remaining frames, stop the camera, close the TIFF; returns the recording summary."""
+    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False, preview=None):
+        """
+        Record into one TIFF at `path`.
+        n_frames > 0: fixed-length sequence (start_seq). PVCAM buffers all n frames, so a
+                      slow reader delays frames but cannot lose them; stops by itself.
+        n_frames None/0: continuous (start_live, ring buffer of up to 1024 frames) until stop.
+        """
+        frame_bytes = max(1, self._settings.pixels_x * self._settings.pixels_y * 2)
+        units = self._exposure_units()
+        if n_frames:
+            n_frames = int(n_frames)
+            if n_frames * frame_bytes > self.MAX_SEQUENCE_BYTES:
+                raise ValueError(f"Sequence of {n_frames} frames needs {n_frames * frame_bytes / 2 ** 30:.1f} GB "
+                                 f"of camera buffer (limit {self.MAX_SEQUENCE_BYTES / 2 ** 30:.0f} GB); "
+                                 f"use fewer frames, a smaller ROI, or continuous recording")
+            self.recorder = run_threads.StackRecorder(self._poll_one, path, bigtiff=bigtiff, preview=preview,
+                                                      max_frames=n_frames)
+            self._sequence = True
+            self.cam.start_seq(exp_time=units, num_frames=n_frames)
+            mode = f"sequence of {n_frames} frames"
+        else:
+            self._settings.buffer_frame_count = int(min(1024, max(16, buffer_mb * 2 ** 20 // frame_bytes)))
+            self.recorder = run_threads.StackRecorder(self._poll_one, path, bigtiff=bigtiff, preview=preview)
+            self._sequence = False
+            self.cam.start_live(exp_time=units, buffer_frame_count=self._settings.buffer_frame_count)
+            mode = f"continuous, buffer {self._settings.buffer_frame_count} frames"
+        self.recorder.start()
+        self.logg.info(f"Recording to {path} ({mode})")
+
+    def recording_progress(self):
+        """{'n_frames': frames received so far, 'done': fixed-length sequence complete}"""
+        if self.recorder is None:
+            return {"n_frames": 0, "done": True, "active": False}
+        return {"n_frames": self.recorder.n_frames, "done": self.recorder.is_done(), "active": True}
+
+    def stop_recording(self, wait_s=0.0):
+        """
+        Stop recording and close the TIFF; returns the recording summary.
+        wait_s: for a sequence, wait up to this long for the remaining frames first.
+        """
         if self.recorder is None:
             return None
+        if self._sequence and wait_s and wait_s > 0:
+            if not self.recorder.wait_done(wait_s):
+                self.logg.warning(f"Sequence incomplete after waiting {wait_s:.1f} s: "
+                                  f"{self.recorder.n_frames}/{self.recorder.max_frames} frames")
         summary = self.recorder.stop()
         self.recorder = None
         try:
             self.cam.finish()
         except Exception as e:
             self.logg.error(f"Error stopping recording: {e}")
-        summary["buffer_frame_count"] = self._settings.buffer_frame_count
-        self.logg.info(f"Recording stopped: {summary['n_frames']} frames, {summary['n_dropped']} dropped")
+        summary["mode"] = "sequence" if self._sequence else "continuous"
+        summary["buffer_frame_count"] = None if self._sequence else self._settings.buffer_frame_count
+        self._sequence = False
+        self.logg.info(f"Recording stopped: {summary['n_frames']} frames"
+                       + (f" of {summary['n_frames_requested']}" if summary.get("n_frames_requested") else "")
+                       + f", {summary['n_dropped']} dropped")
         return summary

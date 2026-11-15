@@ -325,15 +325,20 @@ class StackRecorder:
 
     stop(): keeps draining until the stream is idle (external trigger) or
     `drain_s` has passed (free-running), then returns a summary dict.
+
+    max_frames: fixed-length recording (camera sequence mode). The poller stops by
+    itself after max_frames frames; wait_done() blocks until then.
     """
 
-    def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3):
+    def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None):
         self.poll = poll
         self.path = str(path)
         self.bigtiff = bigtiff
         self.preview = preview
         self.preview_period = 1.0 / preview_hz if preview_hz else None
         self.drain_s = drain_s
+        self.max_frames = max_frames
+        self._done = threading.Event()
         self._queue = Queue()
         self._stop = threading.Event()
         self._t_stop = None
@@ -368,6 +373,8 @@ class StackRecorder:
                 self.timestamps.append(t)
                 self._queue.put(frame)
                 self.max_backlog = max(self.max_backlog, self._queue.qsize())
+                if self.max_frames and len(self.frame_nrs) >= self.max_frames:
+                    break  # fixed-length recording complete
                 if self.preview is not None and self.preview_period and t - last_preview >= self.preview_period:
                     last_preview = t
                     try:
@@ -377,6 +384,7 @@ class StackRecorder:
         except Exception as e:
             self.error = f"poll: {e}"
         finally:
+            self._done.set()
             self._queue.put(None)
 
     def _write_loop(self):
@@ -394,6 +402,17 @@ class StackRecorder:
             while self._queue.get() is not None:  # keep draining so the poller never blocks
                 pass
 
+    @property
+    def n_frames(self):
+        return len(self.frame_nrs)
+
+    def is_done(self):
+        return self._done.is_set()
+
+    def wait_done(self, timeout=None) -> bool:
+        """Block until the poller has finished (max_frames reached or stopped)."""
+        return self._done.wait(timeout)
+
     def stop(self, timeout=60.0):
         import time
         self._t_stop = time.perf_counter()
@@ -409,6 +428,8 @@ class StackRecorder:
         return {
             "path": self.path,
             "n_frames": len(self.frame_nrs),
+            "n_frames_requested": self.max_frames,
+            "complete": None if not self.max_frames else len(self.frame_nrs) >= self.max_frames,
             "frame_shape": list(self.shape) if self.shape is not None else None,
             "dtype": str(self.dtype) if self.dtype is not None else None,
             "frame_nrs": self.frame_nrs,

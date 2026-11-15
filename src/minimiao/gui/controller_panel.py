@@ -61,10 +61,14 @@ class ControlPanel(QWidget):
         self.QSpinBox_scmos_coordinate_nx = cw.SpinBoxWidget(0, 2400, 1, 2400)
         self.QSpinBox_scmos_coordinate_ny = cw.SpinBoxWidget(0, 2400, 1, 2400)
         self.QSpinBox_scmos_coordinate_bin = cw.SpinBoxWidget(0, 512, 1, 1)
-        self.QDoubleSpinBox_scmos_t_exposure = cw.DoubleSpinBoxWidget(0, 1000, 1, 3, 20)
+        # ms with 0.001 ms (1 us) steps; applied with 1 us resolution when the camera supports it
+        self.QDoubleSpinBox_scmos_t_exposure = cw.DoubleSpinBoxWidget(0.001, 10000, 0.1, 3, 20)
+        self.QComboBox_scmos_readout = cw.ComboBoxWidget(list_items=[], maxlen=400)
+        self.set_readout_options([])
         self.QLCDNumber_scmos_frame_rate = cw.LCDNumberWidget(25, 4)
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
-        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(1, 999, 1, 1)
+        # 0 = record until Acquire is clicked off; N > 0 = exactly N frames (camera sequence mode)
+        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(0, 10000000, 100, 0)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
 
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Kinetix Camera')))
@@ -75,9 +79,10 @@ class ControlPanel(QWidget):
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Ny')), self.QSpinBox_scmos_coordinate_ny)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Bin')), self.QSpinBox_scmos_coordinate_bin)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Exposure / ms')), self.QDoubleSpinBox_scmos_t_exposure)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Readout')), self.QComboBox_scmos_readout)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_scmos_frame_rate)
         scmos_scroll_layout.addRow(self.QPushButton_video)
-        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frames')), self.QSpinBox_acquisition_number)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frames (0 = until stop)')), self.QSpinBox_acquisition_number)
         scmos_scroll_layout.addRow(self.QPushButton_acquire)
 
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
@@ -184,6 +189,33 @@ class ControlPanel(QWidget):
 
     def get_scmos_exposure(self):
         return self.QDoubleSpinBox_scmos_t_exposure.value()
+
+    DEFAULT_READOUT = (1, 0, 1)  # port, speed, gain: what live/recording used before the selector existed
+
+    def set_readout_options(self, options):
+        """Fill the readout selector from the camera's port/speed/gain table
+        (list of dicts from KinetixCamera.get_readout_options); keeps a default entry if empty."""
+        combo = self.QComboBox_scmos_readout
+        combo.clear()
+        if not options:
+            p, sp, g = self.DEFAULT_READOUT
+            combo.addItem(f"Port {p} / Speed {sp} / Gain {g} (default)", (p, sp, g))
+            return
+        default_idx = 0
+        for i, o in enumerate(options):
+            bits = f", {o['bit_depth']}-bit" if o.get("bit_depth") else ""
+            pix = f", {o['pixel_time_ns']} ns/px" if o.get("pixel_time_ns") else ""
+            gain = f", gain {o.get('gain_name') or o['gain']}"
+            combo.addItem(f"{o.get('port_name', 'Port ' + str(o['port']))} / speed {o['speed']}{bits}{pix}{gain}",
+                          (o["port"], o["speed"], o["gain"]))
+            if (o["port"], o["speed"]) == self.DEFAULT_READOUT[:2]:
+                default_idx = i
+        combo.setCurrentIndex(default_idx)
+
+    def get_scmos_readout(self):
+        """(port, speed, gain) indices of the selected readout mode."""
+        data = self.QComboBox_scmos_readout.currentData()
+        return tuple(data) if data else self.DEFAULT_READOUT
 
     def display_scmos_timings(self, exposure_time=None, kinetic_time=None):
         if exposure_time is not None:

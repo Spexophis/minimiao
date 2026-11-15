@@ -109,16 +109,6 @@ def _camera_worker(cmd_queue, result_queue, frame_queue):
             except Exception as e:
                 result_queue.put(('error', str(e), _snap(cam)))
 
-        elif cmd == 'start_data_acquisition':
-            n, fd, fn = args
-            try:
-                cam.start_data_acquisition(n, fd, fn)
-                if cam.data is not None:
-                    cam.data.on_update(_fwd)
-                result_queue.put(('ok', None, _snap(cam)))
-            except Exception as e:
-                result_queue.put(('error', str(e), _snap(cam)))
-
         else:
             try:
                 result = getattr(cam, cmd)(*args, **kwargs)
@@ -334,33 +324,23 @@ class KinetixCameraProxy:
         except Exception as e:
             self.logg.error(f"Camera stop_live: {e}")
 
-    def start_data_acquisition(self, n, fd, fn):
-        self.data = _ProxyData()
-        self._cmd_q.put(('start_data_acquisition', (n, fd, fn), {}))
-        status, val, settings = self._recv()
-        self._apply(settings)
-        if status == 'error':
-            raise RuntimeError(f"Camera.start_data_acquisition failed: {val}")
-        self._start_frames()
-
-    def stop_data_acquisition(self):
-        self._stop_frames()
-        self.data = None
-        try:
-            self._call('stop_data_acquisition')
-        except Exception as e:
-            self.logg.error(f"Camera stop_data_acquisition: {e}")
-
     def prepare_recording(self, trigger="internal", port=1, speed=0, gain=1, expose_out=0):
         self._call('prepare_recording', trigger, port, speed, gain, expose_out)
 
     def get_recording_info(self):
         return self._call('get_recording_info')
 
-    def start_recording(self, path, buffer_mb=512, bigtiff=False):
-        """Frames are written to `path` inside the camera process; ~10 Hz preview reaches self.data."""
+    def get_readout_options(self):
+        return self._call('get_readout_options')
+
+    def recording_progress(self):
+        return self._call('recording_progress')
+
+    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False):
+        """Frames are written to `path` inside the camera process; ~10 Hz preview reaches self.data.
+        n_frames > 0: fixed-length sequence; otherwise continuous until stop_recording()."""
         self.data = _ProxyData()
-        self._cmd_q.put(('start_recording', (path, buffer_mb, bigtiff), {}))
+        self._cmd_q.put(('start_recording', (path, n_frames, buffer_mb, bigtiff), {}))
         status, val, settings = self._recv()
         self._apply(settings)
         if status == 'error':
@@ -368,12 +348,13 @@ class KinetixCameraProxy:
             raise RuntimeError(f"Camera.start_recording failed: {val}")
         self._start_frames()
 
-    def stop_recording(self, timeout=300):
-        """Returns the recording summary; waits for the TIFF writer to flush."""
+    def stop_recording(self, wait_s=0.0, timeout=300):
+        """Returns the recording summary; waits up to wait_s for an unfinished sequence,
+        then for the TIFF writer to flush."""
         self._stop_frames()
         self.data = None
-        self._cmd_q.put(('stop_recording', (), {}))
-        status, val, settings = self._recv(timeout=timeout)
+        self._cmd_q.put(('stop_recording', (wait_s,), {}))
+        status, val, settings = self._recv(timeout=timeout + wait_s)
         self._apply(settings)
         if status == 'error':
             raise RuntimeError(f"Camera.stop_recording failed: {val}")
@@ -382,6 +363,3 @@ class KinetixCameraProxy:
     def get_last_image(self):
         return self.data.get_last_element() if self.data is not None else None
 
-    def get_data(self):
-        return self.data.get_elements() if self.data is not None else None
-    
