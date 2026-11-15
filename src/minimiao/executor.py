@@ -879,6 +879,18 @@ class CommandExecutor(QObject):
             raise RuntimeError("No camera frames; is live video running?")
         return np.mean(frames, axis=0)
 
+    def _show_calib_outcome(self, title, text):
+        """Non-blocking message box with a calibration's outcome (also logged)."""
+        from PyQt6.QtWidgets import QMessageBox
+        self.logg.info(f"{title}: {text}")
+        box = QMessageBox(self.vw)
+        box.setWindowTitle(title)
+        box.setText(text)
+        box.setIcon(QMessageBox.Icon.Information)
+        box.setModal(False)
+        box.show()
+        self._calib_msg = box  # keep a reference while it is open
+
     def _calib_dialog(self, title):
         """Calibration progress dialog; Esc aborts (checked between SLM slots / frames)."""
         self._calib_abort.clear()
@@ -1199,21 +1211,36 @@ class CommandExecutor(QObject):
             if not laser_was_on:
                 self.set_laser(["473"], False, power)
             p = result["params"]
+            fmt = lambda q: f"m = {q['magnification']:.5f}, center = ({q['center_x']:.1f}, {q['center_y']:.1f})"
             if p is None:
                 check = result.get("check")
-                why = ("optics have " + ", ".join(check["problems"]) + "; use affine calibration"
-                       if check and not check["simple_model_ok"]
-                       else "aborted" if self._calib_abort.is_set() else "failed (see log)")
+                if check and not check["simple_model_ok"]:
+                    why = ("the optics have " + ", ".join(check["problems"])
+                           + "; magnification/center cannot describe that, use the affine calibration")
+                elif self._calib_abort.is_set():
+                    why = "aborted"
+                else:
+                    why = f"failed: {result.get('error', 'see log')}"
                 self.hg_panel.set_calibration_status(f"Mag/center: not changed, {why}")
+                self._show_calib_outcome("Auto Mag/Center: values NOT changed",
+                                         f"{why}\n\nValues kept: {fmt(params)}")
                 return
-            self.hg_panel.set_simple_mapping(p["magnification"], p["center_x"], p["center_y"])
-            last = result["record"]["iterations"][-1]
-            state = (f"converged, landing error rms {last['rms_error_px']:.2f} px" if result["converged"]
-                     else f"not verified after {len(result['record']['iterations'])} iterations "
-                          f"(last error rms {last['rms_error_px']:.2f} px); run again")
-            self.hg_panel.set_calibration_status(
-                f"Mag/center: m={p['magnification']:.5f}, c=({p['center_x']:.1f}, {p['center_y']:.1f}) {state}",
-                use=False)
+            its = result["record"]["iterations"]
+            last = its[-1]
+            if result["converged"] and len(its) == 1:
+                # first measurement already within tolerance: the start values are kept
+                msg = (f"Already within tolerance (landing error rms {last['rms_error_px']:.2f} px <= "
+                       f"{tol:g} px); values unchanged: {fmt(p)}")
+                self.hg_panel.set_calibration_status(f"Mag/center: {msg}", use=False)
+                self._show_calib_outcome("Auto Mag/Center: values unchanged", msg)
+            else:
+                self.hg_panel.set_simple_mapping(p["magnification"], p["center_x"], p["center_y"])
+                state = (f"converged, landing error rms {last['rms_error_px']:.2f} px" if result["converged"]
+                         else f"NOT verified after {len(its)} iterations (last error rms "
+                              f"{last['rms_error_px']:.2f} px); run again to verify")
+                self.hg_panel.set_calibration_status(f"Mag/center: {fmt(p)} {state}", use=False)
+                self._show_calib_outcome("Auto Mag/Center: values updated",
+                                         f"Old: {fmt(params)}\nNew: {fmt(p)}\n\n{state}")
             if result["mp"] is not None:
                 self.viewer.set_graph_image(result["mp"])
                 ok = np.all(np.isfinite(result["landed"]), axis=1)
