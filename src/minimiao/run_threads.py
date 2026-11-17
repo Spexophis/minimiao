@@ -66,6 +66,9 @@ class CameraDataList:
         self.callback = None
         self._lock = threading.Lock()
 
+        self._count = 0
+        self._new_frames = threading.Condition(self._lock)
+
         # ---------- disk saving ----------
         self.save_dir = Path(save_dir) if save_dir is not None else None
         self.file_prefix = file_prefix
@@ -85,7 +88,28 @@ class CameraDataList:
             self._save_thread = threading.Thread(target=self._save_worker, daemon=True)
             self._save_thread.start()
 
-    def add_element(self, elements, ids=None):
+    def frame_count(self):
+        """Total number of frames added since this list was created."""
+        with self._lock:
+            return self._count
+
+    def wait_for_new_element(self, after_count, timeout=None):
+        """
+        Block until more than after_count frames have been added in total (after_count from frame_count(), read
+        before firing the trigger), or until timeout seconds have passed.
+        Returns (frame, n_new): a copy of the first frame added after after_count, and how many frames arrived
+        since; (None, 0) on timeout. Rolling-buffer (save_to_disk=False) lists only.
+        """
+        if self.save_to_disk:
+            raise RuntimeError("wait_for_new_element needs a rolling buffer (save_to_disk=False)")
+        with self._new_frames:
+            if not self._new_frames.wait_for(lambda: self._count > after_count, timeout=timeout):
+                return None, 0
+            n_new = self._count - after_count
+            k = min(n_new, len(self.data_list))  # the first new frame is n_new-th from the end
+            return np.array(self.data_list[-k], copy=True), n_new
+
+    def add_element(self, elements, ids=None, frame_ids=None):
         """
         elements: iterable of ndarray images
         ids: optional tuple like (start_id, end_id)
@@ -94,7 +118,11 @@ class CameraDataList:
         if len(elements) == 0:
             return
 
-        if ids is not None:
+        if frame_ids is not None:
+            frame_ids = list(frame_ids)
+            if len(frame_ids) != len(elements):
+                raise ValueError("Number of frame_ids does not match number of elements")
+        elif ids is not None:
             frame_ids = list(range(ids[0], ids[1] + 1))
             if len(frame_ids) != len(elements):
                 raise ValueError("Number of ids does not match number of elements")
@@ -116,12 +144,15 @@ class CameraDataList:
         """
         Original rolling-buffer behavior when save_to_disk=False.
         """
-        with self._lock:
+        with self._new_frames:
             self.data_list.extend(elements)
 
             valid_ids = [i for i in frame_ids if i is not None]
             if valid_ids:
                 self.ind_list.extend(valid_ids)
+
+            self._count += len(elements)
+            self._new_frames.notify_all()
 
     def _add_element_saving_mode(self, elements, frame_ids):
         """
@@ -145,6 +176,7 @@ class CameraDataList:
                 self.data_list.extend(elements[current_pos:current_pos + n_take])
                 self.ind_list.extend(frame_ids[current_pos:current_pos + n_take])
 
+                self._count += n_take
                 current_pos += n_take
 
                 # If full, hand off the lists and reset — heavy numpy work done outside lock
@@ -184,7 +216,8 @@ class CameraDataList:
                 file_name = f"{self.file_prefix}_{stack_index:06d}.tiff"
 
             file_path = self.save_dir / file_name
-            tf.imwrite(file_path, stack)
+            metadata = {"frame_ids": [int(i) for i in valid_ids]} if valid_ids else {}
+            tf.imwrite(file_path, stack, metadata=metadata)
 
             self._save_queue.task_done()
 
@@ -282,9 +315,9 @@ class DPCWorker(QThread):
         self._running = True
         self._latest = None
 
-    def stop(self):
+    def stop(self, timeout_ms=5000):
         self._running = False
-        self.wait(2)
+        return self.wait(timeout_ms)
 
     def push_frame(self, dpc_image: np.ndarray):
         if dpc_image is None or dpc_image.ndim != 2:
@@ -488,13 +521,13 @@ class DPCCameraDataList:
             valid_ids = [i for i in stack_ids if i is not None]
 
             if valid_ids:
-                suffix = (f"_{stack_index:06d}"
-                          f"_ids_{valid_ids[0]}_{valid_ids[-1]}")
+                base = f"{self.file_prefix}_{stack_index:06d}_ids_{valid_ids[0]}_{valid_ids[-1]}"
             else:
-                suffix = f"_{stack_index:06d}"
+                base = f"{self.file_prefix}_{stack_index:06d}"
+            metadata = {"frame_ids": [int(i) for i in valid_ids]} if valid_ids else {}
 
-            tf.imwrite(self.save_dir / f"{self.file_prefix}_dpc{suffix}.tiff", dpc_stack)
-            tf.imwrite(self.save_dir / f"{self.file_prefix}_raw{suffix}.tiff", raw_stack)
+            tf.imwrite(self.save_dir / f"{base}.tiff", raw_stack, metadata=metadata)
+            tf.imwrite(self.save_dir / f"{base}_dpc.tiff", dpc_stack, metadata=metadata)
 
             self._save_queue.task_done()
 

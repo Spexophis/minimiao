@@ -118,14 +118,14 @@ class CommandExecutor(QObject):
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         try:
-            self.devs.retard.set_fast_switching(0, False)
-            self.devs.retard.set_output_mode(0, "v1")
-            time.sleep(0.2)
-            self.devs.retard.set_analog_in(0, True)
-            time.sleep(0.2)
-            self.devs.retard.set_output(0, True)
-            time.sleep(0.2)
-            self.devs.daq.set_retarder_phase([1.85, 0.])
+            # self.devs.retard.set_fast_switching(0, False)
+            # self.devs.retard.set_output_mode(0, "v1")
+            # time.sleep(0.2)
+            # self.devs.retard.set_analog_in(0, True)
+            # time.sleep(0.2)
+            # self.devs.retard.set_output(0, True)
+            # time.sleep(0.2)
+            self.devs.daq.set_retarder_phase([0., 0.])
         except Exception as e:
             self.logg.error(f"Initial setup Error: {e}")
         self.logg.info("Finish setting up controllers")
@@ -435,6 +435,10 @@ class CommandExecutor(QObject):
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 0, False)
             elif "10msoff" in self.slm_seq:
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 1, False)
+            elif "20msoff" in self.slm_seq:
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 2, False)
+            elif "1msoff" in self.slm_seq:
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(1, phs, 3, False)
             else:
                 raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
         else:
@@ -442,8 +446,8 @@ class CommandExecutor(QObject):
         self.prepare_camera()
         self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
         self.ctrl_panel.display_emccd_timings(exposure_time=self.trg.exposure_time, kinetic_time=self.trg.cycle_time)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                     analog_sequences=atr, analog_channels=ach,
+        self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=chs,
+                                     analog_sequences_dev1=atr, analog_channels_dev1=ach,
                                      finite=False, trg=False)
         self.viewer.plot_trace(dtr[0])
         for i in range(dtr.shape[0] - 1):
@@ -561,7 +565,7 @@ class CommandExecutor(QObject):
 
     def write_dpc_illumination(self, t_readout):
         dpc_seqs = self.devs.led.dpc_sequences(1, 255, self.devs.dpc_cam.t_exposure, t_readout)
-        self.devs.daq.write_dpc_sequences(dpc_seqs, finite=False)
+        self.devs.daq.write_triggers(digital_sequences_dev2=dpc_seqs, finite=False)
 
     def start_dpc_worker(self):
         if getattr(self.viewer, "dpc_worker", None) is None:
@@ -571,8 +575,14 @@ class CommandExecutor(QObject):
         self.devs.dpc_cam.data.on_update(self.viewer.dpc_worker.push_frame)
 
     def stop_dpc_worker(self):
-        if getattr(self.viewer, "dpc_worker", None) is not None:
-            self.viewer.dpc_worker.stop()
+        w = getattr(self.viewer, "dpc_worker", None)
+        if w is not None:
+            if self.devs.dpc_cam.data is not None:
+                self.devs.dpc_cam.data.on_update(None)
+            if not w.stop():
+                self.logg.error("DPC display worker did not stop in time")
+                w.finished.connect(w.deleteLater)
+                self._stopping_dpc_worker = w
             self.viewer.dpc_worker = None
 
     def prepare_dpc(self):
@@ -584,7 +594,7 @@ class CommandExecutor(QObject):
         try:
             self.start_dpc_worker()
             self.devs.dpc_cam.start_live()
-            self.devs.daq.run_dpc_sequences()
+            self.devs.daq.run_triggers()
             self.logg.info("DPC live started")
         except Exception as e:
             self.logg.error(f"Error starting DPC: {e}")
@@ -592,14 +602,14 @@ class CommandExecutor(QObject):
 
     def dpc_off(self):
         dpc_seqs = self.devs.led.led_ring()
-        self.devs.daq.write_dpc_sequences(dpc_seqs, [0], finite=True)
-        self.devs.daq.run_dpc_sequences()
+        self.devs.daq.write_triggers(digital_sequences_dev2=dpc_seqs, digital_channels_dev2=[0], finite=True)
+        self.devs.daq.run_triggers()
         time.sleep(0.1)
-        self.devs.daq.stop_dpc_sequences()
+        self.devs.daq.stop_triggers()
 
     def stop_dpc(self):
         try:
-            self.devs.daq.stop_dpc_sequences()
+            self.devs.daq.stop_triggers()
             self.dpc_off()
             self.devs.dpc_cam.stop_live()
             self.stop_dpc_worker()
@@ -613,11 +623,18 @@ class CommandExecutor(QObject):
             fn = self.vw.get_file_dialog()
             tim = time.strftime("%Y%m%d%H%M%S")
             if fn is not None:
-                file_name = tim + "_DPC_" + fn
+                folder_name = self.path + "/" + tim + "_DPC_" + fn
+                fn = "DPC_" + fn
             else:
-                file_name = tim + "_DPC"
+                folder_name = self.path + "/" + tim + "_DPC"
+                fn = "DPC"
+            if not os.path.exists(folder_name):
+                os.makedirs(folder_name)
+                self.logg.info(f"Created folder: {folder_name}")
+            else:
+                self.logg.info(f"Folder already exists: {folder_name}")
             try:
-                self.prepare_dpc_acquisition(file_name, acq_num)
+                self.prepare_dpc_acquisition(folder_name, fn, acq_num)
             except Exception as e:
                 self.logg.error(f"Error preparing DPC acquisition: {e}")
                 self.stop_dpc_acquisition()
@@ -626,16 +643,16 @@ class CommandExecutor(QObject):
         else:
             self.stop_dpc_acquisition()
 
-    def prepare_dpc_acquisition(self, labl: str, acq_num: int):
+    def prepare_dpc_acquisition(self, fdn: str, labl: str, acq_num: int):
         t_readout = self.setup_dpc_camera()
-        self.devs.dpc_cam.prepare_data_acquisition(n=acq_num, fd=self.path, fn=labl)
+        self.devs.dpc_cam.prepare_data_acquisition(n=acq_num, fd=fdn, fn=labl)
         self.write_dpc_illumination(t_readout)
 
     def start_dpc_acquisition(self):
         try:
             self.start_dpc_worker()
             self.devs.dpc_cam.start_data_acquisition()
-            self.devs.daq.run_dpc_sequences()
+            self.devs.daq.run_triggers()
             self.logg.info("DPC acquisition started")
         except Exception as e:
             self.logg.error(f"Error starting DPC acquisition: {e}")
@@ -643,7 +660,7 @@ class CommandExecutor(QObject):
 
     def stop_dpc_acquisition(self):
         try:
-            self.devs.daq.stop_dpc_sequences()
+            self.devs.daq.stop_triggers()
             self.dpc_off()
             self.devs.dpc_cam.stop_data_acquisition()
             self.stop_dpc_worker()
@@ -714,30 +731,34 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_WideField":
             dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
-            self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
-                                         analog_sequences=np.tile(atr, aqn), analog_channels=ach,
+            self.devs.daq.write_triggers(digital_sequences_dev1=np.tile(dtr, aqn), digital_channels_dev1=chs,
+                                         analog_sequences_dev1=np.tile(atr, aqn), analog_channels_dev1=ach,
                                          finite=False, trg=False)
             pos = aqn
         elif aqm == "3D_WideField":
-            dtr, dchs, atr, achs, pos = self.trg.generate_widefield_scan(aqn)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
-                                         analog_sequences=atr, analog_channels=achs,
+            dtr, dchs, atr, achs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
+            self.devs.daq.set_piezo_position([self.trg.piezo_scan_positions[2][0]], [2])
+            self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=dchs,
+                                         analog_sequences_dev1=atr, analog_channels_dev1=achs,
+                                         analog_sequences_dev2=ptr, analog_channels_dev2=pchs,
                                          finite=False, trg=False)
             pos = pos * aqn
         elif aqm == "2D_WideField_Timelapse":
             dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
-            self.devs.daq.write_triggers(digital_sequences=np.tile(dtr, aqn), digital_channels=chs,
-                                         analog_sequences=np.tile(atr, aqn), analog_channels=ach,
+            self.devs.daq.write_triggers(digital_sequences_dev1=np.tile(dtr, aqn), digital_channels_dev1=chs,
+                                         analog_sequences_dev1=np.tile(atr, aqn), analog_channels_dev1=ach,
                                          finite=False, trg=True)
             pos = aqn
         elif aqm == "3D_WideField_Timelapse":
-            dtr, dchs, atr, achs, pos = self.trg.generate_widefield_scan(aqn)
+            dtr, dchs, atr, achs, ptr, pchs, pos = self.trg.generate_widefield_scan(aqn)
+            self.devs.daq.set_piezo_position([self.trg.piezo_scan_positions[2][0]], [2])
             rt = self.ctrl_panel.get_acquisition_interval()
             self.devs.daq.set_trigger_counter(delay=rt)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=dchs,
-                                         analog_sequences=atr, analog_channels=achs,
+            self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=dchs,
+                                         analog_sequences_dev1=atr, analog_channels_dev1=achs,
+                                         analog_sequences_dev2=ptr, analog_channels_dev2=pchs,
                                          finite=False, trg=True)
             pos = pos * aqn
         else:
@@ -786,18 +807,22 @@ class CommandExecutor(QObject):
                                           frame_rate=self.devs.img_cam.fps)
         if aqm == "2D_SIM":
             dtr, chs, atr, ach = self.trg.generate_sim_triggers(ang, phs, rot)
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                         analog_sequences=atr, analog_channels=ach,
+            self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=chs,
+                                         analog_sequences_dev1=atr, analog_channels_dev1=ach,
                                          finite=True, trg=False)
         elif aqm == "2D_NLSIM":
             if "2msoff" in self.slm_seq:
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 0, True)
             elif "10msoff" in self.slm_seq:
                 dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 1, True)
+            elif "20msoff" in self.slm_seq:
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 2, True)
+            elif "1msoff" in self.slm_seq:
+                dtr, chs, atr, ach = self.trg.generate_nlsim_triggers(ang, phs, 3, True)
             else:
                 raise Exception(f"Invalid SLM sequence: {self.slm_seq}")
-            self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                         analog_sequences=atr, analog_channels=ach,
+            self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=chs,
+                                         analog_sequences_dev1=atr, analog_channels_dev1=ach,
                                          finite=True, trg=False)
         # elif aqm == "2D_SIM_Timelapse":
         #     dtr, chs = self.trg.generate_sim_triggers(1, phs, False)
@@ -888,23 +913,47 @@ class CommandExecutor(QObject):
         slm_total, slm_end, slm_on = self.devs.slm.select_order(self.devs.slm.ord_dict[self.slm_seq])
         self.trg.update_slm_parameters(total_time=slm_total, on_time=slm_on, end_time=slm_end)
         self.set_camera_roi()
-        self.devs.img_cam.t_exposure = slm_on
-        self.devs.img_cam.prepare_live()
+        self.devs.img_cam.t_exposure = slm_on + 5e-6
+        interval_t, transfer_t = self.ctrl_panel.get_camera_times()
         self.trg.update_camera_parameters(initial_time=self.devs.img_cam.t_clean,
                                           exposure_time=self.devs.img_cam.t_exposure,
                                           standby_time=self.devs.img_cam.t_readout,
-                                          frame_rate=self.devs.img_cam.fps)
+                                          frame_rate=self.devs.img_cam.fps,
+                                          interval_time=interval_t, transfer_time=transfer_t)
         dtr, chs, atr, ach = self.trg.generate_digital_triggers(self.lasers, 0)
-        self.devs.daq.write_triggers(digital_sequences=dtr, digital_channels=chs,
-                                     analog_sequences=atr, analog_channels=ach,
-                                     finite=single, trg=False)
         self.prepare_camera()
+        self.viewer.switch_camera(self.devs.img_cam.pixels_y, self.devs.img_cam.pixels_x)
+        self.devs.daq.write_triggers(digital_sequences_dev1=dtr, digital_channels_dev1=chs,
+                                     analog_sequences_dev1=atr, analog_channels_dev1=ach,
+                                     finite=single, trg=False)
+
+    def trigger_and_capture(self, timeout=None):
+        """
+        Fire one trigger sequence (prepare_task() writes a finite one-frame sequence) and return the frame the
+        camera takes for it: the frame count is read before the trigger, and the first frame added after it is
+        returned, so an image that was already in the buffer is never returned. None if no new frame arrives
+        within timeout (default 1 s plus two trigger cycles).
+        """
+        data = getattr(self.devs.img_cam, "data", None)
+        if data is None:
+            raise RuntimeError("The camera is not acquiring; start it with img_cam.start_live() first")
+        if timeout is None:
+            timeout = 1.0 + 2 * self.trg.cycle_time
+        n0 = data.frame_count()
+        self.devs.daq.run_triggers()  # finite sequence: returns once all triggers have been output
+        frame, n_new = data.wait_for_new_element(n0, timeout=timeout)
+        if frame is None:
+            self.logg.error(f"No new camera frame within {timeout:.2f} s after the trigger")
+            return None
+        if n_new > 1:
+            self.logg.warning(f"{n_new} frames arrived after one trigger; using the first one")
+        return frame
 
     def finish_task(self):
         try:
             self.devs.daq.stop_triggers()
             time.sleep(0.04)
-            # self.devs.img_cam.stop_snap()
+            self.devs.img_cam.stop_live()
             self.devs.slm.deactivate()
             self.lasers_off()
             self.logg.info("Focus Finding Finish")
@@ -922,21 +971,15 @@ class CommandExecutor(QObject):
             # data_calib = []
             self.devs.slm.activate()
             # self.devs.cam_set[self.cameras["focus_lock"]].start_live()
+            self.devs.img_cam.start_live()
+            self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.devs.piezo.move_position(2, zps[0])
-            time.sleep(0.06)
-            self.devs.img_cam.start_snap()
-            self.devs.daq.run_triggers()
-            time.sleep(0.04)
-            temp = self.devs.img_cam.get_last_snap()
-            self.devs.img_cam.stop_snap()
+            time.sleep(2.0)
+            self.trigger_and_capture()
             for i, z in enumerate(zps):
                 self.devs.piezo.move_position(2, z)
                 time.sleep(0.06)
-                self.devs.img_cam.start_snap()
-                self.devs.daq.run_triggers()
-                time.sleep(0.06)
-                temp = self.devs.img_cam.get_last_snap()
-                self.devs.img_cam.stop_snap()
+                temp = self.trigger_and_capture()
                 if temp is not None:
                     data.append(temp)
                 # data_calib.append(self.devs.cam_set[self.cameras["focus_lock"]].get_last_image())
@@ -1179,11 +1222,7 @@ class CommandExecutor(QObject):
         for amp in amps:
             self.devs.dfm.set_dpp(amp)
             time.sleep(0.04)
-            self.devs.img_cam.start_snap()
-            self.devs.daq.run_triggers()
-            time.sleep(0.04)
-            temp = self.devs.img_cam.get_last_snap()
-            self.devs.img_cam.stop_snap()
+            temp = self.trigger_and_capture()
             if temp is not None:
                 ims.append(temp)
         return ims
@@ -1222,18 +1261,15 @@ class CommandExecutor(QObject):
             zp = [0] * self.devs.dfm.n_zernike
             cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd].copy()
             self.devs.slm.activate()
-            time.sleep(0.04)
+            self.devs.img_cam.start_live()
+            self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
             self.logg.info("Sensorless AO iterations start")
             self.devs.dfm.set_dpp(cmd)
-            time.sleep(0.04)
+            time.sleep(2.0)
             if err:
                 images = []
                 for i in range(8):
-                    self.devs.img_cam.start_snap()
-                    self.devs.daq.run_triggers()
-                    time.sleep(0.04)
-                    temp = self.devs.img_cam.get_last_snap()
-                    self.devs.img_cam.stop_snap()
+                    temp = self.trigger_and_capture()
                     if temp is not None:
                         images.append(temp)
                 mts = self.image_assessment(mf, images)
@@ -1241,11 +1277,7 @@ class CommandExecutor(QObject):
                 fn = new_folder + r"\original.tiff"
                 tf.imwrite(str(fn), np.asarray(images, dtype=np.float16))
             else:
-                self.devs.img_cam.start_snap()
-                self.devs.daq.run_triggers()
-                time.sleep(0.04)
-                temp = self.devs.img_cam.get_last_snap()
-                self.devs.img_cam.stop_snap()
+                temp = self.trigger_and_capture()
                 fn = new_folder + r"\original.tiff"
                 tf.imwrite(str(fn), temp.astype(np.float16))
             for mode in range(mode_start, mode_stop + 1):
@@ -1282,12 +1314,8 @@ class CommandExecutor(QObject):
                         tif.write(img.astype(np.float16), description=label)
             self.devs.dfm.set_dpp(cmd)
             time.sleep(0.04)
-            self.devs.img_cam.start_snap()
-            self.devs.daq.run_triggers()
-            time.sleep(0.04)
-            temp = self.devs.img_cam.get_last_snap()
+            temp = self.trigger_and_capture()
             fn = new_folder + r"\final.tiff"
-            self.devs.img_cam.stop_snap()
             tf.imwrite(str(fn), temp.astype(np.float16))
             self.devs.dfm.dpp_cmd.append(cmd)
             self.ao_panel.update_cmd_index()

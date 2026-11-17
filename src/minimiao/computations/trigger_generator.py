@@ -17,7 +17,7 @@ class TriggerSequence:
         self.galvo = galvo
         # digital triggers
         digital_starts = [0.00000, 0.0003, 0.0003, 0.00025, 0.00025, 0.0009]
-        digital_ends = [0.02020, 0.0008, 0.0008, 0.003, 0.003, 0.001]
+        digital_ends = [0.00200, 0.0008, 0.0008, 0.003, 0.003, 0.001]
         self.digital_starts = [int(digital_start * self.sample_rate) for digital_start in digital_starts]
         self.digital_ends = [int(digital_end * self.sample_rate) for digital_end in digital_ends]
         # piezo scanner
@@ -55,8 +55,9 @@ class TriggerSequence:
                           zip(self.galvo_starts, self.galvo_stops, self.galvo_steps)]
         self.galvo_scan_pos = [dps.size for dps in self.galvo_pos]
         # phase retarder
-        self.phase_retards = np.array([1.8, 0.99, 0.73, 0.59, 0.52, 0.47])
-        self.phase_settle_time = 0.06  # ~40 ms
+        # self.phase_retards = np.array([1.8, 0.99, 0.73, 0.59, 0.52, 0.47])
+        self.phase_retards = np.array([0., 0., 0., 0., 0., 0.])
+        self.phase_settle_time = 0.00  # ~40 ms
         self.phase_settle_samples = round(self.phase_settle_time * self.sample_rate)
         # TTL
         self.trigger_pulse_width = 0.00010  # s
@@ -233,21 +234,22 @@ class TriggerSequence:
         return digital_triggers, digital_channels, analog_triggers, analog_channels
 
     def generate_widefield_scan(self, n):
-        digital_triggers, digital_channels, analog_triggers, analog_channels = self.generate_digital_triggers(0, 0)
-        digital_triggers = np.tile(digital_triggers, n)
-        pos = self.piezo_scan_pos[2]
-        digital_triggers = np.tile(digital_triggers, self.piezo_scan_pos[2])
-        if analog_triggers is not None:
-            piezo_sequence = np.repeat(self.piezo_scan_positions[2], digital_triggers.shape[1])
-            piezo_sequence = shift_array(piezo_sequence, self.return_samples, fill=piezo_sequence[0], direction="backward")
-            analog_triggers = np.tile(analog_triggers, self.piezo_scan_pos[2])
-            analog_triggers = np.concatenate((analog_triggers, piezo_sequence), axis=1)
-            analog_channels.append(2)
-        else:
-            analog_triggers = np.repeat(self.piezo_scan_positions[2], digital_triggers.shape[1])
-            analog_triggers = shift_array(analog_triggers, self.return_samples, fill=analog_triggers[0], direction="backward")
-            analog_channels = [2]
-        return digital_triggers, digital_channels, analog_triggers, analog_channels, pos
+        digital_triggers, digital_channels, galvo_triggers, galvo_channels = self.generate_digital_triggers(0, 0)
+        nz = self.piezo_scan_pos[2]
+        cycle = digital_triggers.shape[1]
+        exposure_start = int(np.flatnonzero(digital_triggers[1])[0])
+        dead_after = max(cycle - (exposure_start + self.exposure_samples), 0)
+        pad = max(self.return_samples - (dead_after + exposure_start), 0)
+        digital_plane = np.pad(np.tile(digital_triggers, (1, n)), ((0, 0), (0, pad)), mode="constant")
+        plane_samples = digital_plane.shape[1]
+        digital_triggers = np.tile(digital_plane, (1, nz))
+        if galvo_triggers is not None:
+            galvo_plane = np.pad(np.tile(galvo_triggers, (1, n)), ((0, 0), (0, pad)), mode="edge")
+            galvo_triggers = np.tile(galvo_plane, (1, nz))
+        piezo_triggers = np.repeat(self.piezo_scan_positions[2], plane_samples)
+        piezo_triggers = shift_array(piezo_triggers, dead_after + pad, fill=piezo_triggers[0], direction="backward")
+        piezo_channels = [2]
+        return digital_triggers, digital_channels, galvo_triggers, galvo_channels, piezo_triggers, piezo_channels, nz
 
     def generate_sim_triggers(self, nang=3 , nph=6, rot=True):
         act_samples = self.digital_ends[0] - self.digital_starts[0]
@@ -308,12 +310,26 @@ class TriggerSequence:
             self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
             self.slm_sw_on_time = 2 * 1000e-6 + 310.72e-6  # s
             self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
-        else:
+        elif off == 1:
             self.slm_sw_total_time = 2 * 5310.72e-6  # s
             self.slm_sw_total_samples = round(self.slm_sw_total_time * self.sample_rate)
             self.slm_sw_end_time = 5270.187e-6 + self.slm_sw_total_time / 2  # s
             self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
             self.slm_sw_on_time = 2 * 5000.0e-6 + 310.72e-6  # s
+            self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
+        elif off == 2:
+            self.slm_sw_total_time = 2 * 10310.72e-6  # s
+            self.slm_sw_total_samples = round(self.slm_sw_total_time * self.sample_rate)
+            self.slm_sw_end_time = 10270.187e-6 + self.slm_sw_total_time / 2  # s
+            self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
+            self.slm_sw_on_time = 2 * 10000.0e-6 + 310.72e-6  # s
+            self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
+        elif off == 3:
+            self.slm_sw_total_time = 2 * 810.72e-6  # s
+            self.slm_sw_total_samples = round(self.slm_sw_total_time * self.sample_rate)
+            self.slm_sw_end_time = 770.133e-6 + self.slm_sw_total_time / 2  # s
+            self.slm_sw_end_samples = round(self.slm_sw_end_time * self.sample_rate)
+            self.slm_sw_on_time = 2 * 499.947e-6 + 310.72e-6  # s
             self.slm_sw_on_samples = round(self.slm_sw_on_time * self.sample_rate)
         act_samples = self.digital_ends[0] - self.digital_starts[0]
         self.cycle_samples = act_samples + self.slm_sw_total_samples + self.interval_samples + self.slm_total_samples + max(self.transfer_samples, self.standby_samples)

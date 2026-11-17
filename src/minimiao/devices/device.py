@@ -54,10 +54,10 @@ class DeviceManager:
             self.piezo = mcl_piezo.MCLNanoDrive(logg=self.logg)
         except Exception as e:
             self.logg.error(f"{e}")
-        try:
-            self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg)
-        except Exception as e:
-            self.logg.error(f"{e}")
+        # try:
+        #     self.retard = lcc25d_retarder.LCC25DRetarder(logg=self.logg)
+        # except Exception as e:
+        #     self.logg.error(f"{e}")
         try:
             self.led = neopixel_ring.NeoPixel(logg=self.logg)
         except Exception as e:
@@ -101,10 +101,10 @@ class DeviceManager:
             self.piezo.close()
         except Exception as e:
             self.logg.error(f"{e}")
-        try:
-            self.retard.close()
-        except Exception as e:
-            self.logg.error(f"{e}")
+        # try:
+        #     self.retard.close()
+        # except Exception as e:
+        #     self.logg.error(f"{e}")
         try:
             del self.gvs
         except Exception as e:

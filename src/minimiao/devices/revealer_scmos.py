@@ -51,6 +51,22 @@ Trigger_Activation = {0: "RisingEdge", 1: "FallingEdge", 2: "LevelHigh", 3: "Lev
 
 Shutter_Mode = {0: "Rolling", 1: "GlobalReset", 2: "ProgramableMode"}
 
+Trigger_Out_Port = {1: 1, 2: 2, 3: 3}  # output port number -> TriggerOutSelector enum (TriggerOut1..3)
+
+Trigger_Out_Type = {0: "Exposure_Start",  # edge signal
+                    1: "VSYNC",  # end of first row readout, edge signal
+                    2: "Readout_End",  # edge signal
+                    3: "Trigger_Ready",  # camera waiting for a trigger, level signal
+                    4: "Global_Exposure",  # level signal
+                    5: "High",  # constant, no activation
+                    6: "Low"}  # constant, no activation
+
+TRIGGER_OUT_READY = 3
+Trigger_Out_Edge_Types = (0, 1, 2)  # take TriggerOutActivation RisingEdge / FallingEdge
+Trigger_Out_Level_Types = (3, 4)  # take TriggerOutActivation LevelHigh / LevelLow
+Trigger_Out_Activation = {0: "RisingEdge", 1: "FallingEdge", 2: "LevelHigh", 3: "LevelLow"}
+CAMERA_READY_PORT = 1  # output port that carries the camera-ready signal
+
 
 class RevealerCamera:
     class CameraSettings:
@@ -98,6 +114,7 @@ class RevealerCamera:
         self._last_grab_error = None
         self._last_grab_error_time = 0.0
         self._last_frame_id = None
+        self._first_frame_id = None  # camera frameId of the first frame kept (after skip_frames) in this grab
         self._load_sdk_modules()
         self.sdk = self._initialize_sdk()
         if self.sdk is None:
@@ -171,6 +188,7 @@ class RevealerCamera:
         self.get_sensor_size()
         self.cooler_on()
         self.set_trigger_mode(1)
+        self.set_trigger_output(CAMERA_READY_PORT, TRIGGER_OUT_READY)
         self.set_shutter_mode(1)
         self.set_readout_mode(2)
 
@@ -308,6 +326,46 @@ class RevealerCamera:
             self._set_enum("TriggerActivation", activation)
         self.logg.info("Trigger Mode Set to {}".format(Trigger_Mode.get(ind, ind)))
 
+    def set_trigger_output(self, port=CAMERA_READY_PORT, signal=TRIGGER_OUT_READY, activation=2):
+        """
+        Route a signal to one of the trigger output ports (1, 2, 3).
+        signal: TriggerOutType value, see Trigger_Out_Type (default 3, Trigger_Ready: camera ready for a trigger)
+        activation: TriggerOutActivation, 0 RisingEdge, 1 FallingEdge (for Exposure_Start / VSYNC / Readout_End),
+                    2 LevelHigh, 3 LevelLow (for Trigger_Ready / Global_Exposure); ignored for High / Low
+        """
+        if port not in Trigger_Out_Port:
+            self.logg.error(f"Unsupported trigger output port {port} (supported: 1, 2, 3)")
+            return
+        if signal not in Trigger_Out_Type:
+            self.logg.error(f"Unsupported trigger output signal {signal} (supported: {Trigger_Out_Type})")
+            return
+        if signal in Trigger_Out_Edge_Types and activation not in (0, 1):
+            self.logg.error(
+                f"{Trigger_Out_Type[signal]} is an edge signal, activation must be 0 or 1, got {activation}")
+            return
+        if signal in Trigger_Out_Level_Types and activation not in (2, 3):
+            self.logg.error(
+                f"{Trigger_Out_Type[signal]} is a level signal, activation must be 2 or 3, got {activation}")
+            return
+        if not self._set_enum("TriggerOutSelector", Trigger_Out_Port[port]):
+            return
+        if not self._set_enum("TriggerOutType", signal):
+            return
+        msg = "Trigger Output {} Set to {}".format(port, Trigger_Out_Type[signal])
+        if signal in Trigger_Out_Edge_Types or signal in Trigger_Out_Level_Types:
+            if not self._set_enum("TriggerOutActivation", activation):
+                return
+            msg += " ({})".format(Trigger_Out_Activation[activation])
+        self.logg.info(msg)
+
+    def log_trigger_output_features(self):
+        """Log the trigger output settings of every port as the camera reports them."""
+        for port, sel in Trigger_Out_Port.items():
+            if self._set_enum("TriggerOutSelector", sel):
+                sig, act = self._get_enum("TriggerOutType"), self._get_enum("TriggerOutActivation")
+                self.logg.info(f"TriggerOut{port}: TriggerOutType {sig} ({Trigger_Out_Type.get(sig, '?')}), "
+                               f"TriggerOutActivation {act} ({Trigger_Out_Activation.get(act, '?')})")
+
     def set_gain(self):
         """No EM gain on an sCMOS; kept so the executor can call it unconditionally."""
         self.logg.info("sCMOS has no EM gain, gain setting ignored")
@@ -400,8 +458,9 @@ class RevealerCamera:
                 self._log_grab_error(f"SC_GetFrame error code {ret}")
             return None
         try:
-            self._check_frame_id(frame.frameInfo)
-            return self._frame_to_array(frame.pData, frame.frameInfo)
+            fid = self._check_frame_id(frame.frameInfo)
+            img = self._frame_to_array(frame.pData, frame.frameInfo)
+            return None if img is None else (fid, img)
         finally:
             self._ok(self.sdk.SC_ReleaseFrame(frame), "SC_ReleaseFrame")
 
@@ -419,6 +478,7 @@ class RevealerCamera:
         if int(info.status) != 0:
             self.logg.warning(f"Revealer frame {fid} has status {int(info.status)}")
         self._last_frame_id = fid
+        return fid
 
     def _log_grab_error(self, msg):
         """The grab loop runs at thread speed, so repeat the same error at most every 5 s."""
@@ -458,6 +518,7 @@ class RevealerCamera:
         self._frames_read = 0
         self._skip_frames = 0
         self._last_frame_id = None
+        self._first_frame_id = None
         if not self._ok(self.sdk.SC_StartGrabbing(), "SC_StartGrabbing"):
             raise RuntimeError("Revealer SC_StartGrabbing failed")
         self._grabbing = True
@@ -487,9 +548,10 @@ class RevealerCamera:
             frames = frames[drop:]
             if not frames:
                 return
-        first = self._frames_read
+        if self._first_frame_id is None:
+            self._first_frame_id = frames[0][0]
         self._frames_read += len(frames)
-        self.data.add_element(frames, [first, self._frames_read - 1])
+        self.data.add_element([img for _, img in frames], frame_ids=[fid for fid, _ in frames])
 
     def skip_frames(self, n):
         """Discard the next n frames the camera delivers (a throwaway warm-up run); 0 cancels."""
@@ -553,7 +615,7 @@ class RevealerCamera:
             if newer is None:
                 break
             last = newer
-        return last
+        return last[1]
 
     def check_new_acquisition(self):
         return True if self._grabbing else None
@@ -590,7 +652,14 @@ class RevealerCamera:
             return None
 
     def get_acq_num(self):
-        self.acq_first, self.acq_last = 0, max(self._frames_read - 1, 0)
+        if self._first_frame_id is None:
+            self.acq_first, self.acq_last = 0, 0
+        else:
+            self.acq_first, self.acq_last = self._first_frame_id, self._last_frame_id
+        missing = (self.acq_last - self.acq_first + 1) - self._frames_read
+        if missing > 0:
+            self.logg.warning(f"Revealer: {missing} frame(s) missing between frameId {self.acq_first} "
+                              f"and {self.acq_last}")
         self.logg.info(f"{self.acq_first} {self.acq_last}")
 
     def check_acquisition_progress(self):
