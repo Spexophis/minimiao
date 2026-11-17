@@ -73,6 +73,7 @@ class AOPanel(QWidget):
     Signal_load_dm = pyqtSignal()
     Signal_save_dm = pyqtSignal()
     Signal_sensorlessAO = pyqtSignal()
+    Signal_system_flat = pyqtSignal()
 
     def __init__(self, config, logg, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -87,10 +88,12 @@ class AOPanel(QWidget):
 
         self.dm_viz_panel = self._create_dm_viz_panel()
         self.dm_panel = self._create_dm_panel()
+        self.system_flat_panel = self._create_system_flat_panel()
         self.sensorless_panel = self._create_sensorless_panel()
 
         main_layout.addWidget(self.dm_viz_panel)
         main_layout.addWidget(self.dm_panel)
+        main_layout.addWidget(self.system_flat_panel)
         main_layout.addWidget(self.sensorless_panel)
 
         main_layout.addStretch(1)
@@ -215,6 +218,49 @@ class AOPanel(QWidget):
         group.setLayout(group_layout)
         return group
 
+    def _create_system_flat_panel(self):
+        group = cw.GroupWidget()
+        flat_scroll_area, flat_scroll_layout = cw.create_scroll_area("G")
+
+        self.QDoubleSpinBox_flat_z_range = cw.DoubleSpinBoxWidget(0.5, 20, 0.1, 2, 2.0)
+        self.QDoubleSpinBox_flat_z_step = cw.DoubleSpinBoxWidget(0.02, 1, 0.01, 3, 0.1)
+        self.QComboBox_flat_metric = cw.ComboBoxWidget(list_items=['Peak/Flux', '1/FWHM3D', 'Peak'])
+        self.QComboBox_flat_beads = cw.ComboBoxWidget(list_items=['All', '100 nm', '200 nm'])
+        self.QDoubleSpinBox_flat_threshold = cw.DoubleSpinBoxWidget(2, 100, 1, 1, 8.0)
+        self.QDoubleSpinBox_flat_separation = cw.DoubleSpinBoxWidget(0.5, 10, 0.1, 2, 2.0)
+        self.QSpinBox_flat_max_beads = cw.SpinBoxWidget(1, 1000, 10, 100)
+        self.QSpinBox_flat_min_beads = cw.SpinBoxWidget(1, 100, 1, 5)
+        self.QSpinBox_flat_rounds = cw.SpinBoxWidget(1, 10, 1, 1)
+        self.QCheckBox_flat_save_stacks = cw.CheckBoxWidget('Save Stacks')
+        self.QCheckBox_flat_save_stacks.setChecked(True)
+        self.QPushButton_flat_run = cw.PushButtonWidget('Run Flat')
+
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('System Flat (Beads)')), 0, 0, 1, 2)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Z Range ±(um)')), 1, 0, 1, 1)
+        flat_scroll_layout.addWidget(self.QDoubleSpinBox_flat_z_range, 1, 1, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Z Step (um)')), 2, 0, 1, 1)
+        flat_scroll_layout.addWidget(self.QDoubleSpinBox_flat_z_step, 2, 1, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Rounds')), 3, 0, 1, 1)
+        flat_scroll_layout.addWidget(self.QSpinBox_flat_rounds, 3, 1, 1, 1)
+        flat_scroll_layout.addWidget(self.QCheckBox_flat_save_stacks, 4, 0, 1, 1)
+        flat_scroll_layout.addWidget(self.QPushButton_flat_run, 4, 1, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Bead Metric')), 0, 2, 1, 1)
+        flat_scroll_layout.addWidget(self.QComboBox_flat_metric, 0, 3, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Beads')), 1, 2, 1, 1)
+        flat_scroll_layout.addWidget(self.QComboBox_flat_beads, 1, 3, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Threshold (σ)')), 2, 2, 1, 1)
+        flat_scroll_layout.addWidget(self.QDoubleSpinBox_flat_threshold, 2, 3, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Min Sep (um)')), 3, 2, 1, 1)
+        flat_scroll_layout.addWidget(self.QDoubleSpinBox_flat_separation, 3, 3, 1, 1)
+        flat_scroll_layout.addWidget(cw.LabelWidget(str('Beads Min/Max')), 4, 2, 1, 1)
+        flat_scroll_layout.addWidget(self.QSpinBox_flat_min_beads, 4, 3, 1, 1)
+        flat_scroll_layout.addWidget(self.QSpinBox_flat_max_beads, 4, 4, 1, 1)
+
+        group_layout = QHBoxLayout(group)
+        group_layout.addWidget(flat_scroll_area)
+        group.setLayout(group_layout)
+        return group
+
     def _set_signal_connections(self):
         self.QPushButton_set_dm.clicked.connect(self.set_dm_cmd)
         self.QPushButton_set_zernike_mode.clicked.connect(self.set_dm_zernike)
@@ -223,6 +269,7 @@ class AOPanel(QWidget):
         self.QPushButton_save_dm.clicked.connect(self.save_dm_cmd)
         self.QPushButton_change_dm_flat.clicked.connect(self.change_dm_flat)
         self.QPushButton_sensorless_run.clicked.connect(self.run_sensorless_correction)
+        self.QPushButton_flat_run.clicked.connect(self.run_system_flat)
 
     def update_dm_display(self, amps):
         nz = len(_ZMS)
@@ -298,6 +345,22 @@ class AOPanel(QWidget):
     def get_sensorless_parameters(self):
         return (self.QDoubleSpinBox_lpf.value(), self.QDoubleSpinBox_hpf.value(),
                 self.QComboBox_metric.currentText(), self.QRadioButton_sensorless_error.isChecked())
+
+    @pyqtSlot()
+    def run_system_flat(self):
+        self.Signal_system_flat.emit()
+
+    def get_system_flat_parameters(self):
+        return dict(z_range=self.QDoubleSpinBox_flat_z_range.value(),
+                    z_step=self.QDoubleSpinBox_flat_z_step.value(),
+                    rounds=self.QSpinBox_flat_rounds.value(),
+                    metric=self.QComboBox_flat_metric.currentText(),
+                    bead_class=self.QComboBox_flat_beads.currentText(),
+                    threshold=self.QDoubleSpinBox_flat_threshold.value(),
+                    min_separation=self.QDoubleSpinBox_flat_separation.value(),
+                    min_beads=self.QSpinBox_flat_min_beads.value(),
+                    max_beads=self.QSpinBox_flat_max_beads.value(),
+                    save_stacks=self.QCheckBox_flat_save_stacks.isChecked())
 
     def save_spinbox_values(self):
         values = {}

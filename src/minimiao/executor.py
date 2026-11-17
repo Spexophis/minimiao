@@ -4,6 +4,7 @@
 
 
 import os
+import sys
 import threading
 import time
 
@@ -22,6 +23,11 @@ try:
     from .utilities import image_processor as ipr
 except ImportError as e:
     from minimiao.utilities import image_processor as ipr
+
+try:
+    from .utilities import bead_analyzer as ba
+except ImportError as e:
+    from minimiao.utilities import bead_analyzer as ba
 
 try:
     from . import devices
@@ -98,6 +104,7 @@ class CommandExecutor(QObject):
         self.ao_panel.Signal_save_dm.connect(self.save_dm)
         # AO
         self.ao_panel.Signal_sensorlessAO.connect(self.run_sensorless_iteration)
+        self.ao_panel.Signal_system_flat.connect(self.run_system_flat)
 
     def _initial_setup(self):
         try:
@@ -1340,3 +1347,177 @@ class CommandExecutor(QObject):
             self.lasers_off()
             return
         self.run_task(task=self.sensorless_iterations)
+
+    def acquire_z_stack(self, zps, settle=0.3, dwell=0.06):
+        """Widefield z-stack with the piezo (software port), always scanned in the same direction. One retry per
+        plane; None if a plane still has no frame."""
+        self.devs.piezo.move_position(2, zps[0])
+        time.sleep(settle)
+        frames = []
+        for z in zps:
+            self.devs.piezo.move_position(2, z)
+            time.sleep(dwell)
+            temp = self.trigger_and_capture()
+            if temp is None:
+                temp = self.trigger_and_capture()
+            if temp is None:
+                self.logg.error(f"System flat: no frame at z = {z:.3f} um")
+                return None
+            frames.append(temp)
+        return np.asarray(frames)
+
+    def system_flat_iterations(self):
+        try:
+            prm = self.ao_panel.get_system_flat_parameters()
+            name = time.strftime("%Y%m%d_%H%M%S_") + self.devs.dfm.dpp_model + '_system_flat_' + \
+                prm["metric"].replace('/', '_')
+            new_folder = os.path.join(self.path, name)
+            os.makedirs(new_folder, exist_ok=True)
+            self.logg.info(f'Directory {new_folder} has been created successfully.')
+        except Exception as e:
+            self.logg.error(f'Error creating directory for system flat: {e}')
+            self.finish_task()
+            return
+        pos_x, pos_y, pos_z = self.ctrl_panel.get_piezo_positions()
+        z_center = pos_z[0]
+        try:
+            mode_start, mode_stop, amp_start, amp_step, amp_step_number = self.ao_panel.get_sensorless_iteration()
+            amprange = [amp_start + step_number * amp_step for step_number in range(amp_step_number)]
+            zr, dz = prm["z_range"], prm["z_step"]
+            zps = z_center + np.arange(-zr, zr + dz / 2, dz)
+            p = ba.BeadParams(dx=ipr.dx, dz=dz, wl=ipr.wl, na=ipr.na, threshold=prm["threshold"],
+                              min_separation=prm["min_separation"], max_beads=prm["max_beads"],
+                              bead_class=prm["bead_class"])
+            metric = prm["metric"]
+            self.logg.info(f"System flat: {len(zps)} planes ({-zr:+.2f}..{zr:+.2f} um, {dz} um) around "
+                           f"z = {z_center:.3f} um, dx = {p.dx} um, metric {metric}, beads {p.bead_class}")
+            cmd = self.devs.dfm.dpp_cmd[self.devs.dfm.current_cmd].copy()
+            # set_dpp() writes 0 for an amplitude outside the mode's range, which would flatten that scan point
+            vms = getattr(sys.modules.get(type(self.devs.dfm).__module__), "vms", None)
+            if vms is not None:
+                for mode in range(mode_start, mode_stop + 1):
+                    lo, hi = vms[mode]
+                    if cmd[mode] + min(amprange) < lo or cmd[mode] + max(amprange) > hi:
+                        self.logg.warning(f"System flat: mode {mode} scan {cmd[mode] + min(amprange):.3f}.."
+                                          f"{cmd[mode] + max(amprange):.3f} leaves the DM range ({lo}, {hi})")
+            zp = [0] * self.devs.dfm.n_zernike
+            scan_rows = []
+            bead_rows = []
+            za, mv = [], []
+            self.devs.slm.activate()
+            self.devs.img_cam.start_live()
+            self.devs.img_cam.data.on_update(self.viewer.on_camera_update_from_thread)
+            self.devs.dfm.set_dpp(cmd)
+            time.sleep(2.0)
+            self.trigger_and_capture()
+
+            # Reference stack: find the single beads once
+            self.vw.dialog_text.setText("System flat: finding beads")
+            ref = self.acquire_z_stack(zps)
+            if ref is None:
+                raise RuntimeError("reference stack incomplete")
+            tf.imwrite(os.path.join(new_folder, "original.tiff"), ref, metadata={'axes': 'ZYX'})
+            beads, rep = ba.find_single_beads(ref, p, self.logg)
+            self.logg.info(f"System flat bead detection: {rep}")
+            classes = {c: sum(b.size_class == c for b in beads) for c in ("100 nm", "200 nm", "?")}
+            self.logg.info(f"System flat: {len(beads)} single beads {classes}")
+            pd.DataFrame(ba.beads_table(beads)).to_csv(os.path.join(new_folder, "beads.csv"), index=False)
+            if len(beads) < prm["min_beads"]:
+                raise RuntimeError(f"only {len(beads)} single beads found (min {prm['min_beads']}); "
+                                   f"change field of view, threshold or min separation")
+            ref_vals, _ = ba.measure_beads(ref, beads, p, metric)
+
+            for rnd in range(prm["rounds"]):
+                for mode in range(mode_start, mode_stop + 1):
+                    self.vw.dialog_text.setText(f"System flat round {rnd + 1}: Zernike mode #{mode}")
+                    vals, stacks = [], []
+                    for amp in amprange:
+                        temp = cmd.copy()
+                        temp[mode] += amp
+                        self.devs.dfm.set_dpp(temp)
+                        time.sleep(0.04)
+                        st = self.acquire_z_stack(zps)
+                        if st is None:
+                            vals.append(np.full(len(beads), np.nan))
+                            continue
+                        v, _ = ba.measure_beads(st, beads, p, metric)
+                        vals.append(v)
+                        if prm["save_stacks"]:
+                            stacks.append(st)
+                        for i, bv in enumerate(v):
+                            bead_rows.append((rnd, mode, amp, i, bv))
+                    med, sem, n = ba.aggregate(vals)
+                    self.logg.info(f"zernike mode #{mode}, ({amprange}), ({list(np.round(med, 4))}), "
+                                   f"({list(np.round(sem, 4))}), {n} beads")
+                    self.sig_plt.emit(list(med), list(amprange))
+                    contrast = (np.max(med) - np.min(med)) / max(float(np.median(sem)), 1e-9) if n else 0.0
+                    if n < prm["min_beads"]:
+                        pm = f"only {n} beads measured at every amplitude"
+                    elif contrast < 5:
+                        # metric change is within the bead-to-bead noise: a parabola fit would only follow noise
+                        pm = f"no significant metric change (swing = {contrast:.1f} x SEM < 5); mode left unchanged"
+                    else:
+                        try:
+                            pm = ipr.peak_find(amprange, med, np.maximum(sem, 1e-6))
+                        except Exception as e:
+                            pm = f"fit failed: {e}"
+                    if isinstance(pm, str):
+                        self.logg.error(f"zernike mode #{mode} " + pm)
+                        self.devs.dfm.set_dpp(cmd)
+                    else:
+                        zp[mode] += pm
+                        cmd[mode] += pm
+                        self.devs.dfm.set_dpp(cmd)
+                        self.logg.info("set mode %d at value of %.4f" % (mode, pm))
+                    for amp, m, s in zip(amprange, med, sem):
+                        scan_rows.append((rnd, mode, amp, m, s, n, pm if not isinstance(pm, str) else np.nan))
+                    za.extend(amprange)
+                    mv.extend(med)
+                    if stacks:
+                        fn = os.path.join(new_folder, f"round{rnd + 1}_zernike_mode_{mode:02d}.tiff")
+                        tf.imwrite(fn, np.asarray(stacks),
+                                   metadata={'axes': 'TZYX', 'amps': [float(a) for a in amprange]})
+
+            self.devs.dfm.set_dpp(cmd)
+            time.sleep(0.04)
+            fin = self.acquire_z_stack(zps)
+            if fin is not None:
+                tf.imwrite(os.path.join(new_folder, "final.tiff"), fin, metadata={'axes': 'ZYX'})
+                fin_vals, _ = ba.measure_beads(fin, beads, p, metric)
+                ratio = fin_vals / ref_vals
+                ratio = ratio[np.isfinite(ratio)]
+                if ratio.size:
+                    self.logg.info(f"System flat: {metric} final / original = {np.median(ratio):.3f} "
+                                   f"(median of {ratio.size} beads)")
+            self.devs.dfm.dpp_cmd.append(cmd)
+            self.ao_panel.update_cmd_index()
+            i = int(self.ao_panel.get_cmd_index())
+            self.devs.dfm.current_cmd = i
+            self.devs.dfm.write_cmd(new_folder, '_')
+            self.devs.dfm.save_sensorless_results(os.path.join(str(new_folder), 'results.xlsx'), za, mv, zp)
+            with pd.ExcelWriter(os.path.join(new_folder, 'system_flat_metrics.xlsx'), engine='xlsxwriter') as w:
+                pd.DataFrame(scan_rows, columns=['Round', 'Mode', 'Amp', 'Median', 'SEM', 'Beads', 'Peak']
+                             ).to_excel(w, sheet_name='Scan', index=False)
+                pd.DataFrame(bead_rows, columns=['Round', 'Mode', 'Amp', 'Bead', 'Value']
+                             ).to_excel(w, sheet_name='Per bead', index=False)
+            self.logg.info("System flat finished; use 'Save Flat' to store the new command as the DM flat")
+        except Exception as e:
+            self.logg.error(f"System Flat Error: {e}")
+        finally:
+            try:
+                self.devs.piezo.move_position(2, z_center)
+            except Exception as e:
+                self.logg.error(f"MCL Piezo Error: {e}")
+            self.finish_task()
+
+    @pyqtSlot()
+    def run_system_flat(self):
+        self.vw.get_dialog(txt="DM System Flat")
+        try:
+            self.prepare_task()
+        except Exception as e:
+            self.logg.error(f"Error Starting DM System Flat: {e}")
+            self.devs.daq.stop_triggers()
+            self.lasers_off()
+            return
+        self.run_task(task=self.system_flat_iterations)
