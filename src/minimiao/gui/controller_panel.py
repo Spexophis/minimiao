@@ -168,7 +168,8 @@ class ControlPanel(QWidget):
         self.QPushButton_deck_position_zero = cw.PushButtonWidget('Zero')
         self.QPushButton_move_deck_up = cw.PushButtonWidget('Up')
         self.QPushButton_move_deck_down = cw.PushButtonWidget('Down')
-        self.QSpinBox_deck_direction = cw.SpinBoxWidget(-100000, 100000, 1, 100)
+        self.QSpinBox_deck_distance = cw.SpinBoxWidget(0, 100000, 1, 100)
+        self.QSpinBox_deck_direction = cw.SpinBoxWidget(-1, 1, 2, 1)
         self.QDoubleSpinBox_deck_velocity = cw.DoubleSpinBoxWidget(0.02, 1.50, 0.02, 2, 0.02)
         self.QPushButton_move_deck = cw.PushButtonWidget('Move', checkable=True)
 
@@ -176,7 +177,8 @@ class ControlPanel(QWidget):
         mad_deck_scroll_layout.addRow(cw.FrameWidget())
         mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Position (mm)')), self.QLCDNumber_deck_position)
         mad_deck_scroll_layout.addRow(self.QPushButton_deck_position, self.QPushButton_deck_position_zero)
-        mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Direction (+up)')), self.QSpinBox_deck_direction)
+        mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Distance / step')), self.QSpinBox_deck_distance)
+        mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Direction +up')), self.QSpinBox_deck_direction)
         mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Velocity (mm)')), self.QDoubleSpinBox_deck_velocity)
         mad_deck_scroll_layout.addRow(self.QPushButton_move_deck)
         mad_deck_scroll_layout.addRow(cw.LabelWidget(str('Single step')))
@@ -558,9 +560,10 @@ class ControlPanel(QWidget):
 
     @pyqtSlot(bool)
     def deck_move_range(self, checked: bool):
-        distance = self.QSpinBox_deck_direction.value()
+        distance = self.QSpinBox_deck_distance.value()
+        direction = self.QSpinBox_deck_direction.value()
         velocity = self.QDoubleSpinBox_deck_velocity.value()
-        self.Signal_deck_move_continuous.emit(checked, distance, velocity)
+        self.Signal_deck_move_continuous.emit(checked, direction * distance, velocity)
 
     def display_deck_position(self, mdposz):
         self.QLCDNumber_deck_position.display(mdposz)
