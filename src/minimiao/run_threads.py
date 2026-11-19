@@ -192,11 +192,12 @@ class StackRecorder:
     """
 
     def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None,
-                 max_queue_mb=None, frames_per_file=None):
+                 max_queue_mb=None, frames_per_file=None, on_file_saved=None):
         self.poll = poll
         self.path = str(path)
         self.frames_per_file = int(frames_per_file) if frames_per_file else None
         self.files = []  # [{"file", "first_frame", "n_frames"}] in recording order
+        self.on_file_saved = on_file_saved  # called (writer thread) with the file's entry when a stack is full
         self.bigtiff = bigtiff
         self.preview = preview
         self.preview_period = 1.0 / preview_hz if preview_hz else None
@@ -284,9 +285,7 @@ class StackRecorder:
                 if self.shape is None:
                     self.shape, self.dtype = frame.shape, frame.dtype
                 t0 = time.perf_counter()
-                if tw is None or (self.frames_per_file and self.files[-1]["n_frames"] >= self.frames_per_file):
-                    if tw is not None:
-                        tw.close()
+                if tw is None:
                     path = (self.path if not self.frames_per_file else
                             f"{os.path.splitext(self.path)[0]}_{len(self.files):05d}.tif")
                     tw = tf.TiffWriter(path, bigtiff=self.bigtiff)
@@ -294,6 +293,14 @@ class StackRecorder:
                 tw.write(frame, contiguous=True, photometric="minisblack")
                 self.files[-1]["n_frames"] += 1
                 n_written += 1
+                if self.frames_per_file and self.files[-1]["n_frames"] >= self.frames_per_file:
+                    tw.close()  # this stack is complete on disk now, not when the next frame arrives
+                    tw = None
+                    if self.on_file_saved is not None:
+                        try:
+                            self.on_file_saved(dict(self.files[-1]))
+                        except Exception:
+                            pass
                 self.write_busy_s += time.perf_counter() - t0
                 self.bytes_written += frame.nbytes
                 self._release(frame.nbytes)

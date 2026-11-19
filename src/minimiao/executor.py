@@ -32,6 +32,8 @@ class CommandExecutor(QObject):
         self.runner = None
         self._fire_thread = None
         self._recording = None  # Acquire-button recording in progress
+        self._acq_timer = QTimer(self)  # Acquire with a stack number: stop once all stacks are read
+        self._acq_timer.timeout.connect(self._check_acquisition_done)
         self._fps_timer = QTimer(self)  # measured camera frame rate -> FPS display, twice a second
         self._fps_timer.timeout.connect(self._update_fps_display)
         self._fps_timer.start(500)
@@ -554,13 +556,14 @@ class CommandExecutor(QObject):
         if callback is not None:
             callback()
 
-    @pyqtSlot(bool, int)
-    def acquisition(self, sw: bool, n_frames: int):
-        """Acquire button: record continuously until the button is released (+ one JSON).
-        n_frames > 0: a new TIFF every n frames (<name>_00000.tif, _00001.tif, ...);
-        0: everything in one TIFF."""
+    @pyqtSlot(bool, int, int)
+    def acquisition(self, sw: bool, n_stacks: int, n_frames: int):
+        """Acquire button: record stacks of n_frames frames, each saved as its own TIFF as soon as
+        it is full (<name>_00000.tif, _00001.tif, ...), plus one JSON.
+        n_stacks > 0: stop by itself after n_stacks stacks; 0: until the button is released
+        (the last stack then holds the remainder)."""
         if sw:
-            self.start_acquisition(n_frames)
+            self.start_acquisition(n_stacks, n_frames)
         else:
             self.stop_acquisition()
 
@@ -574,7 +577,7 @@ class CommandExecutor(QObject):
         btn.setChecked(False)
         btn.blockSignals(False)
 
-    def start_acquisition(self, n_frames: int):
+    def start_acquisition(self, n_stacks: int, n_frames: int):
         cam = self.devs.camera
         if cam is None:
             self.logg.error("No camera connected")
@@ -604,29 +607,48 @@ class CommandExecutor(QObject):
             cam.prepare_recording("internal", port, speed, gain)
             info = cam.get_recording_info() or {}
             frame_bytes = 2 * int(info.get("pixels_x") or 2400) * int(info.get("pixels_y") or 2400)
-            # one open-ended file: BigTIFF so it can exceed 4 GB; split files: only if one file can
-            bigtiff = (not n_frames) or n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES
+            n_frames = max(1, int(n_frames))
+            bigtiff = n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES  # one stack > ~3.5 GB
             path = os.path.join(self.path, name + ".tif")
             rate_text, rate_warn = acq.data_rate_message(info)
             self.logg.info(f"Acquisition: {rate_text}")
             if rate_warn:
                 self.logg.warning(rate_warn)
             t0 = time.perf_counter()
-            cam.start_recording(path, n_frames=None, bigtiff=bigtiff, frames_per_file=n_frames or None)
+            cam.start_recording(path, n_frames=None, bigtiff=bigtiff, frames_per_file=n_frames,
+                                max_frames=n_stacks * n_frames if n_stacks else None)
             if getattr(cam, "data", None) is not None:
                 cam.data.on_update(self.viewer.on_camera_update_from_thread)
         except Exception as e:
             self.logg.error(f"Error starting acquisition: {e}")
             self._release_acquire_button()
             return
-        self._recording = {"path": path, "n_frames": n_frames, "t0": t0, "info": info, "bigtiff": bigtiff,
+        self._recording = {"path": path, "n_stacks": n_stacks, "n_frames": n_frames, "t0": t0, "info": info,
+                           "bigtiff": bigtiff,
                            "rate_warning": rate_warn,
                            "readout": {"port": port, "speed": speed, "gain": gain},
                            "created": time.strftime("%Y-%m-%d %H:%M:%S")}
-        self.logg.info(f"Acquisition started: {name}{'_NNNNN' if n_frames else ''}.tif "
-                       f"({f'a new file every {n_frames} frames, ' if n_frames else ''}until Acquire is released)")
+        if n_stacks:
+            self._acq_timer.start(200)
+        self.logg.info(f"Acquisition started: {name}_NNNNN.tif, stacks of {n_frames} frames, "
+                       + (f"{n_stacks} stack(s)" if n_stacks else "until Acquire is released"))
+
+    def _check_acquisition_done(self):
+        """Stop by itself once all requested stacks have been read from the camera."""
+        rec = self._recording
+        if rec is None or rec.get("saving"):
+            self._acq_timer.stop()
+            return
+        try:
+            done = self.devs.camera.recording_progress().get("done")
+        except Exception as e:
+            self.logg.error(f"Acquisition progress: {e}")
+            return
+        if done:
+            self.stop_acquisition()
 
     def stop_acquisition(self):
+        self._acq_timer.stop()
         """Stop the camera and save in the background: at kHz rates gigabytes may still be waiting
         in RAM for the disk, and the GUI must not freeze meanwhile. self._recording stays set
         (refusing new acquisitions / tasks) until the file is complete."""
@@ -636,7 +658,7 @@ class CommandExecutor(QObject):
             return
         rec["saving"] = True
         rec["context"] = self._acq_context()  # read the GUI here, not in the saving thread
-        target = os.path.splitext(rec["path"])[0] + ("_NNNNN.tif" if rec["n_frames"] else ".tif")
+        target = os.path.splitext(rec["path"])[0] + "_NNNNN.tif"
         self.logg.info(f"Acquisition stopping; writing the remaining frames to {target} ...")
         threading.Thread(target=self._finish_acquisition, args=(rec,), daemon=True).start()
 
@@ -659,7 +681,8 @@ class CommandExecutor(QObject):
         meta = {"schema": "minimiao.acquisition/1", "created": rec["created"],
                 "software": {"package": "minimiao", "git_commit": acq._git_commit()},
                 "files": {"stacks": summary.pop("files", None) or [{"file": os.path.basename(rec["path"])}],
-                          "frames_per_file": rec["n_frames"] or None, "bigtiff": rec["bigtiff"]},
+                          "frames_per_stack": rec["n_frames"], "stacks_requested": rec["n_stacks"] or None,
+                          "bigtiff": rec["bigtiff"]},
                 "camera": dict(rec["info"], readout=rec["readout"],
                                **{k: v for k, v in summary.items() if k != "path"}),
                 "frames": {"frame_nrs": nrs, "retrieved_s_from_start": [x - rec["t0"] for x in ts],
@@ -667,6 +690,10 @@ class CommandExecutor(QObject):
                 "context": rec["context"], "warnings": []}
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
+        if rec["n_stacks"] and summary.get("n_frames") is not None \
+                and summary["n_frames"] < rec["n_stacks"] * rec["n_frames"]:
+            meta["warnings"].append(f"stopped early: {summary['n_frames']} of {rec['n_stacks'] * rec['n_frames']} "
+                                    f"frames ({rec['n_stacks']} x {rec['n_frames']})")
         if summary.get("error"):
             meta["warnings"].append(f"recorder: {summary['error']}")
         meta["warnings"].extend(acq.recorder_warnings(summary))

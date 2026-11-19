@@ -23,7 +23,7 @@ class ControlPanel(QWidget):
     N_TTL = 8
     N_AO = 4
     Signal_video = pyqtSignal(bool)
-    Signal_data_acquire = pyqtSignal(bool, int)
+    Signal_data_acquire = pyqtSignal(bool, int, int)  # on/off, stack # (0 = until stopped), frame # per stack
 
     def __init__(self, logg=None, parent=None, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
@@ -61,7 +61,8 @@ class ControlPanel(QWidget):
         self.set_readout_options([])
         self.QLCDNumber_scmos_frame_rate = cw.LCDNumberWidget(0, 6)
         self.QPushButton_video = cw.PushButtonWidget("Video", checkable=True)
-        self.QSpinBox_acquisition_number = cw.SpinBoxWidget(0, 10000000, 100, 0)
+        self.QSpinBox_acquisition_stacks = cw.SpinBoxWidget(0, 1000000, 1, 1)  # 0 = until Acquire is released
+        self.QSpinBox_acquisition_frames = cw.SpinBoxWidget(1, 10000000, 100, 1000)
         self.QPushButton_acquire = cw.PushButtonWidget('Acquire', checkable=True)
 
         scmos_scroll_layout.addRow(cw.LabelWidget(str('Kinetix Camera')))
@@ -76,7 +77,8 @@ class ControlPanel(QWidget):
         scmos_scroll_layout.addRow(self.QComboBox_scmos_readout)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_scmos_frame_rate)
         scmos_scroll_layout.addRow(self.QPushButton_video)
-        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frames per file (0 = one file)')), self.QSpinBox_acquisition_number)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Stack # (0 = until stop)')), self.QSpinBox_acquisition_stacks)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frame #')), self.QSpinBox_acquisition_frames)
         scmos_scroll_layout.addRow(self.QPushButton_acquire)
 
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')
@@ -326,10 +328,10 @@ class ControlPanel(QWidget):
     @pyqtSlot()
     def run_acquisition(self):
         if self.QPushButton_acquire.isChecked():
-            acq_num = self.QSpinBox_acquisition_number.value()
-            self.Signal_data_acquire.emit(True, acq_num)
+            self.Signal_data_acquire.emit(True, self.QSpinBox_acquisition_stacks.value(),
+                                          self.QSpinBox_acquisition_frames.value())
         else:
-            self.Signal_data_acquire.emit(False, 0)
+            self.Signal_data_acquire.emit(False, 0, 0)
 
 
 if __name__ == '__main__':

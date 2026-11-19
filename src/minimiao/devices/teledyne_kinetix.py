@@ -517,14 +517,16 @@ class KinetixCamera:
     MAX_SEQUENCE_BYTES = 8 * 2 ** 30  # PVCAM holds a whole sequence in RAM
 
     def start_recording(self, path, n_frames=None, buffer_mb=2048, bigtiff=False, preview=None,
-                        frames_per_file=None):
+                        frames_per_file=None, max_frames=None):
         """
         Record into one TIFF at `path`.
         n_frames > 0: fixed-length sequence (start_seq). PVCAM buffers all n frames, so a
                       slow reader delays frames but cannot lose them; stops by itself.
         n_frames None/0: continuous (start_live, ring buffer of up to 1024 frames) until stop.
         frames_per_file > 0 (continuous only): a new TIFF every that many frames
-                      (<stem>_00000.tif, _00001.tif, ...).
+                      (<stem>_00000.tif, _00001.tif, ...), each closed as soon as it is full.
+        max_frames > 0 (continuous only): stop reading after that many frames (recording_progress
+                      then reports done); the camera keeps running until stop_recording().
         """
         frame_bytes = max(1, self._settings.pixels_x * self._settings.pixels_y * 2)
         units = self._exposure_units()
@@ -542,12 +544,15 @@ class KinetixCamera:
             mode = f"sequence of {n_frames} frames"
         else:
             self._settings.buffer_frame_count = int(min(1024, max(16, buffer_mb * 2 ** 20 // frame_bytes)))
-            self.recorder = run_threads.StackRecorder(self._poll_one, path, bigtiff=bigtiff, preview=preview,
-                                                      frames_per_file=frames_per_file)
+            self.recorder = run_threads.StackRecorder(
+                self._poll_one, path, bigtiff=bigtiff, preview=preview, frames_per_file=frames_per_file,
+                max_frames=max_frames or None,
+                on_file_saved=lambda f: self.logg.info(f"Stack saved: {f['file']} ({f['n_frames']} frames)"))
             self._sequence = False
             self.cam.start_live(exp_time=units, buffer_frame_count=self._settings.buffer_frame_count)
             mode = (f"continuous, buffer {self._settings.buffer_frame_count} frames"
-                    + (f", a new file every {frames_per_file} frames" if frames_per_file else ""))
+                    + (f", a new file every {frames_per_file} frames" if frames_per_file else "")
+                    + (f", {max_frames} frames in total" if max_frames else ""))
         self.recorder.start()
         self.logg.info(f"Recording to {path} ({mode}; up to {self.recorder.max_queue_bytes / 2 ** 30:.1f} GB "
                        f"of frames can wait in RAM for the disk)")

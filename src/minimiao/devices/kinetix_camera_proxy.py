@@ -365,13 +365,15 @@ class KinetixCameraProxy:
         return self._call('recording_progress')
 
     def start_recording(self, path, n_frames=None, buffer_mb=2048, bigtiff=False, preview=True,
-                        frames_per_file=None):
+                        frames_per_file=None, max_frames=None):
         """Frames are written to `path` inside the camera process; ~10 Hz preview reaches self.data.
         n_frames > 0: fixed-length sequence; otherwise continuous until stop_recording().
         preview=False: no frames cross to this process (nothing to unpickle here while timing matters).
-        frames_per_file > 0 (continuous only): a new TIFF every that many frames."""
+        frames_per_file > 0 (continuous only): a new TIFF every that many frames.
+        max_frames > 0 (continuous only): stop reading after that many frames."""
         self.data = _ProxyData()
-        self._cmd_q.put(('start_recording', (path, n_frames, buffer_mb, bigtiff), {'preview': preview, 'frames_per_file': frames_per_file}))
+        self._cmd_q.put(('start_recording', (path, n_frames, buffer_mb, bigtiff), {'preview': preview, 'frames_per_file': frames_per_file,
+                                                                      'max_frames': max_frames}))
         status, val, settings = self._recv()
         self._apply(settings)
         if status == 'error':
