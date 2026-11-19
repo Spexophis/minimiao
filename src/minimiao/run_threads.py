@@ -168,7 +168,9 @@ def auto_queue_mb(reserve_gb=4.0, fraction=0.7, floor_mb=2048):
 
 class StackRecorder:
     """
-    Lossless recording of a camera stream into ONE multi-page (3D) TIFF.
+    Lossless recording of a camera stream into one multi-page (3D) TIFF, or into a series of
+    TIFFs of frames_per_file frames each (<path stem>_00000.tif, _00001.tif, ...; the last one
+    holds the remainder).
 
     poll() must return (frame ndarray, frame_nr) for the next unread frame,
     or None if no frame arrived within its own timeout. A poller thread
@@ -190,9 +192,11 @@ class StackRecorder:
     """
 
     def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None,
-                 max_queue_mb=None):
+                 max_queue_mb=None, frames_per_file=None):
         self.poll = poll
         self.path = str(path)
+        self.frames_per_file = int(frames_per_file) if frames_per_file else None
+        self.files = []  # [{"file", "first_frame", "n_frames"}] in recording order
         self.bigtiff = bigtiff
         self.preview = preview
         self.preview_period = 1.0 / preview_hz if preview_hz else None
@@ -268,21 +272,39 @@ class StackRecorder:
             self._queue.put(None)
 
     def _write_loop(self):
+        import os
         import time
+        tw = None
+        n_written = 0
         try:
-            with tf.TiffWriter(self.path, bigtiff=self.bigtiff) as tw:
-                while True:
-                    frame = self._queue.get()
-                    if frame is None:
-                        break
-                    if self.shape is None:
-                        self.shape, self.dtype = frame.shape, frame.dtype
-                    t0 = time.perf_counter()
-                    tw.write(frame, contiguous=True, photometric="minisblack")
-                    self.write_busy_s += time.perf_counter() - t0
-                    self.bytes_written += frame.nbytes
-                    self._release(frame.nbytes)
+            while True:
+                frame = self._queue.get()
+                if frame is None:
+                    break
+                if self.shape is None:
+                    self.shape, self.dtype = frame.shape, frame.dtype
+                t0 = time.perf_counter()
+                if tw is None or (self.frames_per_file and self.files[-1]["n_frames"] >= self.frames_per_file):
+                    if tw is not None:
+                        tw.close()
+                    path = (self.path if not self.frames_per_file else
+                            f"{os.path.splitext(self.path)[0]}_{len(self.files):05d}.tif")
+                    tw = tf.TiffWriter(path, bigtiff=self.bigtiff)
+                    self.files.append({"file": os.path.basename(path), "first_frame": n_written, "n_frames": 0})
+                tw.write(frame, contiguous=True, photometric="minisblack")
+                self.files[-1]["n_frames"] += 1
+                n_written += 1
+                self.write_busy_s += time.perf_counter() - t0
+                self.bytes_written += frame.nbytes
+                self._release(frame.nbytes)
+            if tw is not None:
+                tw.close()
         except Exception as e:
+            try:
+                if tw is not None:
+                    tw.close()
+            except Exception:
+                pass
             self.error = f"write: {e}"
             with self._space:
                 self._space.notify_all()
@@ -346,6 +368,8 @@ class StackRecorder:
         dt = np.diff(self.timestamps) if len(self.timestamps) > 1 else np.array([])
         return {
             "path": self.path,
+            "frames_per_file": self.frames_per_file,
+            "files": self.files,
             "n_frames": len(self.frame_nrs),
             "n_frames_requested": self.max_frames,
             "complete": None if not self.max_frames else len(self.frame_nrs) >= self.max_frames,

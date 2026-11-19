@@ -76,7 +76,7 @@ class ControlPanel(QWidget):
         scmos_scroll_layout.addRow(self.QComboBox_scmos_readout)
         scmos_scroll_layout.addRow(cw.LabelWidget(str('FPS')), self.QLCDNumber_scmos_frame_rate)
         scmos_scroll_layout.addRow(self.QPushButton_video)
-        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frames (0 = until stop)')), self.QSpinBox_acquisition_number)
+        scmos_scroll_layout.addRow(cw.LabelWidget(str('Frames per file (0 = one file)')), self.QSpinBox_acquisition_number)
         scmos_scroll_layout.addRow(self.QPushButton_acquire)
 
         self.QPushButton_SLM_Correction = cw.PushButtonWidget('Load Correction')

@@ -32,8 +32,6 @@ class CommandExecutor(QObject):
         self.runner = None
         self._fire_thread = None
         self._recording = None  # Acquire-button recording in progress
-        self._acq_timer = QTimer(self)
-        self._acq_timer.timeout.connect(self._check_acquisition_done)
         self._fps_timer = QTimer(self)  # measured camera frame rate -> FPS display, twice a second
         self._fps_timer.timeout.connect(self._update_fps_display)
         self._fps_timer.start(500)
@@ -558,8 +556,9 @@ class CommandExecutor(QObject):
 
     @pyqtSlot(bool, int)
     def acquisition(self, sw: bool, n_frames: int):
-        """Acquire button: record into one TIFF (+ JSON). n_frames > 0: exactly n frames
-        (camera sequence mode, stops by itself); 0: continuous until the button is released."""
+        """Acquire button: record continuously until the button is released (+ one JSON).
+        n_frames > 0: a new TIFF every n frames (<name>_00000.tif, _00001.tif, ...);
+        0: everything in one TIFF."""
         if sw:
             self.start_acquisition(n_frames)
         else:
@@ -605,7 +604,7 @@ class CommandExecutor(QObject):
             cam.prepare_recording("internal", port, speed, gain)
             info = cam.get_recording_info() or {}
             frame_bytes = 2 * int(info.get("pixels_x") or 2400) * int(info.get("pixels_y") or 2400)
-            # continuous recordings have no known length: BigTIFF so they can exceed 4 GB
+            # one open-ended file: BigTIFF so it can exceed 4 GB; split files: only if one file can
             bigtiff = (not n_frames) or n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES
             path = os.path.join(self.path, name + ".tif")
             rate_text, rate_warn = acq.data_rate_message(info)
@@ -613,7 +612,7 @@ class CommandExecutor(QObject):
             if rate_warn:
                 self.logg.warning(rate_warn)
             t0 = time.perf_counter()
-            cam.start_recording(path, n_frames=n_frames or None, bigtiff=bigtiff)
+            cam.start_recording(path, n_frames=None, bigtiff=bigtiff, frames_per_file=n_frames or None)
             if getattr(cam, "data", None) is not None:
                 cam.data.on_update(self.viewer.on_camera_update_from_thread)
         except Exception as e:
@@ -624,35 +623,21 @@ class CommandExecutor(QObject):
                            "rate_warning": rate_warn,
                            "readout": {"port": port, "speed": speed, "gain": gain},
                            "created": time.strftime("%Y-%m-%d %H:%M:%S")}
-        if n_frames:
-            self._acq_timer.start(200)
-        self.logg.info(f"Acquisition started: {path} "
-                       f"({f'{n_frames} frames' if n_frames else 'until Acquire is released'})")
-
-    def _check_acquisition_done(self):
-        if self._recording is None or self._recording.get("saving"):
-            self._acq_timer.stop()
-            return
-        try:
-            prog = self.devs.camera.recording_progress()
-        except Exception as e:
-            self.logg.error(f"Acquisition progress: {e}")
-            return
-        if prog.get("done"):
-            self.stop_acquisition()
+        self.logg.info(f"Acquisition started: {name}{'_NNNNN' if n_frames else ''}.tif "
+                       f"({f'a new file every {n_frames} frames, ' if n_frames else ''}until Acquire is released)")
 
     def stop_acquisition(self):
         """Stop the camera and save in the background: at kHz rates gigabytes may still be waiting
         in RAM for the disk, and the GUI must not freeze meanwhile. self._recording stays set
         (refusing new acquisitions / tasks) until the file is complete."""
-        self._acq_timer.stop()
         self._release_acquire_button()
         rec = self._recording
         if rec is None or rec.get("saving"):
             return
         rec["saving"] = True
         rec["context"] = self._acq_context()  # read the GUI here, not in the saving thread
-        self.logg.info(f"Acquisition stopping; writing the remaining frames to {rec['path']} ...")
+        target = os.path.splitext(rec["path"])[0] + ("_NNNNN.tif" if rec["n_frames"] else ".tif")
+        self.logg.info(f"Acquisition stopping; writing the remaining frames to {target} ...")
         threading.Thread(target=self._finish_acquisition, args=(rec,), daemon=True).start()
 
     def _finish_acquisition(self, rec):
@@ -673,8 +658,8 @@ class CommandExecutor(QObject):
         nrs = summary.pop("frame_nrs", []) or []
         meta = {"schema": "minimiao.acquisition/1", "created": rec["created"],
                 "software": {"package": "minimiao", "git_commit": acq._git_commit()},
-                "files": {"stack": os.path.basename(rec["path"]), "bigtiff": rec["bigtiff"]},
-                "frames_requested": rec["n_frames"] or None,
+                "files": {"stacks": summary.pop("files", None) or [{"file": os.path.basename(rec["path"])}],
+                          "frames_per_file": rec["n_frames"] or None, "bigtiff": rec["bigtiff"]},
                 "camera": dict(rec["info"], readout=rec["readout"],
                                **{k: v for k, v in summary.items() if k != "path"}),
                 "frames": {"frame_nrs": nrs, "retrieved_s_from_start": [x - rec["t0"] for x in ts],
@@ -682,9 +667,6 @@ class CommandExecutor(QObject):
                 "context": rec["context"], "warnings": []}
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
-        if summary.get("complete") is False:
-            meta["warnings"].append(f"{summary.get('n_frames')} of {summary.get('n_frames_requested')} frames "
-                                    f"(stopped early)")
         if summary.get("error"):
             meta["warnings"].append(f"recorder: {summary['error']}")
         meta["warnings"].extend(acq.recorder_warnings(summary))
@@ -697,7 +679,9 @@ class CommandExecutor(QObject):
             acq.write_json(json_path, meta)
         except Exception as e:
             self.logg.error(f"Error writing acquisition metadata: {e}")
-        self.logg.info(f"Acquisition saved: {rec['path']} ({summary.get('n_frames')} frames"
+        n_files = len(meta["files"]["stacks"])
+        self.logg.info(f"Acquisition saved: {json_path} ({summary.get('n_frames')} frames"
+                       f"{f' in {n_files} files' if n_files > 1 else ''}"
                        f"{', measured %.1f fps' % summary['measured_fps'] if summary.get('measured_fps') else ''}"
                        f", {summary.get('n_dropped', 0)} dropped)")
 
