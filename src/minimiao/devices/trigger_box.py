@@ -450,18 +450,32 @@ def pulse_train_sequence(n_pulses=5, width_ms=10.0, interval_ms=100.0, start_ms=
 
 def sequence_from_outputs(outputs, max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigger=False):
     """
-    One Sequence from per-output pulse settings (the GUI's DO#1..8 rows).
+    One Sequence from per-output settings (the GUI's DO#1..8 and AO#1..4 rows).
 
-    outputs: iterable of dicts with keys
+    Digital entries (kind "digital" or no kind): keys
         channel (1..8; DOn -> DIGn -> OUTn), start_ms, width_ms, interval_ms, n_pulses
     n_pulses == 0  -> output not used
     n_pulses == 1  -> single level pulse (DIGTRIG), any channel 1-8, whole-ms start and width
     n_pulses >= 2  -> pulse train (DIG PWM), channels 1-5, interval = onset-to-onset = 1000/N ms
 
-    Returns (Sequence, summary list of {channel, onsets_ms, width_ms, end_ms}).
+    Analog entries (kind "analog"): keys
+        channel (1..4), start_ms, duration_ms, v_start, v_stop (0-5 V)
+    duration_ms == 0 -> output not used
+    v_start == v_stop -> fixed level (ANA); otherwise a linear ramp (ANARAMP) over the duration.
+    The output returns to 0 V after start + duration. Whole-ms start and duration, 1 mV resolution.
+
+    Returns (Sequence, summary list): digital {channel, onsets_ms, width_ms, end_ms};
+    analog {kind: "analog", channel, start_ms, end_ms, v_start, v_stop}.
     """
     channels, summary = [], []
     for o in outputs:
+        if o.get("kind") == "analog":
+            ana = _analog_channel(o)
+            if ana is not None:
+                channels.append(ana)
+                summary.append({"kind": "analog", "channel": ana.channel, "start_ms": ana.start_ms,
+                                "end_ms": ana.stop_ms, "v_start": float(o["v_start"]), "v_stop": float(o["v_stop"])})
+            continue
         ch, n = int(o["channel"]), int(o["n_pulses"])
         start, width, interval = float(o["start_ms"]), float(o["width_ms"]), float(o["interval_ms"])
         if n <= 0:
@@ -489,7 +503,7 @@ def sequence_from_outputs(outputs, max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigge
             summary.append({"channel": ch, "onsets_ms": train.onsets_ms, "width_ms": width,
                             "end_ms": train.last_pulse_end_ms})
     if not channels:
-        raise ValueError("No output enabled (set N > 0 for at least one DO)")
+        raise ValueError("No output enabled (set N > 0 for a DO or a duration > 0 for an AO)")
     pwm = [c for c in channels if isinstance(c, DigitalPulse)]
     if pwm:
         freqs, widths = [c.freq_hz for c in pwm], [c.width_us for c in pwm]
@@ -498,11 +512,50 @@ def sequence_from_outputs(outputs, max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigge
             raise ValueError(f"No TriggerBox system clock fits pulse frequencies {freqs} Hz together "
                              f"(spread too wide for the shared prescaler, or pulses too short)")
     else:
-        sysclk = 1000  # level outputs only: 1 ms ticks match the ms resolution
+        sysclk = 1000  # level outputs / analog only: 1 ms ticks match the ms resolution
     seq = Sequence(sysclk_hz=sysclk, external_trigger=external_trigger)
     seq.add(*channels)
     seq.validate()
     return seq, summary
+
+
+def _analog_channel(o):
+    """AnalogFixed / AnalogRamp from one AO row, or None if the row is off (duration 0)."""
+    ch = int(o["channel"])
+    tag = f"AO#{ch}"
+    start, dur = float(o["start_ms"]), float(o["duration_ms"])
+    if dur <= 0:
+        return None
+    if not 1 <= ch <= N_ANALOG:
+        raise ValueError(f"{tag}: channel must be 1-{N_ANALOG}")
+    for name, v in (("start", start), ("duration", dur)):
+        if v < 0 or abs(v - round(v)) > 1e-9:
+            raise ValueError(f"{tag}: {name} must be a whole number of ms >= 0 (got {v:g})")
+    mv = []
+    for name in ("v_start", "v_stop"):
+        v = float(o[name])
+        if not 0 <= v * 1000 <= MAX_MV:
+            raise ValueError(f"{tag}: {name.replace('_', ' ')} {v:g} V outside 0-{MAX_MV / 1000:g} V")
+        mv.append(int(round(v * 1000)))
+    start, stop = int(round(start)), int(round(start + dur))
+    if mv[0] == mv[1]:
+        return AnalogFixed(ch, start_ms=start, stop_ms=stop, mv=mv[0])
+    return AnalogRamp(ch, start_ms=start, stop_ms=stop, start_mv=mv[0], stop_mv=mv[1])
+
+
+def describe_outputs(summary) -> str:
+    """One-line description of a sequence_from_outputs summary (for the GUI / log)."""
+    parts = []
+    for s in summary:
+        if s.get("kind") == "analog":
+            v = (f"{s['v_start']:g} V" if s["v_start"] == s["v_stop"]
+                 else f"{s['v_start']:g} -> {s['v_stop']:g} V")
+            parts.append(f"AO#{s['channel']}: {v}, {s['start_ms']:g}-{s['end_ms']:g} ms")
+        else:
+            on = s["onsets_ms"]
+            parts.append(f"DO#{s['channel']}: {len(on)} x {s['width_ms']:g} ms"
+                         + (f" every {on[1] - on[0]:g} ms" if len(on) > 1 else "") + f" from {on[0]:g} ms")
+    return "; ".join(parts)
 
 
 class TriggerBox:

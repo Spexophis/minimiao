@@ -117,7 +117,7 @@ class AcqPanel(QWidget):
         self.QDoubleSpinBox_seq_post = cw.DoubleSpinBoxWidget(0, 600, 0.1, 2, 0.5)
         self.QPushButton_slot_sequence = cw.PushButtonWidget("Run Slot Sequence")
 
-        g.addWidget(cw.LabelWidget("Slot Sequence (one recording; per slot: display -> wait -> fire DO rows)"),
+        g.addWidget(cw.LabelWidget("Slot Sequence (one recording; per slot: display -> wait -> fire trigger rows)"),
                     0, 0, 1, 4)
         g.addWidget(cw.LabelWidget("Slots (e.g. 1-6)"), 1, 0)
         g.addWidget(self.QLineEdit_seq_slots, 1, 1)
@@ -128,7 +128,7 @@ class AcqPanel(QWidget):
         g.addWidget(cw.LabelWidget("Camera post / s"), 2, 2)
         g.addWidget(self.QDoubleSpinBox_seq_post, 2, 3)
         g.addWidget(self.QPushButton_slot_sequence, 3, 3)
-        g.addWidget(cw.LabelWidget("Trigger: Ctrl Panel DO#1-8 rows (as Fire). Laser power and Name: block "
+        g.addWidget(cw.LabelWidget("Trigger: Ctrl Panel DO#1-8 and AO#1-4 rows (as Fire). Laser power and Name: block "
                                    "settings above. Camera free-runs with the Ctrl Panel settings."), 4, 0, 1, 4)
         hl = QHBoxLayout(group)
         hl.addWidget(area)

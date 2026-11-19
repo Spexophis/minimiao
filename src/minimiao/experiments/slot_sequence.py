@@ -4,7 +4,7 @@
 
 """
 Timed SLM slot sequence: one continuous camera recording over a list of SLM slots, each followed
-by one TriggerBox sequence (the Ctrl Panel DO#1..8 rows).
+by one TriggerBox sequence (the Ctrl Panel DO#1..8 and AO#1..4 rows).
 
     camera start (free-running)
     [pre delay]
@@ -74,7 +74,7 @@ class SlotSequenceSettings:
 
 
 def build_trigger(outputs):
-    """TriggerBox Sequence from the DO rows; returns (seq, summary, duration_ms, last_pulse_end_ms)."""
+    """TriggerBox Sequence from the DO / AO rows; returns (seq, summary, duration_ms, last_pulse_end_ms)."""
     seq, summary = tbx.sequence_from_outputs(outputs)
     return seq, summary, float(seq.duration_ms), float(max(s["end_ms"] for s in summary))
 

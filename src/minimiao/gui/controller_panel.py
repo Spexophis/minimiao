@@ -21,6 +21,7 @@ class ControlPanel(QWidget):
     Signal_trigger_reset = pyqtSignal()
     Signal_trigger_fire = pyqtSignal(list)
     N_TTL = 8
+    N_AO = 4
     Signal_video = pyqtSignal(bool)
     Signal_data_acquire = pyqtSignal(bool, int)
 
@@ -137,7 +138,30 @@ class ControlPanel(QWidget):
             trigger_scroll_layout.addWidget(pulse, row, 2, 1, 1)
             trigger_scroll_layout.addWidget(interval, row, 3, 1, 1)
             trigger_scroll_layout.addWidget(count, row, 4, 1, 1)
-        trigger_scroll_layout.addWidget(self.QLabel_trigger_status, 3 + self.N_TTL, 0, 1, 5)
+        row = 3 + self.N_TTL
+        trigger_scroll_layout.addWidget(cw.FrameWidget(), row, 0, 1, 5)
+        for col, text in enumerate(('', 'Start / ms', 'Duration / ms', 'Ramp start / V', 'Ramp stop / V')):
+            if text:
+                trigger_scroll_layout.addWidget(cw.LabelWidget(text), row + 1, col, 1, 1)
+        for n in range(1, self.N_AO + 1):
+            start = cw.DoubleSpinBoxWidget(0, 600000, 1, 0, 0)
+            duration = cw.DoubleSpinBoxWidget(0, 600000, 10, 0, 0)  # 0 = output off
+            v_start = cw.DoubleSpinBoxWidget(0, 5, 0.1, 3, 0.0)
+            v_stop = cw.DoubleSpinBoxWidget(0, 5, 0.1, 3, 0.0)
+            setattr(self, f"QDoubleSpinBox_ao_start_{n}", start)
+            setattr(self, f"QDoubleSpinBox_ao_duration_{n}", duration)
+            setattr(self, f"QDoubleSpinBox_ao_vstart_{n}", v_start)
+            setattr(self, f"QDoubleSpinBox_ao_vstop_{n}", v_stop)
+            r = row + 1 + n
+            trigger_scroll_layout.addWidget(cw.LabelWidget(f'AO#{n}'), r, 0, 1, 1)
+            trigger_scroll_layout.addWidget(start, r, 1, 1, 1)
+            trigger_scroll_layout.addWidget(duration, r, 2, 1, 1)
+            trigger_scroll_layout.addWidget(v_start, r, 3, 1, 1)
+            trigger_scroll_layout.addWidget(v_stop, r, 4, 1, 1)
+        trigger_scroll_layout.addWidget(cw.LabelWidget("AO: duration 0 = off; equal start / stop V = fixed level; "
+                                                       "0 V after start + duration"),
+                                        row + 2 + self.N_AO, 0, 1, 5)
+        trigger_scroll_layout.addWidget(self.QLabel_trigger_status, row + 3 + self.N_AO, 0, 1, 5)
 
         group_layout = QHBoxLayout(group)
         group_layout.addWidget(trigger_scroll_area)
@@ -171,7 +195,7 @@ class ControlPanel(QWidget):
         self.QPushButton_laser_473.clicked.connect(self.set_laser_473)
         self.QDoubleSpinBox_laserpower_473.valueChanged.connect(self.pw_laser_473)
         self.QPushButton_reset_trigger.clicked.connect(self.reset_trigger)
-        self.QPushButton_fire_trigger.clicked.connect(lambda: self.Signal_trigger_fire.emit(self.get_digital_parameters()))
+        self.QPushButton_fire_trigger.clicked.connect(lambda: self.Signal_trigger_fire.emit(self.get_trigger_outputs()))
         self.QPushButton_video.clicked.connect(self.run_video)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
 
@@ -276,6 +300,18 @@ class ControlPanel(QWidget):
                  "width_ms": self._ttl_widget("pulse", n).value(),
                  "interval_ms": self._ttl_widget("interval", n).value(),
                  "n_pulses": self._ttl_widget("n", n).value()} for n in range(1, self.N_TTL + 1)]
+
+    def get_analog_parameters(self):
+        """Per-output settings for TriggerBox AO#1..4 (all rows; duration_ms = 0 means off)."""
+        return [{"kind": "analog", "channel": n,
+                 "start_ms": getattr(self, f"QDoubleSpinBox_ao_start_{n}").value(),
+                 "duration_ms": getattr(self, f"QDoubleSpinBox_ao_duration_{n}").value(),
+                 "v_start": getattr(self, f"QDoubleSpinBox_ao_vstart_{n}").value(),
+                 "v_stop": getattr(self, f"QDoubleSpinBox_ao_vstop_{n}").value()} for n in range(1, self.N_AO + 1)]
+
+    def get_trigger_outputs(self):
+        """All TriggerBox rows (DO#1..8 then AO#1..4) for trigger_box.sequence_from_outputs."""
+        return self.get_digital_parameters() + self.get_analog_parameters()
 
     def display_trigger_status(self, text: str):
         self.QLabel_trigger_status.setText(text)

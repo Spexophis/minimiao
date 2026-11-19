@@ -121,7 +121,7 @@ class CommandExecutor(QObject):
 
     @pyqtSlot(list)
     def fire_trigger(self, outputs: list):
-        """Build one sequence from the DO#1..8 rows (start / pulse / interval / N) and fire it."""
+        """Build one sequence from the DO#1..8 and AO#1..4 rows and fire it."""
         tb = getattr(self.devs, "trg", None)
         if tb is None:
             self.logg.error("TriggerBox not connected")
@@ -140,9 +140,7 @@ class CommandExecutor(QObject):
             self.logg.error(f"Trigger settings: {e}")
             self.ctrl_panel.display_trigger_status(f"Error: {e}")
             return
-        desc = "; ".join(f"DO#{s['channel']}: {len(s['onsets_ms'])} x {s['width_ms']:g} ms"
-                         + (f" every {s['onsets_ms'][1] - s['onsets_ms'][0]:g} ms" if len(s['onsets_ms']) > 1 else "")
-                         + f" from {s['onsets_ms'][0]:g} ms" for s in summary)
+        desc = tbx.describe_outputs(summary)
         total = max(s["end_ms"] for s in summary)
         self.logg.info(f"Firing TriggerBox ({seq.sysclk_hz} Hz clock, {total:g} ms): {desc}")
         self.ctrl_panel.display_trigger_status(f"Firing... {desc}")
@@ -306,7 +304,7 @@ class CommandExecutor(QObject):
 
     @pyqtSlot(dict)
     def run_slot_sequence(self, settings: dict):
-        """One recording over several SLM slots; per slot: display, wait, fire the DO rows (timed)."""
+        """One recording over several SLM slots; per slot: display, wait, fire the DO / AO rows (timed)."""
         if self._slm_busy():
             return
         if self._trigger_firing():
@@ -319,7 +317,7 @@ class CommandExecutor(QObject):
         if missing:
             self.logg.error(f"Slot sequence needs: {', '.join(missing)} (not connected)")
             return
-        outputs = self.ctrl_panel.get_digital_parameters()
+        outputs = self.ctrl_panel.get_trigger_outputs()
         try:
             ss = slseq.SlotSequenceSettings(**{**settings, "slots": acq.parse_slots(settings["slots"])})
             ss.validate()
