@@ -516,7 +516,7 @@ class KinetixCamera:
 
     MAX_SEQUENCE_BYTES = 8 * 2 ** 30  # PVCAM holds a whole sequence in RAM
 
-    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False, preview=None):
+    def start_recording(self, path, n_frames=None, buffer_mb=2048, bigtiff=False, preview=None):
         """
         Record into one TIFF at `path`.
         n_frames > 0: fixed-length sequence (start_seq). PVCAM buffers all n frames, so a
@@ -544,7 +544,8 @@ class KinetixCamera:
             self.cam.start_live(exp_time=units, buffer_frame_count=self._settings.buffer_frame_count)
             mode = f"continuous, buffer {self._settings.buffer_frame_count} frames"
         self.recorder.start()
-        self.logg.info(f"Recording to {path} ({mode})")
+        self.logg.info(f"Recording to {path} ({mode}; up to {self.recorder.max_queue_bytes / 2 ** 30:.1f} GB "
+                       f"of frames can wait in RAM for the disk)")
 
     def recording_progress(self):
         """{'n_frames': frames received so far, 'done': fixed-length sequence complete}"""

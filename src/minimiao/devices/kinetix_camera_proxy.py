@@ -364,7 +364,7 @@ class KinetixCameraProxy:
     def recording_progress(self):
         return self._call('recording_progress')
 
-    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False, preview=True):
+    def start_recording(self, path, n_frames=None, buffer_mb=2048, bigtiff=False, preview=True):
         """Frames are written to `path` inside the camera process; ~10 Hz preview reaches self.data.
         n_frames > 0: fixed-length sequence; otherwise continuous until stop_recording().
         preview=False: no frames cross to this process (nothing to unpickle here while timing matters)."""

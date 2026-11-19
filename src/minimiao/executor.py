@@ -216,7 +216,7 @@ class CommandExecutor(QObject):
             self.logg.error("TriggerBox is busy firing; wait or press Stop / Reset")
             return
         if self._recording is not None:
-            self.logg.error("Acquire is recording; release it first")
+            self.logg.error("Acquire is recording or still saving; release it / wait for 'Acquisition saved'")
             return
         missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
         if missing:
@@ -311,7 +311,7 @@ class CommandExecutor(QObject):
             self.logg.error("TriggerBox is busy firing; wait or press Stop / Reset")
             return
         if self._recording is not None:
-            self.logg.error("Acquire is recording; release it first")
+            self.logg.error("Acquire is recording or still saving; release it / wait for 'Acquisition saved'")
             return
         missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
         if missing:
@@ -582,6 +582,10 @@ class CommandExecutor(QObject):
             self._release_acquire_button()
             return
         if self._recording is not None:
+            if self._recording.get("saving"):
+                self.logg.error("The previous acquisition is still being written to disk; wait for "
+                                "'Acquisition saved' in the log")
+                self._release_acquire_button()
             return
         if (getattr(self, "task_worker", None) is not None and self.task_worker.isRunning()) or self._trigger_firing():
             self.logg.error("Another task is using the camera / TriggerBox; acquisition refused")
@@ -626,7 +630,7 @@ class CommandExecutor(QObject):
                        f"({f'{n_frames} frames' if n_frames else 'until Acquire is released'})")
 
     def _check_acquisition_done(self):
-        if self._recording is None:
+        if self._recording is None or self._recording.get("saving"):
             self._acq_timer.stop()
             return
         try:
@@ -638,11 +642,28 @@ class CommandExecutor(QObject):
             self.stop_acquisition()
 
     def stop_acquisition(self):
+        """Stop the camera and save in the background: at kHz rates gigabytes may still be waiting
+        in RAM for the disk, and the GUI must not freeze meanwhile. self._recording stays set
+        (refusing new acquisitions / tasks) until the file is complete."""
         self._acq_timer.stop()
-        rec, self._recording = self._recording, None
         self._release_acquire_button()
-        if rec is None:
+        rec = self._recording
+        if rec is None or rec.get("saving"):
             return
+        rec["saving"] = True
+        rec["context"] = self._acq_context()  # read the GUI here, not in the saving thread
+        self.logg.info(f"Acquisition stopping; writing the remaining frames to {rec['path']} ...")
+        threading.Thread(target=self._finish_acquisition, args=(rec,), daemon=True).start()
+
+    def _finish_acquisition(self, rec):
+        try:
+            self._save_acquisition(rec)
+        except Exception as e:
+            self.logg.error(f"Error saving acquisition: {e}")
+        finally:
+            self._recording = None
+
+    def _save_acquisition(self, rec):
         try:
             summary = self.devs.camera.stop_recording() or {}
         except Exception as e:
@@ -658,7 +679,7 @@ class CommandExecutor(QObject):
                                **{k: v for k, v in summary.items() if k != "path"}),
                 "frames": {"frame_nrs": nrs, "retrieved_s_from_start": [x - rec["t0"] for x in ts],
                            "note": "host time each frame was read from the SDK buffer, relative to start"},
-                "context": self._acq_context(), "warnings": []}
+                "context": rec["context"], "warnings": []}
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
         if summary.get("complete") is False:
@@ -1047,7 +1068,7 @@ class CommandExecutor(QObject):
             self.logg.error("Calibration needs both the SLM and the camera")
             return None
         if self._recording is not None:
-            self.logg.error("Acquire is recording; release it first")
+            self.logg.error("Acquire is recording or still saving; release it / wait for 'Acquisition saved'")
             return None
         power = self.ctrl_panel.QDoubleSpinBox_laserpower_473.value()
         laser_was_on = self.ctrl_panel.QPushButton_laser_473.isChecked()

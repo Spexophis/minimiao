@@ -133,6 +133,39 @@ class TaskWorker(QThread):
         pass
 
 
+def available_ram_bytes():
+    """Physical RAM currently available to new allocations (bytes), or None if unknown."""
+    try:
+        import sys
+        if sys.platform == "win32":
+            import ctypes
+
+            class MEMORYSTATUSEX(ctypes.Structure):
+                _fields_ = [("dwLength", ctypes.c_ulong), ("dwMemoryLoad", ctypes.c_ulong),
+                            ("ullTotalPhys", ctypes.c_ulonglong), ("ullAvailPhys", ctypes.c_ulonglong),
+                            ("ullTotalPageFile", ctypes.c_ulonglong), ("ullAvailPageFile", ctypes.c_ulonglong),
+                            ("ullTotalVirtual", ctypes.c_ulonglong), ("ullAvailVirtual", ctypes.c_ulonglong),
+                            ("ullAvailExtendedVirtual", ctypes.c_ulonglong)]
+            st = MEMORYSTATUSEX()
+            st.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(st)):
+                return int(st.ullAvailPhys)
+            return None
+        import os
+        return int(os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE"))
+    except Exception:
+        return None
+
+
+def auto_queue_mb(reserve_gb=4.0, fraction=0.7, floor_mb=2048):
+    """RAM for frames waiting for the disk: 70% of available RAM, leaving >= 4 GB free (at least 2 GB)."""
+    avail = available_ram_bytes()
+    if not avail:
+        return floor_mb
+    mb = min(fraction * avail, avail - reserve_gb * 2 ** 30) / 2 ** 20
+    return int(max(floor_mb, mb))
+
+
 class StackRecorder:
     """
     Lossless recording of a camera stream into ONE multi-page (3D) TIFF.
@@ -149,13 +182,15 @@ class StackRecorder:
     max_frames: fixed-length recording (camera sequence mode). The poller stops by
     itself after max_frames frames; wait_done() blocks until then.
 
-    max_queue_mb: RAM for frames waiting to be written. If the disk is slower than the
-    camera, the poller waits once this is full (the camera's own buffer then fills; frames
-    lost after that show up as frame_nr gaps) instead of growing memory until the PC runs out.
+    max_queue_mb: RAM for frames waiting to be written (None: auto_queue_mb(), i.e. most of the
+    free RAM, so a short fast recording can sit in RAM and be written out afterwards). If the
+    disk is slower than the camera, the poller waits once this is full (the camera's own buffer
+    then fills; frames lost after that show up as frame_nr gaps) instead of growing memory until
+    the PC runs out.
     """
 
     def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None,
-                 max_queue_mb=2048):
+                 max_queue_mb=None):
         self.poll = poll
         self.path = str(path)
         self.bigtiff = bigtiff
@@ -170,7 +205,7 @@ class StackRecorder:
         self.frame_nrs = []
         self.timestamps = []  # time.perf_counter() when each frame was retrieved
         self.max_backlog = 0
-        self.max_queue_bytes = int(max_queue_mb * 2 ** 20)
+        self.max_queue_bytes = int((auto_queue_mb() if max_queue_mb is None else max_queue_mb) * 2 ** 20)
         self._queued_bytes = 0
         self._space = threading.Condition()
         self.max_backlog_bytes = 0
@@ -294,7 +329,15 @@ class StackRecorder:
         self._t_stop = time.perf_counter()
         self._stop.set()
         self._poller.join(timeout=timeout)
-        self._writer.join(timeout=timeout)
+        t_flush, last = time.perf_counter(), self.bytes_written
+        while self._writer.is_alive():  # flush the RAM backlog; give up only if writing stalls
+            self._writer.join(timeout=1.0)
+            if self.bytes_written != last:
+                t_flush, last = time.perf_counter(), self.bytes_written
+            elif time.perf_counter() - t_flush > timeout:
+                self.error = (self.error or "") + f" writer stalled for {timeout:.0f} s; file may be incomplete"
+                break
+        self.flush_s = time.perf_counter() - self._t_stop
         nrs = [n for n in self.frame_nrs if n is not None]
         dropped = []
         for a, b in zip(nrs[:-1], nrs[1:]):
@@ -317,6 +360,7 @@ class StackRecorder:
             "max_write_backlog_mb": self.max_backlog_bytes / 2 ** 20,
             "write_queue_limit_mb": self.max_queue_bytes / 2 ** 20,
             "poller_blocked_s": self.blocked_s,
+            "stop_to_saved_s": getattr(self, "flush_s", None),
             "camera_fps": self._camera_fps(nrs),
             "data_mb_s": (self._camera_fps(nrs) * self.bytes_per_frame / 2 ** 20
                           if self._camera_fps(nrs) and self.shape is not None else None),
