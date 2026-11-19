@@ -13,6 +13,7 @@ from PyQt6.QtCore import QObject, pyqtSlot, pyqtSignal, QTimer
 from . import run_threads
 from .computations import slm_calibration as slm_cal
 from .experiments import acquisition as acq
+from .experiments import slot_sequence as slseq
 from .devices import trigger_box as tbx
 
 
@@ -86,6 +87,7 @@ class CommandExecutor(QObject):
         self.acq_panel.Signal_run_block.connect(self.run_acquisition_block)
         self.acq_panel.Signal_run_slot_loop.connect(self.run_slot_loop)
         self.acq_panel.Signal_run_power_loop.connect(self.run_power_loop)
+        self.acq_panel.Signal_run_slot_sequence.connect(self.run_slot_sequence)
         self.sig_progress.connect(self._show_progress)
 
     def _initial_setup(self):
@@ -301,6 +303,69 @@ class CommandExecutor(QObject):
             s = runner.run_power_loop(bs, powers, folder, interval_s)
             self.logg.info(f"Power loop saved: {folder} ({s['n_blocks']} blocks)")
         self._start_acquisition_task("Power Loop", settings, job)
+
+    @pyqtSlot(dict)
+    def run_slot_sequence(self, settings: dict):
+        """One recording over several SLM slots; per slot: display, wait, fire the DO rows (timed)."""
+        if self._slm_busy():
+            return
+        if self._trigger_firing():
+            self.logg.error("TriggerBox is busy firing; wait or press Stop / Reset")
+            return
+        if self._recording is not None:
+            self.logg.error("Acquire is recording; release it first")
+            return
+        missing = [n for n in ("camera", "slm", "laser", "trg") if getattr(self.devs, n, None) is None]
+        if missing:
+            self.logg.error(f"Slot sequence needs: {', '.join(missing)} (not connected)")
+            return
+        outputs = self.ctrl_panel.get_digital_parameters()
+        try:
+            ss = slseq.SlotSequenceSettings(**{**settings, "slots": acq.parse_slots(settings["slots"])})
+            ss.validate()
+            seq, summary, dur_ms, _ = slseq.build_trigger(outputs)
+        except Exception as e:
+            self.logg.error(f"Invalid slot sequence settings: {e}")
+            return
+        max_p = self.ctrl_panel.QDoubleSpinBox_laserpower_473.maximum()
+        if ss.laser_power_mw > max_p:
+            self.logg.error(f"Laser power {ss.laser_power_mw} mW exceeds {max_p} mW")
+            return
+        unwritten = [s for s in ss.slots if s not in self.slot_patterns]
+        if unwritten:
+            self.logg.warning(f"Slot sequence: slot(s) {unwritten} not written in this session")
+        if getattr(self.viewer, "live_worker", None) is not None:
+            self.logg.info("Stopping live video for the slot sequence")
+            self.stop_video()
+            self.ctrl_panel.QPushButton_video.setChecked(False)
+        self.set_camera_roi()
+        readout = self.ctrl_panel.get_scmos_readout()
+        runner = slseq.SlotSequenceRunner(self.devs, self.logg, slot_info=self._slot_info,
+                                          context=self._acq_context(), progress=self.sig_progress.emit)
+        self.runner = runner
+        stem = os.path.join(self.path, f"{time.strftime('%Y%m%d_%H%M%S')}"
+                                       f"{'_' + ss.name if ss.name else ''}_slotseq")
+        self.logg.info(f"Slot sequence: slots {ss.slots}, {ss.slm_to_trigger_ms:g} ms SLM -> trigger, "
+                       f"{dur_ms:g} ms TriggerBox sequence per slot ({seq.sysclk_hz} Hz clock)")
+
+        def task():
+            try:
+                runner.prepare_camera(readout)
+                meta = runner.run(ss, outputs, stem)
+                st = meta.get("delay_stats_ms", {})
+                self.logg.info(f"Slot sequence saved: {stem}.tif ({meta['camera'].get('n_frames')} frames); "
+                               f"SLM -> RUN {st.get('mean', float('nan')):.3f} ms "
+                               f"(min {st.get('min', float('nan')):.3f}, max {st.get('max', float('nan')):.3f}); "
+                               f"warnings: {meta['warnings'] or 'none'}")
+            except acq.AcquisitionAborted:
+                self.logg.info("Slot sequence aborted; partial data and metadata saved")
+            except Exception as e:
+                self.logg.error(f"Slot sequence failed: {e}")
+
+        self._after_task = lambda: setattr(self, "runner", None)
+        self.vw.get_dialog("Slot Sequence", interrupt=True)
+        self.vw.dialog.dialog_closed.connect(runner.abort.set)
+        self.run_task(task=task)
 
     CORRECTION_SLOT = 0  # holds the correction pattern; never overwritten by holograms
     FIRST_HOLOGRAM_SLOT = 1

@@ -108,7 +108,8 @@ def _camera_worker(cmd_queue, result_queue, frame_queue):
 
         elif cmd == 'start_recording':
             try:
-                cam.start_recording(*args, preview=_fwd, **kwargs)
+                want_preview = kwargs.pop('preview', True)
+                cam.start_recording(*args, preview=_fwd if want_preview else None, **kwargs)
                 result_queue.put(('ok', None, _snap(cam)))
             except Exception as e:
                 result_queue.put(('error', str(e), _snap(cam)))
@@ -363,11 +364,12 @@ class KinetixCameraProxy:
     def recording_progress(self):
         return self._call('recording_progress')
 
-    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False):
+    def start_recording(self, path, n_frames=None, buffer_mb=512, bigtiff=False, preview=True):
         """Frames are written to `path` inside the camera process; ~10 Hz preview reaches self.data.
-        n_frames > 0: fixed-length sequence; otherwise continuous until stop_recording()."""
+        n_frames > 0: fixed-length sequence; otherwise continuous until stop_recording().
+        preview=False: no frames cross to this process (nothing to unpickle here while timing matters)."""
         self.data = _ProxyData()
-        self._cmd_q.put(('start_recording', (path, n_frames, buffer_mb, bigtiff), {}))
+        self._cmd_q.put(('start_recording', (path, n_frames, buffer_mb, bigtiff), {'preview': preview}))
         status, val, settings = self._recv()
         self._apply(settings)
         if status == 'error':

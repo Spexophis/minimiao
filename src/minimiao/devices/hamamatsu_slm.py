@@ -2,6 +2,8 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
+import time
+
 import numpy as np
 from PIL import Image
 import ctypes as ct
@@ -137,6 +139,15 @@ class HamamatsuSLM:
             self.logg.info(f"Display Slot: {slot_no}")
         else:
             self.logg.error(f"Failed to display Slot: {slot_no}")
+
+    def display_timed(self, slot_no=0):
+        """Change the displayed slot; returns perf_counter (before, after) the driver call. No logging."""
+        t0 = time.perf_counter()
+        ret = self.lib.Change_DispSlot(self.bid, slot_no)
+        t1 = time.perf_counter()
+        if ret != 1:
+            raise RuntimeError(f"Failed to display Slot: {slot_no}")
+        return t0, t1
 
     def check_temp(self):
         head_temp = c_double()

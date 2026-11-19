@@ -574,6 +574,59 @@ class TriggerBox:
             warnings.warn(f"{cmd}: {reply}")
         return reply
 
+    # ---- low-latency path (timed experiments) -----------------------------
+    def _check_reply(self, cmd: str, reply: str) -> str:
+        m = re.search(r"ERR\s*(\d+)\s*:?\s*(.*)", reply)
+        if m and self.raise_on_error:
+            raise TriggerBoxError(int(m.group(1)), m.group(2).strip(), cmd)
+        return reply
+
+    def write_timed(self, cmd: str) -> tuple[float, float]:
+        """
+        Write one command without waiting for the reply; returns perf_counter (before, after) the write.
+        The reply stays in the input buffer: collect it with read_reply_fast(). Hold self._lock around
+        the pair if other threads could talk to the box.
+        """
+        data = cmd.strip().encode("ascii") + b"\r"
+        self._ser.reset_input_buffer()
+        t0 = time.perf_counter()
+        self._ser.write(data)
+        t1 = time.perf_counter()
+        return t0, t1
+
+    def read_reply_fast(self, cmd: str, timeout: float = 1.0, quiet: float = 0.003) -> str:
+        """
+        Reply to a command sent with write_timed(): complete once a line ending has arrived and the
+        line has been idle for `quiet` s (instead of the normal 50 ms idle gap). Raises on 'ERR N'.
+        """
+        buf = bytearray()
+        t0 = last = time.perf_counter()
+        while True:
+            n = self._ser.in_waiting
+            now = time.perf_counter()
+            if n:
+                buf += self._ser.read(n)
+                last = now
+            elif buf and (b"\r" in buf or b"\n" in buf) and now - last >= quiet:
+                break
+            elif now - t0 >= timeout:
+                break
+            else:
+                time.sleep(0.0002)
+        reply = buf.decode("ascii", errors="replace").replace("\r\n", "\n").replace("\r", "\n").strip()
+        return self._check_reply(cmd.strip(), reply)
+
+    def command_fast(self, cmd: str, timeout: float = 1.0, quiet: float = 0.003) -> tuple[float, float, str]:
+        """write_timed + read_reply_fast under the lock: (t_write_start, t_write_end, reply). Not logged."""
+        with self._lock:
+            t0, t1 = self.write_timed(cmd)
+            return t0, t1, self.read_reply_fast(cmd, timeout, quiet)
+
+    def status_fast(self) -> tuple[str, int]:
+        _, _, raw = self.command_fast("STATUS", timeout=0.5, quiet=0.0)  # one line: done at its line end
+        m = re.search(r"STATUS:\s*([^,\r\n]+)\s*,\s*TICK:\s*(\d+)", raw, re.I)
+        return (m.group(1).strip(), int(m.group(2))) if m else (raw, -1)
+
     # ---- system commands -------------------------------------------------
     def reset(self) -> str:
         r = self.send("RESET")

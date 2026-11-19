@@ -12,6 +12,9 @@ import numpy as np
 from minimiao import logger
 
 
+_PATTERN_CMDS = ('load_pattern', 'write_array', 'read_pattern')
+
+
 def _slm_worker(cmd_queue, result_queue, serial_number):
     """Entry point for the SLM subprocess."""
 
@@ -56,7 +59,8 @@ def _slm_worker(cmd_queue, result_queue, serial_number):
             method = getattr(slm, cmd)
             result = method(*args, **kwargs)
             # Return pattern array alongside result so proxy can cache it
-            extra = slm.pattern if hasattr(slm, 'pattern') else None
+            # (only after pattern writes: the ~1.3 MB array would add ms of latency to every call)
+            extra = slm.pattern if cmd in _PATTERN_CMDS and hasattr(slm, 'pattern') else None
             result_queue.put(('ok', result, extra))
         except Exception as e:
             result_queue.put(('error', str(e), None))
@@ -144,6 +148,12 @@ class HamamatsuSLMProxy:
 
     def display_pattern(self, slot_no=0):
         return self._call('display_pattern', slot_no)
+
+    def display_timed(self, slot_no=0):
+        """Change the displayed slot; returns the SLM process's perf_counter (before, after) the driver
+        call. perf_counter is system-wide (QueryPerformanceCounter / CLOCK_MONOTONIC), so the values
+        compare directly with this process's perf_counter."""
+        return self._call('display_timed', slot_no)
 
     def check_temp(self):
         return self._call('check_temp')

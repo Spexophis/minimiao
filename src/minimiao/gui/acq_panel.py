@@ -1,7 +1,7 @@
 # Copyright (c) 2025 Ruizhe Lin
 # Licensed under the MIT License.
 
-"""Acquisition block panel: one block, a loop over SLM slots, a loop over laser power."""
+"""Acquisition panel: one block, loops over SLM slots / laser power, and the timed slot sequence."""
 
 from PyQt6.QtCore import pyqtSignal
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout
@@ -18,6 +18,7 @@ class AcqPanel(QWidget):
     Signal_run_block = pyqtSignal(dict)
     Signal_run_slot_loop = pyqtSignal(dict, str, float)
     Signal_run_power_loop = pyqtSignal(dict, float, float, int, float)
+    Signal_run_slot_sequence = pyqtSignal(dict)
 
     CAMERA_TRIGGERS = {"Internal": "internal", "TriggerBox": "external"}
 
@@ -27,6 +28,7 @@ class AcqPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.addWidget(self._create_block_group())
         layout.addWidget(self._create_loop_group())
+        layout.addWidget(self._create_sequence_group())
         self.setLayout(layout)
         self._connect()
 
@@ -105,7 +107,48 @@ class AcqPanel(QWidget):
         hl.addWidget(area)
         return group
 
+    def _create_sequence_group(self):
+        group = cw.GroupWidget()
+        area, g = cw.create_scroll_area("G")
+        self.QLineEdit_seq_slots = cw.LineEditWidget()
+        self.QLineEdit_seq_slots.setText("1-6")
+        self.QDoubleSpinBox_seq_delay = cw.DoubleSpinBoxWidget(0, 10000, 0.1, 2, 20.0)
+        self.QDoubleSpinBox_seq_pre = cw.DoubleSpinBoxWidget(0, 600, 0.1, 2, 0.5)
+        self.QDoubleSpinBox_seq_post = cw.DoubleSpinBoxWidget(0, 600, 0.1, 2, 0.5)
+        self.QPushButton_slot_sequence = cw.PushButtonWidget("Run Slot Sequence")
+
+        g.addWidget(cw.LabelWidget("Slot Sequence (one recording; per slot: display -> wait -> fire DO rows)"),
+                    0, 0, 1, 4)
+        g.addWidget(cw.LabelWidget("Slots (e.g. 1-6)"), 1, 0)
+        g.addWidget(self.QLineEdit_seq_slots, 1, 1)
+        g.addWidget(cw.LabelWidget("SLM -> trigger / ms"), 1, 2)
+        g.addWidget(self.QDoubleSpinBox_seq_delay, 1, 3)
+        g.addWidget(cw.LabelWidget("Camera pre / s"), 2, 0)
+        g.addWidget(self.QDoubleSpinBox_seq_pre, 2, 1)
+        g.addWidget(cw.LabelWidget("Camera post / s"), 2, 2)
+        g.addWidget(self.QDoubleSpinBox_seq_post, 2, 3)
+        g.addWidget(self.QPushButton_slot_sequence, 3, 3)
+        g.addWidget(cw.LabelWidget("Trigger: Ctrl Panel DO#1-8 rows (as Fire). Laser power and Name: block "
+                                   "settings above. Camera free-runs with the Ctrl Panel settings."), 4, 0, 1, 4)
+        hl = QHBoxLayout(group)
+        hl.addWidget(area)
+        return group
+
+    def get_sequence_settings(self) -> dict:
+        """Keys match experiments.slot_sequence.SlotSequenceSettings, except 'slots' (text, parsed later)."""
+        return {
+            "slots": self.QLineEdit_seq_slots.text(),
+            "slm_to_trigger_ms": self.QDoubleSpinBox_seq_delay.value(),
+            "pre_delay_s": self.QDoubleSpinBox_seq_pre.value(),
+            "post_delay_s": self.QDoubleSpinBox_seq_post.value(),
+            "laser": "473",
+            "laser_power_mw": self.QDoubleSpinBox_power.value(),
+            "name": self.QLineEdit_name.text().strip(),
+        }
+
     def _connect(self):
+        self.QPushButton_slot_sequence.clicked.connect(
+            lambda: self.Signal_run_slot_sequence.emit(self.get_sequence_settings()))
         self.QPushButton_run_block.clicked.connect(lambda: self.Signal_run_block.emit(self.get_block_settings()))
         self.QPushButton_slot_loop.clicked.connect(
             lambda: self.Signal_run_slot_loop.emit(self.get_block_settings(), self.QLineEdit_slots.text(),
