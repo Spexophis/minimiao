@@ -201,6 +201,10 @@ class SlotSequenceRunner:
                             "returned; t_run = RUN written to the TriggerBox; delay_ms = t_run - t_slm; "
                             "t_stopped = STATUS first reported the box stopped."),
         }
+        rate_text, rate_warn = acq.data_rate_message(self.camera_info)
+        self.logg.info(f"Slot sequence: {rate_text}")
+        if rate_warn:
+            meta["warnings"].append(rate_warn)
         t = {}
         recording = False
         try:
@@ -309,6 +313,7 @@ class SlotSequenceRunner:
             meta["warnings"].append(f"recorder: {summary['error']}")
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
+        meta["warnings"].extend(acq.recorder_warnings(summary))
         if rel:
             ends = np.asarray(ts) - t0
             for st in meta["steps"]:

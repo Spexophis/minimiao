@@ -164,6 +164,49 @@ def sequence_frames(bs: BlockSettings, timing: dict, exposure_ms: float, readout
     return int(math.ceil(total_ms / period_ms)) + 1
 
 
+HIGH_DATA_RATE_MB_S = 400.0  # above this, sustained recording needs a fast local NVMe SSD
+
+
+def expected_data_rate(info: dict, fps: Optional[float] = None):
+    """
+    (frames/s, MB/s) the camera will deliver with these recording settings. Free-running:
+    1000 / max(exposure, readout) frames/s; pass fps for TriggerBox-clocked recordings.
+    """
+    px = int(info.get("pixels_x") or 0) // max(1, int(info.get("s_bin") or 1))
+    py = int(info.get("pixels_y") or 0) // max(1, int(info.get("p_bin") or 1))
+    if fps is None:
+        period = max(float(info.get("exposure_ms") or 0.0), float(info.get("readout_time_ms") or 0.0))
+        fps = 1000.0 / period if period > 0 else 0.0
+    return fps, fps * px * py * 2 / 2 ** 20
+
+
+def data_rate_message(info: dict, fps: Optional[float] = None) -> tuple:
+    """(log text, warning or None) about the expected data rate."""
+    fps, mb_s = expected_data_rate(info, fps)
+    text = f"expected ~{fps:.0f} frames/s, {mb_s:.0f} MB/s to disk"
+    warn = None
+    if mb_s > HIGH_DATA_RATE_MB_S:
+        warn = (f"data rate {mb_s:.0f} MB/s: sustained recording needs a fast local NVMe SSD (not a network / "
+                f"cloud-synced folder); otherwise frames wait in RAM and the camera buffer may overflow")
+    return text, warn
+
+
+def recorder_warnings(summary: dict) -> list:
+    """Warnings about the disk keeping up, from a StackRecorder summary."""
+    out = []
+    blocked = summary.get("poller_blocked_s") or 0.0
+    disk, data = summary.get("disk_write_mb_s"), summary.get("data_mb_s")
+    rates = (f" (disk {disk:.0f} MB/s vs camera {data:.0f} MB/s)" if disk and data else "")
+    if blocked > 0:
+        out.append(f"disk could not keep up: frame RAM buffer full, reading waited {blocked:.2f} s{rates}; "
+                   f"check dropped frames")
+    else:
+        lim, peak = summary.get("write_queue_limit_mb"), summary.get("max_write_backlog_mb") or 0.0
+        if lim and peak > 0.5 * lim:
+            out.append(f"disk fell behind: up to {peak:.0f} MB of frames waited in RAM (limit {lim:.0f} MB){rates}")
+    return out
+
+
 def _git_commit():
     try:
         here = os.path.dirname(os.path.abspath(__file__))
@@ -255,6 +298,11 @@ class AcquisitionRunner:
         errors, early_warnings = camera_timing_issues(bs, exposure_ms, readout_ms)
         if errors:
             raise ValueError("; ".join(errors))
+        rate_text, rate_warn = data_rate_message(self.camera_info,
+                                                 bs.frame_rate_hz if bs.camera_trigger == "external" else None)
+        self.logg.info(f"Block: {rate_text}")
+        if rate_warn:
+            early_warnings = early_warnings + [rate_warn]
         n_est = sequence_frames(bs, timing, exposure_ms, readout_ms)
         frame_bytes = 2 * int(self.camera_info.get("pixels_x") or 2400) * int(self.camera_info.get("pixels_y") or 2400)
         bigtiff = n_est * frame_bytes > BIGTIFF_THRESHOLD_BYTES
@@ -365,6 +413,7 @@ class AcquisitionRunner:
                                     f"{summary.get('n_frames_requested')} frames received")
         if summary.get("n_dropped"):
             meta["warnings"].append(f"{summary['n_dropped']} dropped frame(s)")
+        meta["warnings"].extend(recorder_warnings(summary))
         if bs.camera_trigger == "external":
             exp = timing.get("frames_expected")
             if summary.get("n_frames") is not None and summary["n_frames"] != exp:

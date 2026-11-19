@@ -604,6 +604,10 @@ class CommandExecutor(QObject):
             # continuous recordings have no known length: BigTIFF so they can exceed 4 GB
             bigtiff = (not n_frames) or n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES
             path = os.path.join(self.path, name + ".tif")
+            rate_text, rate_warn = acq.data_rate_message(info)
+            self.logg.info(f"Acquisition: {rate_text}")
+            if rate_warn:
+                self.logg.warning(rate_warn)
             t0 = time.perf_counter()
             cam.start_recording(path, n_frames=n_frames or None, bigtiff=bigtiff)
             if getattr(cam, "data", None) is not None:
@@ -613,6 +617,7 @@ class CommandExecutor(QObject):
             self._release_acquire_button()
             return
         self._recording = {"path": path, "n_frames": n_frames, "t0": t0, "info": info, "bigtiff": bigtiff,
+                           "rate_warning": rate_warn,
                            "readout": {"port": port, "speed": speed, "gain": gain},
                            "created": time.strftime("%Y-%m-%d %H:%M:%S")}
         if n_frames:
@@ -661,6 +666,11 @@ class CommandExecutor(QObject):
                                     f"(stopped early)")
         if summary.get("error"):
             meta["warnings"].append(f"recorder: {summary['error']}")
+        meta["warnings"].extend(acq.recorder_warnings(summary))
+        if rec.get("rate_warning"):
+            meta["warnings"].append(rec["rate_warning"])
+        for w in meta["warnings"]:
+            self.logg.warning(f"Acquisition: {w}")
         json_path = os.path.splitext(rec["path"])[0] + ".json"
         try:
             acq.write_json(json_path, meta)

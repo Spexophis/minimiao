@@ -148,9 +148,14 @@ class StackRecorder:
 
     max_frames: fixed-length recording (camera sequence mode). The poller stops by
     itself after max_frames frames; wait_done() blocks until then.
+
+    max_queue_mb: RAM for frames waiting to be written. If the disk is slower than the
+    camera, the poller waits once this is full (the camera's own buffer then fills; frames
+    lost after that show up as frame_nr gaps) instead of growing memory until the PC runs out.
     """
 
-    def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None):
+    def __init__(self, poll, path, bigtiff=False, preview=None, preview_hz=10.0, drain_s=0.3, max_frames=None,
+                 max_queue_mb=2048):
         self.poll = poll
         self.path = str(path)
         self.bigtiff = bigtiff
@@ -165,6 +170,14 @@ class StackRecorder:
         self.frame_nrs = []
         self.timestamps = []  # time.perf_counter() when each frame was retrieved
         self.max_backlog = 0
+        self.max_queue_bytes = int(max_queue_mb * 2 ** 20)
+        self._queued_bytes = 0
+        self._space = threading.Condition()
+        self.max_backlog_bytes = 0
+        self.blocked_s = 0.0  # time the poller waited for queue space (disk too slow)
+        self._n_before_block = None  # frames read before the first wait (camera rate is clean there)
+        self.bytes_written = 0
+        self.write_busy_s = 0.0
         self.error = None
         self.shape = None
         self.dtype = None
@@ -191,6 +204,18 @@ class StackRecorder:
                 t = time.perf_counter()
                 self.frame_nrs.append(frame_nr)
                 self.timestamps.append(t)
+                nb = frame.nbytes
+                with self._space:
+                    if self._queued_bytes + nb > self.max_queue_bytes and self._queued_bytes > 0:
+                        t_wait = time.perf_counter()
+                        if self._n_before_block is None:
+                            self._n_before_block = len(self.frame_nrs)
+                        while (self._queued_bytes + nb > self.max_queue_bytes and self._queued_bytes > 0
+                               and self.error is None):
+                            self._space.wait(0.05)
+                        self.blocked_s += time.perf_counter() - t_wait
+                    self._queued_bytes += nb
+                    self.max_backlog_bytes = max(self.max_backlog_bytes, self._queued_bytes)
                 self._queue.put(frame)
                 self.max_backlog = max(self.max_backlog, self._queue.qsize())
                 if self.max_frames and len(self.frame_nrs) >= self.max_frames:
@@ -208,6 +233,7 @@ class StackRecorder:
             self._queue.put(None)
 
     def _write_loop(self):
+        import time
         try:
             with tf.TiffWriter(self.path, bigtiff=self.bigtiff) as tw:
                 while True:
@@ -216,11 +242,41 @@ class StackRecorder:
                         break
                     if self.shape is None:
                         self.shape, self.dtype = frame.shape, frame.dtype
+                    t0 = time.perf_counter()
                     tw.write(frame, contiguous=True, photometric="minisblack")
+                    self.write_busy_s += time.perf_counter() - t0
+                    self.bytes_written += frame.nbytes
+                    self._release(frame.nbytes)
         except Exception as e:
             self.error = f"write: {e}"
-            while self._queue.get() is not None:  # keep draining so the poller never blocks
-                pass
+            with self._space:
+                self._space.notify_all()
+            while True:  # keep draining so the poller never blocks
+                frame = self._queue.get()
+                if frame is None:
+                    break
+                self._release(frame.nbytes)
+
+    def _release(self, nbytes):
+        with self._space:
+            self._queued_bytes -= nbytes
+            self._space.notify_all()
+
+    def _camera_fps(self, nrs):
+        """Rate the camera took frames: frame-number span / time span (counts frames lost on the way)."""
+        ts = [t for t, n in zip(self.timestamps, self.frame_nrs) if n is not None]
+        if len(nrs) < 2 or len(ts) != len(nrs):
+            return None
+        k = self._n_before_block
+        if k is not None and k >= 50 and len(ts) == len(self.frame_nrs):
+            nrs, ts = nrs[:k], ts[:k]  # after the disk fell behind, read times no longer follow the camera
+        if ts[-1] <= ts[0]:
+            return None
+        return float((nrs[-1] - nrs[0]) / (ts[-1] - ts[0]))
+
+    @property
+    def bytes_per_frame(self):
+        return int(np.prod(self.shape)) * np.dtype(self.dtype).itemsize if self.shape is not None else 0
 
     @property
     def n_frames(self):
@@ -258,5 +314,12 @@ class StackRecorder:
             "n_dropped": len(dropped),
             "measured_fps": float(1.0 / np.median(dt)) if dt.size else None,
             "max_write_backlog": self.max_backlog,
+            "max_write_backlog_mb": self.max_backlog_bytes / 2 ** 20,
+            "write_queue_limit_mb": self.max_queue_bytes / 2 ** 20,
+            "poller_blocked_s": self.blocked_s,
+            "camera_fps": self._camera_fps(nrs),
+            "data_mb_s": (self._camera_fps(nrs) * self.bytes_per_frame / 2 ** 20
+                          if self._camera_fps(nrs) and self.shape is not None else None),
+            "disk_write_mb_s": self.bytes_written / 2 ** 20 / self.write_busy_s if self.write_busy_s > 0 else None,
             "error": self.error,
         }
