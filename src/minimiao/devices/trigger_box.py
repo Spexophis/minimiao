@@ -417,9 +417,22 @@ class PulseTrain:
 
     @property
     def stop_ms(self) -> int:
-        """Window stop: middle of the gap after the last pulse (whole ms)."""
-        gap = self.interval_ms - self.width_ms
-        return int(math.floor(self.last_pulse_end_ms + gap / 2))
+        """
+        Window stop (whole ms; the window is [start, stop), so a pulse starting at stop is not sent).
+        Must be after the last onset (else the last pulse is lost) and at most the next onset (else
+        one pulse too many). Aim for the middle of the gap after the last pulse, rounded to whole ms
+        and clamped into that range: with short intervals (e.g. 1 ms) the rounded middle would
+        otherwise land on the last onset and drop the last pulse.
+        """
+        last_on = self.onsets_ms[-1]
+        lo = math.floor(last_on) + 1  # first whole ms after the last onset
+        hi = math.floor(last_on + self.interval_ms + 1e-9)  # the next (unsent) onset, or just before it
+        mid = self.last_pulse_end_ms + (self.interval_ms - self.width_ms) / 2
+        stop = min(max(int(round(mid)), lo, math.ceil(self.last_pulse_end_ms - 1e-9)), hi)
+        if stop < lo:
+            raise ValueError(f"no whole-ms window stop between the last onset ({last_on:g} ms) and the "
+                             f"next one ({last_on + self.interval_ms:g} ms)")
+        return int(stop)
 
     def channel_def(self) -> DigitalPulse:
         return DigitalPulse(self.channel, start_ms=int(self.start_ms), stop_ms=self.stop_ms,
