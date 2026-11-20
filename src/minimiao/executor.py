@@ -604,7 +604,7 @@ class CommandExecutor(QObject):
         port, speed, gain = self.ctrl_panel.get_scmos_readout()
         try:
             self.set_camera_roi()
-            cam.prepare_recording("internal", port, speed, gain)
+            cam.prepare_recording("external", port, speed, gain)
             info = cam.get_recording_info() or {}
             frame_bytes = 2 * int(info.get("pixels_x") or 2400) * int(info.get("pixels_y") or 2400)
             n_frames = max(1, int(n_frames))
