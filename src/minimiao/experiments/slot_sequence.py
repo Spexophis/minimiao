@@ -8,8 +8,8 @@ by one TriggerBox sequence (the Ctrl Panel DO#1..8 and AO#1..4 rows).
 
     camera start (free-running)
     [pre delay]
-    upload + ARM the TriggerBox sequence once (the box replays it on every RUN)
     for each slot:
+        ARM TriggerBox                       (outside the timed window)
         SLM: display slot                    -> t_slm (driver call returned)
         wait until t_slm + slm_to_trigger    (sleep, then busy-wait the last ms)
         TriggerBox RUN                       -> t_run (command written)
@@ -150,22 +150,15 @@ class SlotSequenceRunner:
         self.devs.camera.prepare_recording("internal", port, speed, gain)
         self.camera_info = self.devs.camera.get_recording_info() or {}
 
-    @staticmethod
-    def _run(tb):
-        """RUN the armed sequence (timestamped). If the box answers 'not armed' (ERR 13), ARM and RUN
-        again; returns (t_write_start, t_write_end, rearmed)."""
-        with tb._lock:
-            t0, t1 = tb.write_timed("RUN")
-            try:
-                tb.read_reply_fast("RUN", timeout=0.5, quiet=0.0)
-                return t0, t1, False
-            except tbx.TriggerBoxError as e:
-                if e.code != 13:
-                    raise
+    def _arm(self, tb, seq):
+        """ARM for the next step; if the box refuses, upload the sequence again and re-ARM."""
+        try:
             tb.command_fast("ARM", timeout=2.0, quiet=0.003)
-            t0, t1 = tb.write_timed("RUN")
-            tb.read_reply_fast("RUN", timeout=0.5, quiet=0.0)
-            return t0, t1, True
+            return False
+        except tbx.TriggerBoxError:
+            tb.upload(seq, validate=False)
+            tb.arm()
+            return True
 
     def _wait_stopped(self, tb, timeout_s):
         """Poll STATUS (fast) until the box is no longer running; returns (state, tick, n_polls)."""
@@ -217,7 +210,7 @@ class SlotSequenceRunner:
         try:
             self.progress("preparing")
             laser.set_modulation_mode([ss.laser], [ss.laser_power_mw])
-            meta["trigger_box"]["arm"] = (tb.prepare(seq, validate=False) or {}).get("raw", "reused armed sequence")
+            tb.upload(seq, validate=False)
 
             t["camera_start"] = time.perf_counter()
             cam.start_recording(tif_path, n_frames=None, bigtiff=bigtiff, preview=False)
@@ -230,23 +223,27 @@ class SlotSequenceRunner:
                 for i, slot in enumerate(slots):
                     if self.abort.is_set():
                         raise acq.AcquisitionAborted("aborted by user")
+                    t_arm = time.perf_counter()
+                    reuploaded = self._arm(tb, seq)
                     t_cmd = time.perf_counter()
                     t_slm0, t_slm = slm.display_timed(slot)
                     t_ret = time.perf_counter()
                     if not (t_cmd - 0.5 <= t_slm <= t_ret + 1e-3):  # clocks not comparable: use our own
                         t_slm = t_ret
                     wait_until(t_slm + delay_s, self.abort)
-                    t_run0, t_run1, rearmed = self._run(tb)
+                    with tb._lock:
+                        t_run0, t_run1 = tb.write_timed("RUN")
+                        tb.read_reply_fast("RUN", timeout=0.5, quiet=0.0)
                     wait_until(t_run0 + (dur_ms + ss.end_margin_ms) / 1000.0, self.abort)
                     state, tick, n_polls = self._wait_stopped(tb, timeout_s=2.0)
                     t_stop = time.perf_counter()
                     meta["steps"].append({
-                        "index": i, "slot": slot, "t_slm_call": t_slm0, "t_slm": t_slm,
+                        "index": i, "slot": slot, "t_arm": t_arm, "t_slm_call": t_slm0, "t_slm": t_slm,
                         "t_slm_returned_here": t_ret, "t_run": t_run0, "t_run_write_end": t_run1,
                         "t_stopped": t_stop, "delay_ms": (t_run0 - t_slm) * 1e3,
                         "slm_call_ms": (t_slm - t_slm0) * 1e3, "run_write_ms": (t_run1 - t_run0) * 1e3,
                         "sequence_host_ms": (t_stop - t_run0) * 1e3, "status_polls": n_polls,
-                        "final_state": state, "final_tick": tick, "rearmed": rearmed})
+                        "final_state": state, "final_tick": tick, "reuploaded": reuploaded})
                     self.progress(f"slot {slot} done ({i + 1}/{len(slots)})")
             t["last_done"] = time.perf_counter()
             wait_until(t["last_done"] + ss.post_delay_s, self.abort)
@@ -285,7 +282,7 @@ class SlotSequenceRunner:
     def _finish_timing(meta, t, ss):
         t0 = t.get("camera_start", 0.0)
         for st in meta["steps"]:
-            for k in ("t_slm_call", "t_slm", "t_slm_returned_here", "t_run", "t_run_write_end", "t_stopped"):
+            for k in ("t_arm", "t_slm_call", "t_slm", "t_slm_returned_here", "t_run", "t_run_write_end", "t_stopped"):
                 st[k] = st[k] - t0
         meta["host_times_s"] = {k: v - t0 for k, v in t.items()}
         d = np.array([s["delay_ms"] for s in meta["steps"]], dtype=float)
@@ -299,9 +296,8 @@ class SlotSequenceRunner:
             if meta["delay_stats_ms"]["max_error"] > 0.5:
                 meta["warnings"].append(f"SLM -> RUN delay off by up to "
                                         f"{meta['delay_stats_ms']['max_error']:.3f} ms on the host")
-            if any(s["rearmed"] for s in meta["steps"]):
-                meta["warnings"].append("TriggerBox answered 'not armed' at least once; it was re-armed and RUN "
-                                        "sent again (that step's SLM -> RUN delay includes the ARM)")
+            if any(s["reuploaded"] for s in meta["steps"]):
+                meta["warnings"].append("TriggerBox refused re-ARM at least once; sequence was uploaded again")
 
     @staticmethod
     def _add_frames(meta, summary, t):

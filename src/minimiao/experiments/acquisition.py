@@ -8,8 +8,7 @@ Single acquisition block and loops over SLM slots / laser power.
 One block:
   1. display an SLM slot
   2. set the laser power (digital modulation: light only while the TriggerBox TTL is high)
-  3. upload + ARM the TriggerBox sequence (laser pulse train, optional camera frame clock),
-     unless the same sequence is already armed (the box replays it on RUN)
+  3. upload + ARM the TriggerBox sequence (laser pulse train, optional camera frame clock)
   4. start camera recording (every frame streamed into one 3D TIFF)
   5. RUN: baseline (pre delay) -> pulse train -> post delay
   6. stop the camera, write <stem>.tif + <stem>.json (all parameters and timing)
@@ -60,9 +59,6 @@ class BlockSettings:
     frame_rate_hz: int = 100  # external mode only
     camera_channel: int = 2  # TriggerBox DIG channel for the camera clock (external mode)
     camera_trigger_width_us: int = 1000
-    # external mode: wait this long after starting the camera before RUN, so the camera has finished
-    # arming and does not ignore the first trigger edge(s) (a missed first edge = one frame short)
-    camera_arm_ms: float = 100.0
     name: str = ""
 
     def validate(self):
@@ -81,8 +77,6 @@ class BlockSettings:
                 errs.append("frame rate must be >= 1 Hz")
             elif self.camera_trigger_width_us * 1e-6 >= 1.0 / self.frame_rate_hz:
                 errs.append("camera trigger width must be shorter than the frame period")
-        if self.camera_arm_ms < 0:
-            errs.append("camera arm time must be >= 0")
         if errs:
             raise ValueError("; ".join(errs))
 
@@ -122,13 +116,6 @@ def build_sequence(bs: BlockSettings):
         timing["sequence_stop_ms"] = train_stop
 
     sysclk = tbx.choose_sysclk(freqs, min_width_us=min(widths), widths_us=widths)
-    if sysclk is None:
-        # laser train far from the camera clock in frequency: send its pulses as level pulses instead
-        try:
-            channels, sysclk, converted = tbx._split_trains_into_levels(channels)
-            timing["laser_as_level_pulses_on_dig"] = converted[0][1] if converted else None
-        except ValueError:
-            sysclk = None
     if sysclk is None:
         hint = ""
         if bs.camera_trigger == "external":
@@ -329,8 +316,8 @@ class AcquisitionRunner:
             t_slm = time.perf_counter()
             slm.display_pattern(bs.slot)
             laser.set_modulation_mode([bs.laser], [bs.laser_power_mw])
-            arm = tb.prepare(seq, validate=False)  # upload + ARM only if this sequence is not armed already
-            meta["trigger_box"]["arm"] = arm.get("raw") if arm else "reused armed sequence"
+            tb.upload(seq, validate=False)
+            meta["trigger_box"]["arm"] = tb.arm().get("raw")
             self._sleep(bs.slm_settle_ms / 1000.0 - (time.perf_counter() - t_slm))
 
             t["camera_start"] = time.perf_counter()
@@ -339,11 +326,9 @@ class AcquisitionRunner:
             if self.preview is not None and getattr(cam, "data", None) is not None:
                 cam.data.on_update(self.preview)
             self.progress(f"slot {bs.slot}, {bs.laser_power_mw:g} mW: recording")
-            if bs.camera_trigger == "external":
-                self._sleep(bs.camera_arm_ms / 1000.0 - (time.perf_counter() - t["camera_start"]))
 
             t["run"] = time.perf_counter()
-            tb.run_armed()
+            tb.run()
             self._wait_sequence(timing["sequence_stop_ms"])
             t["sequence_done"] = time.perf_counter()
             if bs.camera_trigger == "internal":
@@ -432,12 +417,7 @@ class AcquisitionRunner:
         if bs.camera_trigger == "external":
             exp = timing.get("frames_expected")
             if summary.get("n_frames") is not None and summary["n_frames"] != exp:
-                gaps = summary.get("n_dropped") or 0
-                where = ("frame numbers have gaps: frames were lost after the camera took them"
-                         if gaps else "frame numbers are contiguous: the camera did not take the missing "
-                                      "frame(s), i.e. trigger edges were ignored (first edge before the camera "
-                                      "was armed, or an edge during readout)")
-                meta["warnings"].append(f"received {summary['n_frames']} frames, expected {exp}; {where}; "
+                meta["warnings"].append(f"received {summary['n_frames']} frames, expected {exp}; "
                                         f"exact pulse-onset frames assume no missing frames")
         elif t_run is not None and ts:
             # approximate: frame exposure end ~ retrieval time; take the first frame
