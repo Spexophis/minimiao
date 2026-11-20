@@ -503,7 +503,7 @@ class CommandExecutor(QObject):
     def prepare_video(self):
         self.set_camera_roi()
         port, speed, gain = self.ctrl_panel.get_scmos_readout()
-        self.devs.camera.prepare_live(port, speed, gain)
+        self.devs.camera.prepare_live(port, speed, gain)  # live video: internal trigger (free-running)
 
     @pyqtSlot(bool)
     def video(self, sw: bool):
@@ -604,14 +604,17 @@ class CommandExecutor(QObject):
         port, speed, gain = self.ctrl_panel.get_scmos_readout()
         try:
             self.set_camera_roi()
-            cam.prepare_recording("internal", port, speed, gain)
+            # Acquire: one frame per rising edge on the camera trigger input (e.g. a TriggerBox DO row);
+            # live video re-applies internal (free-running) mode in prepare_live
+            cam.prepare_recording("external", port, speed, gain)
             info = cam.get_recording_info() or {}
             frame_bytes = 2 * int(info.get("pixels_x") or 2400) * int(info.get("pixels_y") or 2400)
             n_frames = max(1, int(n_frames))
             bigtiff = n_frames * frame_bytes > acq.BIGTIFF_THRESHOLD_BYTES  # one stack > ~3.5 GB
             path = os.path.join(self.path, name + ".tif")
             rate_text, rate_warn = acq.data_rate_message(info)
-            self.logg.info(f"Acquisition: {rate_text}")
+            self.logg.info(f"Acquisition (external trigger, frame rate set by the trigger edges): at most "
+                           f"{rate_text.replace('expected ~', '')} with this exposure / readout")
             if rate_warn:
                 self.logg.warning(rate_warn)
             t0 = time.perf_counter()
@@ -631,7 +634,8 @@ class CommandExecutor(QObject):
         if n_stacks:
             self._acq_timer.start(200)
         self.logg.info(f"Acquisition started: {name}_NNNNN.tif, stacks of {n_frames} frames, "
-                       + (f"{n_stacks} stack(s)" if n_stacks else "until Acquire is released"))
+                       + (f"{n_stacks} stack(s)" if n_stacks else "until Acquire is released")
+                       + "; waiting for trigger edges on the camera trigger input")
 
     def _check_acquisition_done(self):
         """Stop by itself once all requested stacks have been read from the camera."""
