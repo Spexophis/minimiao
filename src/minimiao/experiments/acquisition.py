@@ -123,6 +123,13 @@ def build_sequence(bs: BlockSettings):
 
     sysclk = tbx.choose_sysclk(freqs, min_width_us=min(widths), widths_us=widths)
     if sysclk is None:
+        # laser train far from the camera clock in frequency: send its pulses as level pulses instead
+        try:
+            channels, sysclk, converted = tbx._split_trains_into_levels(channels)
+            timing["laser_as_level_pulses_on_dig"] = converted[0][1] if converted else None
+        except ValueError:
+            sysclk = None
+    if sysclk is None:
         hint = ""
         if bs.camera_trigger == "external":
             # highest feasible clock ignoring widths, and the shortest pulse it allows (2 ticks)

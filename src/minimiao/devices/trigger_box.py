@@ -562,19 +562,69 @@ def sequence_from_outputs(outputs, max_sysclk_hz=SAFE_SYSCLK_HZ, external_trigge
                             "end_ms": train.last_pulse_end_ms})
     if not channels:
         raise ValueError("No output enabled (set N > 0 for a DO or a duration > 0 for an AO)")
-    pwm = [c for c in channels if isinstance(c, DigitalPulse)]
-    if pwm:
-        freqs, widths = [c.freq_hz for c in pwm], [c.width_us for c in pwm]
-        sysclk = choose_sysclk(freqs, min_width_us=min(widths), max_hz=max_sysclk_hz, widths_us=widths)
-        if sysclk is None:
-            raise ValueError(f"No TriggerBox system clock fits pulse frequencies {freqs} Hz together "
-                             f"(spread too wide for the shared prescaler, or pulses too short)")
-    else:
-        sysclk = 1000  # level outputs / analog only: 1 ms ticks match the ms resolution
+    sysclk = _fit_clock(channels, max_sysclk_hz)
+    if sysclk is None:
+        channels, sysclk, converted = _split_trains_into_levels(channels, max_sysclk_hz)
+        for c, used in converted:
+            for sm in summary:
+                if sm.get("kind") != "analog" and sm["channel"] == c.channel:
+                    sm["as_level_pulses_on_dig"] = used
     seq = Sequence(sysclk_hz=sysclk, external_trigger=external_trigger)
     seq.add(*channels)
     seq.validate()
     return seq, summary
+
+
+def _fit_clock(channels, max_sysclk_hz=SAFE_SYSCLK_HZ) -> Optional[int]:
+    """SYSCLK for these channels (see choose_sysclk), 1 kHz without PWM trains, None if none fits."""
+    pwm = [c for c in channels if isinstance(c, DigitalPulse)]
+    if not pwm:
+        return 1000  # level outputs / analog only: 1 ms ticks match the ms resolution
+    freqs, widths = [c.freq_hz for c in pwm], [c.width_us for c in pwm]
+    return choose_sysclk(freqs, min_width_us=min(widths), max_hz=max_sysclk_hz, widths_us=widths)
+
+
+def _split_trains_into_levels(channels, max_sysclk_hz=SAFE_SYSCLK_HZ):
+    """
+    All PWM trains share one GCLK4 prescaler, so trains far apart in frequency (e.g. a 1 kHz camera
+    clock with 0.1 ms pulses and a 5 Hz laser train) cannot run together. A train with whole-ms
+    onsets and width can instead be sent as N level pulses (DIGTRIG, no PWM timer) on its own DIG
+    channel plus unused ones, all routed to the train's output (outputs are OR-ed, spec 5.1).
+    Trains are converted lowest frequency first until a clock fits.
+    Returns (channels, sysclk, [(original train, [DIG channels used])]); raises if impossible.
+    """
+    channels = list(channels)
+    converted = []
+    used_dig = {c.channel for c in channels if c.kind == "dig"}
+    free = [n for n in range(1, N_DIGITAL + 1) if n not in used_dig]
+    candidates = sorted((c for c in channels if isinstance(c, DigitalPulse)), key=lambda c: c.freq_hz)
+    reasons = []
+    for train in candidates:
+        period = 1000.0 / train.freq_hz
+        n = int(math.ceil((train.stop_ms - train.start_ms) / period - 1e-9))
+        onsets = [train.start_ms + k * period for k in range(n)]
+        width_ms = train.width_us / 1000.0
+        if any(abs(t - round(t)) > 1e-9 for t in onsets) or abs(width_ms - round(width_ms)) > 1e-9:
+            reasons.append(f"DO#{train.channel}: level pulses need whole-ms onsets and width")
+            continue
+        slots = [train.channel] + free
+        if n > len(slots):
+            reasons.append(f"DO#{train.channel}: {n} pulses need {n} DIG channels, only {len(slots)} free "
+                           f"(set N = 0 on unused DO rows, or fewer pulses)")
+            continue
+        use, free = slots[:n], slots[n:]
+        channels.remove(train)
+        channels += [DigitalTrigger(d, start_ms=int(round(t)), stop_ms=int(round(t + width_ms)), output=train.out)
+                     for d, t in zip(use, onsets)]
+        converted.append((train, use))
+        sysclk = _fit_clock(channels, max_sysclk_hz)
+        if sysclk is not None:
+            return channels, sysclk, converted
+    pwm = [c for c in channels if isinstance(c, DigitalPulse)]
+    raise ValueError(f"No TriggerBox system clock fits pulse trains {[c.freq_hz for c in pwm]} Hz with widths "
+                     f"{[c.width_us for c in pwm]} us together (they share one clock divider; a pulse must be "
+                     f">= 2 ticks)" + (". Could not send a train as level pulses instead: " + "; ".join(reasons)
+                                       if reasons else ""))
 
 
 def _analog_channel(o):
@@ -612,7 +662,9 @@ def describe_outputs(summary) -> str:
         else:
             on = s["onsets_ms"]
             parts.append(f"DO#{s['channel']}: {len(on)} x {s['width_ms']:g} ms"
-                         + (f" every {on[1] - on[0]:g} ms" if len(on) > 1 else "") + f" from {on[0]:g} ms")
+                         + (f" every {on[1] - on[0]:g} ms" if len(on) > 1 else "") + f" from {on[0]:g} ms"
+                         + (f" (level pulses on DIG{','.join(map(str, s['as_level_pulses_on_dig']))})"
+                            if s.get("as_level_pulses_on_dig") else ""))
     return "; ".join(parts)
 
 
