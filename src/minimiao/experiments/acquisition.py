@@ -107,22 +107,16 @@ def build_sequence(bs: BlockSettings):
     if bs.camera_trigger == "external":
         total = int(math.ceil(last_end + bs.post_delay_s * 1000))
         fps = int(bs.frame_rate_hz)
-        n_frames = int(math.ceil(total * fps / 1000.0 - 1e-9))
-        # The camera delivers N frames only after N + 1 trigger edges (measured: 101 edges -> 100 frames),
-        # so the clock runs past the last frame's edge by at least one more edge. The recording is a
-        # fixed-length sequence of n_frames, so any further edges are ignored by the camera.
-        clock_stop = int(math.floor(n_frames * 1000.0 / fps)) + 1
-        n_edges = int(math.ceil(clock_stop * fps / 1000.0 - 1e-9))
-        channels.append(tbx.DigitalPulse(bs.camera_channel, start_ms=0, stop_ms=clock_stop, freq_hz=fps,
+        channels.append(tbx.DigitalPulse(bs.camera_channel, start_ms=0, stop_ms=total, freq_hz=fps,
                                          width_us=int(bs.camera_trigger_width_us), output=bs.camera_channel))
         freqs.append(fps)
         widths.append(int(bs.camera_trigger_width_us))
-        timing.update({"camera_clock_stop_ms": clock_stop, "camera_clock_edges": n_edges,
-                       "camera_extra_edges": n_edges - n_frames, "frames_expected": n_frames,
+        n_frames = int(math.ceil(total * fps / 1000.0 - 1e-9))
+        timing.update({"camera_clock_stop_ms": total, "frames_expected": n_frames,
                        # frame i is exposed from i/fps; the frame that contains each pulse onset
                        "pulse_onset_frames": [int(math.floor(t * fps / 1000.0 + 1e-9)) for t in onsets_ms],
                        "pulse_onset_frames_method": "exact (camera frame clock from TriggerBox)"})
-        timing["sequence_stop_ms"] = clock_stop
+        timing["sequence_stop_ms"] = total
     else:
         timing["sequence_stop_ms"] = train_stop
 
