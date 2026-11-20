@@ -332,8 +332,7 @@ class KinetixCameraProxy:
             if self._proc.is_alive():
                 self._proc.terminate()
 
-    def prepare_live(self, port=1, speed=0, gain=1, exp_mode=None, expose_out=0):
-        """Live video; exp_mode None = internal trigger (free-running)."""
+    def prepare_live(self, port=1, speed=0, gain=1, exp_mode=1792, expose_out=0):
         self._call('prepare_live', port, speed, gain, exp_mode, expose_out)
 
     def start_live(self):

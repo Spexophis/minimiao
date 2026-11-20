@@ -20,7 +20,7 @@ Exposure_Mode = {
     pvc_consts.STROBED_MODE:       "External Edge Trigger",
     pvc_consts.BULB_MODE:          "External Level / Bulb",
     pvc_consts.TRIGGER_FIRST_MODE: "Trigger First Frame Only",
-    pvc_consts.EXT_TRIG_INTERNAL:  "Internal Trigger (free-running)",
+    pvc_consts.EXT_TRIG_INTERNAL:  "External Trigger, Internal Timing",
     pvc_consts.EXT_TRIG_EDGE_RISING: "External Rising-Edge Trigger",
     pvc_consts.EXT_TRIG_LEVEL:     "External Level Trigger",
 }
@@ -357,10 +357,8 @@ class KinetixCamera:
             self.logg.error(f"Error reading pixel time: {e}")
 
     def prepare_live(self, port=0, speed=0, gain=1,
-                     exp_mode=None, expose_out=0):
-        """Configure camera for live / preview acquisition (exp_mode None: internal trigger, free-running)."""
-        if exp_mode is None:
-            exp_mode = self.TRIGGER_MODES["internal"]
+                     exp_mode=1792, expose_out=0):
+        """Configure camera for live / preview acquisition."""
         self.set_readout_port(port)
         self.set_speed(speed)
         self.set_gain(gain)
