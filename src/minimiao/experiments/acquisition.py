@@ -8,7 +8,8 @@ Single acquisition block and loops over SLM slots / laser power.
 One block:
   1. display an SLM slot
   2. set the laser power (digital modulation: light only while the TriggerBox TTL is high)
-  3. upload + ARM the TriggerBox sequence (laser pulse train, optional camera frame clock)
+  3. upload + ARM the TriggerBox sequence (laser pulse train, optional camera frame clock),
+     unless the same sequence is already armed (the box replays it on RUN)
   4. start camera recording (every frame streamed into one 3D TIFF)
   5. RUN: baseline (pre delay) -> pulse train -> post delay
   6. stop the camera, write <stem>.tif + <stem>.json (all parameters and timing)
@@ -116,6 +117,13 @@ def build_sequence(bs: BlockSettings):
         timing["sequence_stop_ms"] = train_stop
 
     sysclk = tbx.choose_sysclk(freqs, min_width_us=min(widths), widths_us=widths)
+    if sysclk is None:
+        # laser train far from the camera clock in frequency: send its pulses as level pulses instead
+        try:
+            channels, sysclk, converted = tbx._split_trains_into_levels(channels)
+            timing["laser_as_level_pulses_on_dig"] = converted[0][1] if converted else None
+        except ValueError:
+            sysclk = None
     if sysclk is None:
         hint = ""
         if bs.camera_trigger == "external":
@@ -316,8 +324,8 @@ class AcquisitionRunner:
             t_slm = time.perf_counter()
             slm.display_pattern(bs.slot)
             laser.set_modulation_mode([bs.laser], [bs.laser_power_mw])
-            tb.upload(seq, validate=False)
-            meta["trigger_box"]["arm"] = tb.arm().get("raw")
+            arm = tb.prepare(seq, validate=False)  # upload + ARM only if this sequence is not armed already
+            meta["trigger_box"]["arm"] = arm.get("raw") if arm else "reused armed sequence"
             self._sleep(bs.slm_settle_ms / 1000.0 - (time.perf_counter() - t_slm))
 
             t["camera_start"] = time.perf_counter()
@@ -328,7 +336,7 @@ class AcquisitionRunner:
             self.progress(f"slot {bs.slot}, {bs.laser_power_mw:g} mW: recording")
 
             t["run"] = time.perf_counter()
-            tb.run()
+            tb.run_armed()
             self._wait_sequence(timing["sequence_stop_ms"])
             t["sequence_done"] = time.perf_counter()
             if bs.camera_trigger == "internal":
