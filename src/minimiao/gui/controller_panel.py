@@ -117,10 +117,12 @@ class ControlPanel(QWidget):
 
         self.QPushButton_reset_trigger = cw.PushButtonWidget("Stop / Reset")
         self.QPushButton_fire_trigger = cw.PushButtonWidget("Fire")
+        self.QPushButton_show_traces = cw.PushButtonWidget("Show Traces")
         self.QLabel_trigger_status = cw.LabelWidget("Not fired")
         trigger_scroll_layout.addWidget(cw.LabelWidget(str('Trigger Box')), 0, 0)
-        trigger_scroll_layout.addWidget(self.QPushButton_fire_trigger, 0, 1, 1, 2)
-        trigger_scroll_layout.addWidget(self.QPushButton_reset_trigger, 0, 3, 1, 2)
+        trigger_scroll_layout.addWidget(self.QPushButton_fire_trigger, 0, 1, 1, 1)
+        trigger_scroll_layout.addWidget(self.QPushButton_show_traces, 0, 2, 1, 2)
+        trigger_scroll_layout.addWidget(self.QPushButton_reset_trigger, 0, 4, 1, 1)
         trigger_scroll_layout.addWidget(cw.FrameWidget(), 1, 0, 1, 5)
         for col, text in enumerate(('', 'Start / ms', 'Pulse / ms', 'Interval / ms', 'N')):
             if text:
@@ -198,6 +200,7 @@ class ControlPanel(QWidget):
         self.QDoubleSpinBox_laserpower_473.valueChanged.connect(self.pw_laser_473)
         self.QPushButton_reset_trigger.clicked.connect(self.reset_trigger)
         self.QPushButton_fire_trigger.clicked.connect(lambda: self.Signal_trigger_fire.emit(self.get_trigger_outputs()))
+        self.QPushButton_show_traces.clicked.connect(self.show_trigger_traces)
         self.QPushButton_video.clicked.connect(self.run_video)
         self.QPushButton_acquire.clicked.connect(self.run_acquisition)
 
@@ -314,6 +317,21 @@ class ControlPanel(QWidget):
     def get_trigger_outputs(self):
         """All TriggerBox rows (DO#1..8 then AO#1..4) for trigger_box.sequence_from_outputs."""
         return self.get_digital_parameters() + self.get_analog_parameters()
+
+    def show_trigger_traces(self):
+        """Plot the time traces of the current DO / AO rows (exactly what Fire would send)."""
+        from minimiao.devices import trigger_box as tbx
+        from minimiao.gui.trigger_plot import TriggerTraceWindow
+        try:
+            seq, summary = tbx.sequence_from_outputs(self.get_trigger_outputs())
+        except Exception as e:
+            self.display_trigger_status(f"Error: {e}")
+            if self.logg is not None:
+                self.logg.error(f"Trigger settings: {e}")
+            return
+        if getattr(self, "_trace_window", None) is None:
+            self._trace_window = TriggerTraceWindow()
+        self._trace_window.show_sequence(seq, summary)
 
     def display_trigger_status(self, text: str):
         self.QLabel_trigger_status.setText(text)

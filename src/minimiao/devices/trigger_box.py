@@ -330,6 +330,51 @@ class Sequence:
         return fig
 
 
+def traces(seq: "Sequence"):
+    """
+    Exact time traces of a sequence (no sampling, so short pulses in long sequences are kept).
+    Returns ({output: (t_ms, level 0/1)}, {analog channel: (t_ms, volts)}) as step / line
+    vertex arrays. Digital outputs OR all channels routed to them (spec 5.1); a PWM window
+    [start, stop) sends a pulse at every start + k / freq before stop.
+    """
+    intervals = {}
+    for c in seq.channels:
+        if not c.enabled:
+            continue
+        if isinstance(c, DigitalTrigger):
+            intervals.setdefault(c.out, []).append((float(c.start_ms), float(c.stop_ms)))
+        elif isinstance(c, DigitalPulse):
+            period, width = 1000.0 / c.freq_hz, c.width_us / 1000.0
+            n = int(math.ceil((c.stop_ms - c.start_ms) / period - 1e-9))
+            on = c.start_ms + period * np.arange(max(n, 0))
+            intervals.setdefault(c.out, []).extend(zip(on, on + width))
+    dig = {}
+    for out, iv in intervals.items():
+        iv = sorted(iv)
+        merged = [list(iv[0])]
+        for a, b in iv[1:]:
+            if a <= merged[-1][1]:
+                merged[-1][1] = max(merged[-1][1], b)
+            else:
+                merged.append([a, b])
+        m = np.asarray(merged, dtype=float)
+        t = np.empty(4 * len(m) + 2)
+        y = np.zeros_like(t)
+        t[0], t[-1] = 0.0, max(seq.duration_ms, m[-1, 1])
+        t[1:-1:4], t[2:-1:4], t[3:-1:4], t[4:-1:4] = m[:, 0], m[:, 0], m[:, 1], m[:, 1]
+        y[2:-1:4], y[3:-1:4] = 1, 1
+        dig[out] = (t, y)
+    ana = {}
+    for c in seq.channels:
+        if not c.enabled or c.kind != "ana":
+            continue
+        v0, v1 = (c.mv, c.mv) if isinstance(c, AnalogFixed) else (c.start_mv, c.stop_mv)
+        end = max(seq.duration_ms, c.stop_ms)
+        ana[c.channel] = (np.array([0, c.start_ms, c.start_ms, c.stop_ms, c.stop_ms, end], dtype=float),
+                          np.array([0, 0, v0, v1, 0, 0], dtype=float) / 1000.0)
+    return dig, ana
+
+
 def gclk4_prescaler(sysclk_hz: float, pwm_freqs: list[float]) -> Optional[int]:
     """Lowest integer GCLK4 divider (1..1024) satisfying spec 9.6, or None."""
     lo = F_CPU_HZ / (0xFFFFFF * sysclk_hz)
