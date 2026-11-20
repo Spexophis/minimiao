@@ -616,6 +616,15 @@ def describe_outputs(summary) -> str:
     return "; ".join(parts)
 
 
+_ARM_NEUTRAL = ("RUN", "STOP", "STATUS", "ARM")
+
+
+def _keeps_arming(cmd: str) -> bool:
+    """Commands that do not change the configuration (so an armed sequence stays armed)."""
+    c = cmd.strip().upper()
+    return c in _ARM_NEUTRAL or c.startswith(("DIGSTAT", "ANASTAT"))
+
+
 class TriggerBox:
     def __init__(self, port: str = "COM7", baud: int = 115200, timeout: float = 1.0, quiet: float = 0.05,
                  raise_on_error: bool = True, logg=None):
@@ -628,6 +637,10 @@ class TriggerBox:
         self.quiet = quiet
         self.raise_on_error = raise_on_error
         self.last_sequence: Optional[Sequence] = None
+        # commands of the sequence that is uploaded AND armed; the box can RUN it again any number
+        # of times without re-uploading or re-arming (confirmed on the hardware). Any configuration
+        # command (or RESET) clears it, so the next execute() uploads and arms again.
+        self._armed_commands: Optional[list] = None
         self._lock = threading.RLock()  # one command/reply exchange at a time across threads
         self._ser = serial.Serial(port, baud, bytesize=8, parity="N", stopbits=1, timeout=0)
         time.sleep(0.1)
@@ -673,6 +686,8 @@ class TriggerBox:
     def send(self, cmd: str, timeout: Optional[float] = None) -> str:
         """Send one command, return the reply text. Raises TriggerBoxError on 'ERR N'."""
         cmd = cmd.strip()
+        if not _keeps_arming(cmd):
+            self._armed_commands = None
         with self._lock:
             self._ser.reset_input_buffer()
             self._ser.write(cmd.encode("ascii") + b"\r")
@@ -760,6 +775,7 @@ class TriggerBox:
     def arm(self) -> dict:
         """ARM and return parsed feedback (raw text in 'raw')."""
         raw = self.send("ARM", timeout=2.0)
+        self._armed_commands = self.last_sequence.commands() if self.last_sequence is not None else None
         info = {"raw": raw}
         m = re.search(r"prescaler\s*=\s*(\d+)", raw, re.I)
         if m:
@@ -823,17 +839,41 @@ class TriggerBox:
         self.logg.info(f"   done: STATUS {state}, TICK {tick}")
         return state, tick
 
+    def is_armed_for(self, seq: Sequence) -> bool:
+        """True if exactly this sequence is uploaded and armed (RUN alone will replay it)."""
+        return self._armed_commands is not None and self._armed_commands == seq.commands()
+
+    def prepare(self, seq: Sequence, validate: bool = True) -> Optional[dict]:
+        """RESET + upload + ARM unless this sequence is already armed. Returns the ARM info, or None
+        if the armed sequence was reused."""
+        if self.is_armed_for(seq):
+            return None
+        self.upload(seq, validate=validate)
+        return self.arm()
+
+    def run_armed(self) -> str:
+        """RUN the armed sequence; if the box answers 'not armed' (ERR 13), ARM once and RUN again."""
+        try:
+            return self.run()
+        except TriggerBoxError as e:
+            if e.code != 13:
+                raise
+            self.arm()
+            return self.run()
+
     def execute(self, seq: Sequence, wait: bool = True) -> dict:
-        """RESET, configure, ARM, RUN (software trigger) and optionally wait."""
-        self.upload(seq)
-        info = self.arm()
+        """
+        Run a sequence (software trigger) and optionally wait. Uploads and ARMs only when the
+        sequence differs from the armed one; an unchanged sequence is replayed with RUN alone.
+        """
+        info = self.prepare(seq)
         if seq.external_trigger:
             self.logg.info("   armed, waiting for external trigger on TRIG input")
         else:
-            self.run()
+            self.run_armed()
         if wait:
             self.wait_until_done()
-        return info
+        return info if info is not None else {"raw": None, "reused_armed_sequence": True}
 
     def fire_outputs(self, outputs, wait=True) -> list:
         """Build a sequence from per-output settings (see sequence_from_outputs), upload, ARM, RUN."""
