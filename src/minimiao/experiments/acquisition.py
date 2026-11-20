@@ -59,6 +59,9 @@ class BlockSettings:
     frame_rate_hz: int = 100  # external mode only
     camera_channel: int = 2  # TriggerBox DIG channel for the camera clock (external mode)
     camera_trigger_width_us: int = 1000
+    # external mode: wait this long after starting the camera before RUN, so the camera has finished
+    # arming and does not ignore the first trigger edge(s) (a missed first edge = one frame short)
+    camera_arm_ms: float = 100.0
     name: str = ""
 
     def validate(self):
@@ -77,6 +80,8 @@ class BlockSettings:
                 errs.append("frame rate must be >= 1 Hz")
             elif self.camera_trigger_width_us * 1e-6 >= 1.0 / self.frame_rate_hz:
                 errs.append("camera trigger width must be shorter than the frame period")
+        if self.camera_arm_ms < 0:
+            errs.append("camera arm time must be >= 0")
         if errs:
             raise ValueError("; ".join(errs))
 
@@ -326,6 +331,8 @@ class AcquisitionRunner:
             if self.preview is not None and getattr(cam, "data", None) is not None:
                 cam.data.on_update(self.preview)
             self.progress(f"slot {bs.slot}, {bs.laser_power_mw:g} mW: recording")
+            if bs.camera_trigger == "external":
+                self._sleep(bs.camera_arm_ms / 1000.0 - (time.perf_counter() - t["camera_start"]))
 
             t["run"] = time.perf_counter()
             tb.run()
@@ -417,7 +424,12 @@ class AcquisitionRunner:
         if bs.camera_trigger == "external":
             exp = timing.get("frames_expected")
             if summary.get("n_frames") is not None and summary["n_frames"] != exp:
-                meta["warnings"].append(f"received {summary['n_frames']} frames, expected {exp}; "
+                gaps = summary.get("n_dropped") or 0
+                where = ("frame numbers have gaps: frames were lost after the camera took them"
+                         if gaps else "frame numbers are contiguous: the camera did not take the missing "
+                                      "frame(s), i.e. trigger edges were ignored (first edge before the camera "
+                                      "was armed, or an edge during readout)")
+                meta["warnings"].append(f"received {summary['n_frames']} frames, expected {exp}; {where}; "
                                         f"exact pulse-onset frames assume no missing frames")
         elif t_run is not None and ts:
             # approximate: frame exposure end ~ retrieval time; take the first frame
