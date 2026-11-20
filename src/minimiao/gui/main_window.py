@@ -9,9 +9,9 @@ from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtWidgets import QApplication, QMainWindow, QFileDialog
 
 try:
-    from . import controller_panel, hg_panel, viewer_window, acq_panel
+    from . import controller_panel, hg_panel, viewer_window, acq_panel, gui_state
 except ImportError:
-    from minimiao.gui import controller_panel, hg_panel, viewer_window, acq_panel
+    from minimiao.gui import controller_panel, hg_panel, viewer_window, acq_panel, gui_state
 
 try:
     from . import custom_widgets as cw
@@ -31,8 +31,29 @@ class MainWindow(QMainWindow):
         self._set_dark_theme()
         self._setup_ui()
         self.dialog, self.dialog_text = None, None
+        self._restore_values()
+
+    def _panels(self):
+        return {"ctrl_panel": self.ctrl_panel, "hg_panel": self.hg_panel, "acq_panel": self.acq_panel,
+                "viewer": self.viewer}
+
+    def _restore_values(self):
+        """Spin boxes start with the values they had when the program was last closed."""
+        try:
+            n = gui_state.restore(self._panels())
+            if n:
+                self.logg.info(f"Restored {n} values from {gui_state.state_path()}")
+        except Exception as e:
+            self.logg.error(f"Could not restore saved GUI values: {e}")
+
+    def save_values(self):
+        try:
+            gui_state.save(self._panels())
+        except Exception as e:
+            self.logg.error(f"Could not save GUI values: {e}")
 
     def closeEvent(self, event, **kwargs):
+        self.save_values()
         self.aboutToClose.emit()
         super().closeEvent(event)
 
